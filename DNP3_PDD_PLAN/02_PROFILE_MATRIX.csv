@@ -1,0 +1,70 @@
+﻿requirement_id,profile_pdf_page,group_decimal,variation_decimal,description,request_function_codes_decimal,request_qualifiers_hex,response_function_codes_decimal,response_qualifiers_hex,family,notes,local_code_status
+PROFILE-001,4,0,209,Secure authentication version,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; read-only,NOT_AUDITED
+PROFILE-002,4,0,210,Security statistics per association,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; count must reflect real statistics,NOT_AUDITED
+PROFILE-003,4,1,0,Binary input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment,NOT_AUDITED
+PROFILE-004,4,1,1,Binary input packed,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-005,5,1,2,Binary input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-006,5,2,0,Binary input event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed,NOT_AUDITED
+PROFILE-007,5,2,1,Binary event without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-008,5,2,2,Binary event absolute time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-009,5,2,3,Binary event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-010,5,3,0,Double-bit input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment,NOT_AUDITED
+PROFILE-011,5,3,1,Double-bit input packed,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-012,5,3,2,Double-bit input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-013,5,4,0,Double-bit event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed,NOT_AUDITED
+PROFILE-014,6,4,1,Double-bit event without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-015,6,4,2,Double-bit event absolute time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-016,6,4,3,Double-bit event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-017,6,10,0,Binary output status any,1,00|01|06,-,-,MEASUREMENT,Status not a control command,NOT_AUDITED
+PROFILE-018,6,10,2,Binary output status with flags,1,00|01|06,129,00|01,MEASUREMENT,Status not a control command,NOT_AUDITED
+PROFILE-019,6,12,1,CROB,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; response field applies when response exists,NOT_AUDITED
+PROFILE-020,6,30,0,Analog input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment,NOT_AUDITED
+PROFILE-021,6,30,1,Analog input 32-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-022,7,30,2,Analog input 16-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-023,7,30,3,Analog input 32-bit without flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-024,7,30,4,Analog input 16-bit without flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-025,7,30,5,Analog input float32 with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
+PROFILE-026,7,32,0,Analog input event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed,NOT_AUDITED
+PROFILE-027,7,32,1,Analog event 32-bit without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-028,7,32,2,Analog event 16-bit without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-029,7,32,4,Analog event 16-bit with time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-030,7,32,5,Analog event float32 without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
+PROFILE-031,7,40,0,Analog output status any,1,00|01|06,-,-,MEASUREMENT,Status,NOT_AUDITED
+PROFILE-032,8,40,1,Analog output status 32-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status,NOT_AUDITED
+PROFILE-033,8,40,2,Analog output status 16-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status,NOT_AUDITED
+PROFILE-034,8,40,3,Analog output status float32 with flag,1,00|01|06,129,00|01,MEASUREMENT,Status,NOT_AUDITED
+PROFILE-035,8,41,1,Analog output 32-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
+PROFILE-036,8,41,2,Analog output 16-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
+PROFILE-037,8,41,3,Analog output float32 command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
+PROFILE-038,8|9,50,1,Absolute time and date,1|2,07,129,07,TIME,READ and WRITE contexts differ; response to READ only,NOT_AUDITED
+PROFILE-039,9,51,1,CTO absolute synchronized,-,-,129|130,07,TIME,Response only; quantity 1,NOT_AUDITED
+PROFILE-040,9,51,2,CTO absolute unsynchronized,-,-,129|130,07,TIME,Response only; quantity 1,NOT_AUDITED
+PROFILE-041,9,52,1,Time delay coarse,-,-,129,07,TIME,Response only; quantity 1,NOT_AUDITED
+PROFILE-042,9,52,2,Time delay fine,-,-,129,07,TIME,Response only; quantity 1,NOT_AUDITED
+PROFILE-043,9,60,1,Class 0,1|22,06,-,-,CLASS,Static scan; function 22 listed separately,NOT_AUDITED
+PROFILE-044,9,60,2,Class 1,1|20|21|22,06|07|08,-,-,CLASS,20/21/22 require qualifier 06; READ may use 06/07/08,NOT_AUDITED
+PROFILE-045,9|10,60,3,Class 2,1|20|21|22,06|07|08,-,-,CLASS,20/21/22 require qualifier 06; READ may use 06/07/08,NOT_AUDITED
+PROFILE-046,10,60,4,Class 3,1|20|21|22,06|07|08,-,-,CLASS,20/21/22 require qualifier 06; READ may use 06/07/08,NOT_AUDITED
+PROFILE-047,10,80,1,Internal indications packed,1|2,00|01,129,00|01,IIN,WRITE qualifier 00 at index 7 only; READ may use 00/01,NOT_AUDITED
+PROFILE-048,10,120,1,Authentication challenge,32,5B,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-049,10,120,2,Authentication reply,32,5B,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-050,10,120,3,Aggressive mode request,1-31,07,129|130,07,SECURITY,Count 1; special semantics; profile states broad function range,NOT_AUDITED
+PROFILE-051,10,120,4,Session key status request,32,07,-,-,SECURITY,Count 1,NOT_AUDITED
+PROFILE-052,11,120,5,Session key status,-,-,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-053,11,120,6,Session key change,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
+PROFILE-054,11,120,7,Authentication error,33,5B,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-055,11,120,8,User certificate,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
+PROFILE-056,11,120,9,Message authentication code,1-31,5B,129|130,5B,SECURITY,Free format; special function semantics,NOT_AUDITED
+PROFILE-057,11,120,10,User status change,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
+PROFILE-058,11,120,11,Update key change request,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
+PROFILE-059,11,120,12,Update key change reply,-,-,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-060,11,120,13,Update key change,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
+PROFILE-061,11,120,14,Update key change signature,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
+PROFILE-062,12,120,15,Update key change confirmation,32,5B,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-063,12,121,1,Security statistics 32-bit with flag,1,00|01|06|17|28,129,00|01|17|28,STATISTICS,Read semantics by association and index,NOT_AUDITED
+PROFILE-064,12,122,0,Security statistics event any,1,00|01|06|17|28,-,-,STATISTICS,As specified in supplied profile,NOT_AUDITED
+PROFILE-065,12,122,1,Security statistics event with flag,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited,NOT_AUDITED
+PROFILE-066,12,122,2,Security statistics event with flag and time,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited,NOT_AUDITED
+PROFILE-067,12,-,-,No-object CONFIRM,0,-,-,-,FUNCTION,No object header,NOT_AUDITED
+PROFILE-068,12,-,-,No-object COLD_RESTART,13,-,-,-,FUNCTION,No object header,NOT_AUDITED
+PROFILE-069,12,-,-,No-object DELAY_MEASURE,23,-,-,-,FUNCTION,No object header,NOT_AUDITED
