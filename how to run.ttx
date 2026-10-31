@@ -1,0 +1,13 @@
+Open two separate PowerShell windows.
+
+1. Outstation (first window):
+
+cd C:\Users\poimu\Desktop\DNP3-EXTRA
+.\build-cli\cli\Release\dnp3-cli.exe outstation
+
+2. Master (second window):
+
+cd C:\Users\poimu\Desktop\DNP3-EXTRA
+.\build-cli\cli\Release\dnp3-cli.exe master
+
+Type help to list commands, or quit to exit.
