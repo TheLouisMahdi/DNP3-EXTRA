@@ -82,6 +82,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}
 if(DNP3_SA_CRYPTO)
     list(APPEND unittests_src ./TestCryptoProvider.cpp)
     list(APPEND unittests_src ./TestOutstationChallenger.cpp)
+    list(APPEND unittests_src ./TestMasterResponder.cpp)
 endif()
 
 add_executable(unittests

@@ -666,6 +666,7 @@ set(all_sources ${opendnp3_public_headers} ${opendnp3_private_headers} ${opendnp
 if(DNP3_SA_CRYPTO)
     list(APPEND all_sources ./src/crypto/CryptoProvider.h ./src/crypto/OpenSSLCryptoProvider.cpp)
     list(APPEND all_sources ./src/outstation/OutstationChallenger.h ./src/outstation/OutstationChallenger.cpp)
+    list(APPEND all_sources ./src/master/MasterResponder.h ./src/master/MasterResponder.cpp)
 endif()
 if(DNP3_TLS)
     list(APPEND all_sources ${opendnp3_tls_private_headers} ${opendnp3_tls_src})
