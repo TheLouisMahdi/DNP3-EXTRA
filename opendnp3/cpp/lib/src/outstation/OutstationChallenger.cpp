@@ -1,0 +1,233 @@
+// Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
+#include "outstation/OutstationChallenger.h"
+
+#include "app/APDUResponse.h"
+#include "crypto/CryptoProvider.h"
+
+#include <cstring>
+
+namespace opendnp3
+{
+namespace
+{
+    bool Overlaps(ser4cpp::rseq_t input, ser4cpp::wseq_t output)
+    {
+        if (!input.length() || !output.length())
+            return false;
+        const auto a = reinterpret_cast<uintptr_t>(static_cast<const uint8_t*>(input));
+        const auto b = reinterpret_cast<uintptr_t>(static_cast<uint8_t*>(output));
+        return a <= b ? b - a < input.length() : a - b < output.length();
+    }
+} // namespace
+
+OutstationChallenger::OutstationChallenger(uint16_t associationId_, size_t tagLength_, uint32_t replyTimeoutMs_)
+    : associationId(associationId_), tagLength(tagLength_), replyTimeoutMs(replyTimeoutMs_)
+{
+}
+
+OutstationChallenger::~OutstationChallenger()
+{
+    Reset();
+}
+
+void OutstationChallenger::ClearUser(User& user)
+{
+    crypto::Clear(ser4cpp::wseq_t(user.key.data(), user.key.size()));
+    user.number = 0;
+    user.keySize = 0;
+    user.validUntil = 0;
+}
+
+void OutstationChallenger::ClearPending()
+{
+    crypto::Clear(ser4cpp::wseq_t(transcript.data(), transcript.size()));
+    requestSize = 0;
+    challengeTime = 0;
+}
+
+void OutstationChallenger::Reset()
+{
+    ClearPending();
+    for (auto& user : users)
+        ClearUser(user);
+}
+
+bool OutstationChallenger::ObserveTime(uint64_t nowMs)
+{
+    if (nowMs < lastTime)
+    {
+        // A broken monotonic clock must never extend a key or reply lifetime.
+        Reset();
+        return false;
+    }
+    lastTime = nowMs;
+    for (auto& user : users)
+        if (user.number && nowMs >= user.validUntil)
+            ClearUser(user);
+    return true;
+}
+
+void OutstationChallenger::Tick(uint64_t nowMs)
+{
+    if (ObserveTime(nowMs) && requestSize && nowMs - challengeTime >= replyTimeoutMs)
+        ClearPending();
+}
+
+bool OutstationChallenger::HasKeys() const
+{
+    for (const auto& user : users)
+        if (user.number)
+            return true;
+    return false;
+}
+
+OutstationChallenger::User* OutstationChallenger::FindUser(uint16_t number)
+{
+    if (number)
+        for (auto& user : users)
+            if (user.number == number)
+                return &user;
+    return nullptr;
+}
+
+OutstationChallenger::State OutstationChallenger::GetState() const
+{
+    if (requestSize)
+        return State::WAITING_FOR_REPLY;
+    return HasKeys() ? State::IDLE : State::NO_SESSION_KEYS;
+}
+
+OutstationChallenger::Result OutstationChallenger::SetSessionKey(uint16_t number,
+                                                                 ser4cpp::rseq_t key,
+                                                                 uint64_t validUntilMs,
+                                                                 uint64_t nowMs)
+{
+    if (!ObserveTime(nowMs) || !number || !static_cast<const uint8_t*>(key)
+        || (key.length() != 16 && key.length() != 32) || validUntilMs <= nowMs)
+        return Result::INVALID_INPUT;
+    auto user = FindUser(number);
+    if (!user)
+        for (auto& candidate : users)
+            if (!candidate.number)
+            {
+                user = &candidate;
+                break;
+            }
+    if (!user)
+        return Result::BUSY;
+    ClearPending();
+    ClearUser(*user);
+    std::memcpy(user->key.data(), key, key.length());
+    user->number = number;
+    user->keySize = key.length();
+    user->validUntil = validUntilMs;
+    return Result::OK;
+}
+
+OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t association,
+                                                             ser4cpp::rseq_t request,
+                                                             IINField iin,
+                                                             uint64_t nowMs,
+                                                             ser4cpp::wseq_t output,
+                                                             size_t& outputSize)
+{
+    outputSize = 0;
+    const bool overlapping = Overlaps(request, output);
+    crypto::Clear(output);
+    if (association != associationId)
+        return Result::WRONG_ASSOCIATION;
+    if (!ObserveTime(nowMs))
+        return Result::INVALID_INPUT;
+    if (requestSize && nowMs - challengeTime >= replyTimeoutMs)
+        ClearPending();
+    if (requestSize)
+        return Result::BUSY; // Table 7-8, row 3: discard NEW request.
+    if ((tagLength != 8 && tagLength != 16) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
+        || replyTimeoutMs % 100 != 0 || overlapping || !static_cast<const uint8_t*>(request) || request.length() < 2
+        || request.length() > MAX_REQUEST_SIZE)
+        return Result::INVALID_INPUT;
+    if (!HasKeys())
+        return Result::NO_SESSION_KEYS;
+    if (!static_cast<uint8_t*>(output) || output.length() < CHALLENGE_SIZE)
+        return Result::OUTPUT_TOO_SMALL;
+
+    std::array<uint8_t, CHALLENGE_DATA_SIZE> nonce{};
+    if (crypto::GenerateRandom(ser4cpp::wseq_t(nonce.data(), nonce.size())) != crypto::Result::OK)
+        return Result::CRYPTO_ERROR;
+
+    const auto nextSequence = static_cast<uint32_t>(sequence + 1u);
+    Group120Var1 challenge(nextSequence, 0, tagLength == 8 ? 3 : 4, 1, ser4cpp::rseq_t(nonce.data(), nonce.size()));
+    APDUResponse response(ser4cpp::wseq_t(transcript.data(), CHALLENGE_SIZE));
+    const uint8_t* requestBytes = request;
+    response.SetControl(AppControlField(true, true, false, false, requestBytes[0] & 0x0F));
+    response.SetFunction(FunctionCode::AUTH_RESPONSE);
+    response.SetIIN(iin);
+    auto writer = response.GetWriter();
+    const bool written = writer.WriteFreeFormat(&challenge, 1);
+    crypto::Clear(ser4cpp::wseq_t(nonce.data(), nonce.size()));
+    if (!written || response.Size() != CHALLENGE_SIZE)
+    {
+        ClearPending();
+        return Result::CRYPTO_ERROR;
+    }
+    std::memcpy(transcript.data() + CHALLENGE_SIZE, request, request.length());
+    std::memcpy(output, transcript.data(), CHALLENGE_SIZE);
+    sequence = nextSequence;
+    requestSize = request.length();
+    challengeTime = nowMs;
+    outputSize = CHALLENGE_SIZE;
+    return Result::OK; // challenge produced, NEVER an authorization verdict.
+}
+
+OutstationChallenger::Result OutstationChallenger::Reply(
+    uint16_t association, const Group120Var2& reply, uint64_t nowMs, ser4cpp::wseq_t output, size_t& outputSize)
+{
+    outputSize = 0;
+    const bool overlapping = Overlaps(reply.hmacValue, output);
+    crypto::Clear(output);
+    if (association != associationId)
+        return Result::WRONG_ASSOCIATION;
+    if (!ObserveTime(nowMs))
+        return Result::INVALID_INPUT;
+    if (!requestSize)
+        return Result::UNEXPECTED_REPLY;
+    Result result = Result::INVALID_MAC;
+    if (nowMs - challengeTime >= replyTimeoutMs)
+        result = Result::EXPIRED;
+    else if (reply.seqNum != sequence)
+        result = Result::INVALID_SEQUENCE;
+    else if (auto user = FindUser(reply.userNum))
+    {
+        if (!overlapping && reply.hmacValue.length() == tagLength)
+        {
+            // IEEE A.45.2.2.2 / Table A-3 (PDF p765, printed p723): the exact
+            // Challenge APDU followed by the exact challenged APDU. The key is
+            // the selected user's CONTROL Direction Session Key.
+            const auto verified = crypto::VerifyHMACSHA256(
+                ser4cpp::rseq_t(user->key.data(), user->keySize),
+                ser4cpp::rseq_t(transcript.data(), CHALLENGE_SIZE + requestSize), reply.hmacValue);
+            if (verified == crypto::Result::OK)
+            {
+                if (!static_cast<uint8_t*>(output) || output.length() < requestSize)
+                    result = Result::OUTPUT_TOO_SMALL;
+                else
+                {
+                    std::memcpy(output, transcript.data() + CHALLENGE_SIZE, requestSize);
+                    outputSize = requestSize;
+                    result = Result::AUTHENTICATED;
+                }
+            }
+            else if (verified == crypto::Result::CRYPTO_ERROR)
+                result = Result::CRYPTO_ERROR;
+        }
+    }
+    else
+        result = Result::INVALID_USER;
+
+    // Table 7-8 rows 5..7: valid/invalid Reply or timeout always consumes pending
+    // state. No retry with the same challenge, even after an invalid MAC/user/CSQ.
+    ClearPending();
+    return result;
+}
+
+} // namespace opendnp3
