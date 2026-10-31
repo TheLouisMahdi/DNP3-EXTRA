@@ -79,11 +79,18 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}
     FILES ${unittests_headers} ${unittests_src}
 )
 
+if(DNP3_SA_CRYPTO)
+    list(APPEND unittests_src ./TestCryptoProvider.cpp)
+endif()
+
 add_executable(unittests
     ${unittests_headers} ${unittests_src}
 )
 target_compile_features(unittests PRIVATE cxx_std_14)
 target_link_libraries(unittests PRIVATE catch dnp3mocks)
+if(DNP3_SA_CRYPTO)
+    target_link_libraries(unittests PRIVATE OpenSSL::Crypto)
+endif()
 target_include_directories(unittests PRIVATE ./ ../../lib/src)
 set_target_properties(unittests PROPERTIES FOLDER cpp/tests)
 add_test(NAME unittests COMMAND unittests)

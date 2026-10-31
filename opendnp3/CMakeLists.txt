@@ -44,6 +44,7 @@ endif()
 
 # Compilation options
 option(DNP3_TLS "Build TLS client/server support (requires OpenSSL)" OFF)
+option(DNP3_SA_CRYPTO "Build internal SA cryptographic services (requires OpenSSL 3 Crypto)" OFF)
 option(DNP3_TESTS "Build unit and integration tests" OFF)
 option(DNP3_EXAMPLES "Build example applications" OFF)
 option(DNP3_FUZZING "Build Google OSS-Fuzz targets" OFF)
@@ -88,6 +89,10 @@ include(./deps/ser4cpp.cmake)
 
 if(DNP3_TLS)
     find_package(OpenSSL 1.1.1 REQUIRED)
+endif()
+
+if(DNP3_SA_CRYPTO)
+    find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 endif()
 
 if(DNP3_TESTS OR DNP3_FUZZING)

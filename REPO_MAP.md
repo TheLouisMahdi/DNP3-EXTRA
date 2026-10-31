@@ -20,6 +20,8 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `outstation/UpdateBuilder.cpp` → application measurement update batches.
 - `app/` → APDU construction, object headers, measurement serialization.
 - `app/parsing/APDUParser.cpp` → object/qualifier parsing and handler dispatch.
+- `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
+- `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
 - `transport/` → fragment segmentation/reassembly.
 - `link/` → frames, CRC, link state; start at `LinkContext.cpp`.
 - `decoder/`, `logging/`, `util/` → diagnostics and shared helpers.
@@ -50,6 +52,8 @@ Prefix: `opendnp3/cpp/tests/`
 - `integration/` → stack integration tests.
 - `fuzz/` → parser fuzz targets.
 Enable C++ tests with `DNP3_TESTS`; fuzz targets use `DNP3_FUZZING`.
+`DNP3_SA_CRYPTO` optionally enables OpenSSL Crypto primitives and `unit/TestCryptoProvider.cpp`;
+it is independent of TLS and does not activate SA in either role.
 
 ## Build and Optional Components
 - `CMakeLists.txt` → builds local library, `master`, `outstation`.

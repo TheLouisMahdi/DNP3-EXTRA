@@ -663,6 +663,9 @@ set(opendnp3_tls_src
 )
 
 set(all_sources ${opendnp3_public_headers} ${opendnp3_private_headers} ${opendnp3_src})
+if(DNP3_SA_CRYPTO)
+    list(APPEND all_sources ./src/crypto/CryptoProvider.h ./src/crypto/OpenSSLCryptoProvider.cpp)
+endif()
 if(DNP3_TLS)
     list(APPEND all_sources ${opendnp3_tls_private_headers} ${opendnp3_tls_src})
 endif()
@@ -676,6 +679,7 @@ target_link_libraries(opendnp3 PRIVATE
     $<BUILD_INTERFACE:exe4cpp>
     $<BUILD_INTERFACE:asio>
     $<$<BOOL:${DNP3_TLS}>:OpenSSL::SSL>
+    $<$<BOOL:${DNP3_SA_CRYPTO}>:OpenSSL::Crypto>
 )
 target_include_directories(opendnp3
     PUBLIC
