@@ -32,6 +32,7 @@
 #include "master/UserPollTask.h"
 
 #include "opendnp3/logging/LogLevels.h"
+#include "crypto/CryptoProvider.h"
 
 #include <utility>
 
@@ -99,6 +100,14 @@ bool MContext::OnLowerLayerDown()
     responseTimer.cancel();
     solSeq = unsolSeq = 0;
     isOnline = isSending = false;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication)
+    {
+        authentication->replyInFlight = false;
+        authentication->protectedTask = false;
+    }
+#endif
+    this->ResetAuthentication();
     activeTask.reset();
 
     this->scheduler->SetRunnerOffline(*this);
@@ -148,6 +157,21 @@ bool MContext::OnTxReady()
     }
 
     this->isSending = false;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication)
+    {
+        if (authentication->replyInFlight)
+        {
+            authentication->replyInFlight = false;
+            crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
+        }
+        if (authentication->replyPending)
+        {
+            this->TransmitAuthenticationReply();
+            return true;
+        }
+    }
+#endif
 
     this->tstate = this->OnTransmitComplete();
     this->CheckConfirmTransmit();
@@ -159,12 +183,20 @@ void MContext::OnResponseTimeout()
 {
     if (isOnline)
     {
+        this->ResetAuthentication();
         this->tstate = this->OnResponseTimeoutEvent();
     }
 }
 
 void MContext::CompleteActiveTask()
 {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication)
+    {
+        authentication->protectedTask = false;
+        authentication->replyIssued = false;
+    }
+#endif
     if (this->activeTask)
     {
         this->activeTask.reset();
@@ -172,10 +204,11 @@ void MContext::CompleteActiveTask()
     }
 }
 
-void MContext::OnParsedHeader(const ser4cpp::rseq_t& /*apdu*/,
+void MContext::OnParsedHeader(const ser4cpp::rseq_t& apdu,
                               const APDUResponseHeader& header,
                               const ser4cpp::rseq_t& objects)
 {
+    if (this->RouteAuthentication(apdu, header)) return;
     // Note: this looks silly, but OnParsedHeader() is virtual and can be overriden to do SA
     this->ProcessAPDU(header, objects);
 }
@@ -472,6 +505,29 @@ MContext::TaskState MContext::ResumeActiveTask()
 
     this->StartResponseTimer();
     auto apdu = request.ToRSeq();
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication)
+    {
+        // Test-mode policy protects all ordinary functions except READ/CONFIRM,
+        // including every mandatory critical function in IEEE Table 7-7 (p252).
+        authentication->protectedTask
+            = request.GetFunction() != FunctionCode::READ && request.GetFunction() != FunctionCode::CONFIRM;
+        authentication->replyIssued = false;
+        if (authentication->protectedTask
+            && authentication->responder.RetainRequest(
+                   authentication->association, apdu,
+                   static_cast<uint64_t>(
+                       std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch())
+                           .count()))
+                != MasterResponder::Result::OK)
+        {
+            responseTimer.cancel();
+            activeTask->OnMessageFormatError(Timestamp(executor->get_time()));
+            this->CompleteActiveTask();
+            return TaskState::IDLE;
+        }
+    }
+#endif
     this->RecordLastRequest(apdu);
     this->Transmit(apdu);
 
@@ -572,5 +628,69 @@ MContext::TaskState MContext::OnResponseTimeout_WaitForResponse()
     this->solSeq.Increment();
     this->CompleteActiveTask();
     return TaskState::IDLE;
+}
+
+void MContext::ResetAuthentication()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication)
+        return;
+    authentication->responder.Reset();
+    authentication->replyPending = false;
+    authentication->replySize = 0;
+    authentication->replyIssued = false;
+    if (!authentication->replyInFlight)
+        crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
+#endif
+}
+
+void MContext::TransmitAuthenticationReply()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    authentication->replyPending = false;
+    authentication->replyInFlight = true;
+    authentication->replyIssued = true;
+    this->Transmit(ser4cpp::rseq_t(authentication->reply.data(), authentication->replySize));
+#endif
+}
+
+bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication)
+        return false;
+    if (header.function == FunctionCode::AUTH_RESPONSE)
+    {
+        if (!authentication->protectedTask || tstate != TaskState::WAIT_FOR_RESPONSE || authentication->replyPending
+            || authentication->replyInFlight)
+        {
+            this->ResetAuthentication();
+            return true;
+        }
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        if (authentication->responder.Respond(
+                authentication->association, apdu, now,
+                ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()), authentication->replySize)
+            != MasterResponder::Result::OK)
+        {
+            this->ResetAuthentication();
+            return true;
+        }
+        authentication->replyPending = true;
+        responseTimer.cancel();
+        this->StartResponseTimer();
+        if (!isSending)
+            this->TransmitAuthenticationReply();
+        return true;
+    }
+    // A normal response cannot bypass the Challenge/Reply phase of a protected task.
+    if (header.function == FunctionCode::RESPONSE && authentication->protectedTask && !authentication->replyIssued)
+        return true;
+#else
+    (void)apdu;
+    (void)header;
+#endif
+    return false;
 }
 } // namespace opendnp3

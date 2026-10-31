@@ -36,6 +36,7 @@
 #include "outstation/WriteHandler.h"
 
 #include "opendnp3/logging/LogLevels.h"
+#include "crypto/CryptoProvider.h"
 
 #include <utility>
 
@@ -99,6 +100,7 @@ bool OContext::OnLowerLayerDown()
 
     isOnline = false;
     isTransmitting = false;
+    this->ResetAuthentication();
 
     sol.Reset();
     unsol.Reset();
@@ -119,6 +121,10 @@ bool OContext::OnTxReady()
     }
 
     this->isTransmitting = false;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication)
+        crypto::Clear(ser4cpp::wseq_t(authentication->challenge.data(), authentication->challenge.size()));
+#endif
     this->CheckForTaskStart();
     return true;
 }
@@ -506,6 +512,12 @@ bool OContext::ProcessMessage(const Message& message)
     {
         return false;
     }
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    // Test authentication is bound to this association. Broadcasts and the
+    // respondToAnyMaster exception must never create an authentication bypass.
+    if (authentication && message.addresses != this->addresses.Reverse())
+        return false;
+#endif
 
     FORMAT_HEX_BLOCK(this->logger, flags::APP_HEX_RX, message.payload, 18, 18);
 
@@ -534,6 +546,7 @@ bool OContext::ProcessMessage(const Message& message)
         return false;
     }
 
+    if (this->RouteAuthentication(message, result.header, result.objects)) return true;
     return this->ProcessObjects(ParsedRequest(message.addresses, result.header, result.objects));
 }
 
@@ -901,6 +914,120 @@ IINField OContext::HandleFreezeAndClear(const ser4cpp::rseq_t& objects)
     FreezeRequestHandler handler(true, database);
     auto result = APDUParser::Parse(objects, handler, &this->logger, ParserSettings::NoContents());
     return IINFromParseResult(result);
+}
+
+void OContext::ResetAuthentication()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication)
+        return;
+    authentication->replyTimer.cancel();
+    authentication->challenger.Reset();
+    crypto::Clear(ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()));
+    if (!isTransmitting)
+        crypto::Clear(ser4cpp::wseq_t(authentication->challenge.data(), authentication->challenge.size()));
+#endif
+}
+
+bool OContext::RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication)
+        return false;
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    authentication->challenger.Tick(now);
+    if (header.control.UNS && header.function != FunctionCode::CONFIRM)
+    {
+        this->ResetAuthentication();
+        return true;
+    }
+    if (header.function == FunctionCode::AUTH_REQUEST)
+    {
+        // Parsing is side-effect free. Only a single, well-framed G120V2 may
+        // consume pending authentication and release the exact queued request.
+        class ReplyHandler final : public IAPDUHandler
+        {
+        public:
+            Group120Var2 reply;
+            bool valid = false;
+            bool IsAllowed(uint32_t count, GroupVariation gv, QualifierCode qc) override
+            {
+                return count == 0 && gv == GroupVariation::Group120Var2 && qc == QualifierCode::FREE_FORMAT;
+            }
+            IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var2>& values) override
+            {
+                valid = values.Count() == 1;
+                if (valid)
+                    values.ForeachItem([this](const Group120Var2& value) { reply = value; });
+                return IINField::Empty();
+            }
+        } handler;
+        if (header.control.SEQ != authentication->sequence
+            || APDUParser::Parse(objects, handler, nullptr) != ParseResult::OK || !handler.valid)
+        {
+            this->ResetAuthentication();
+            return true;
+        }
+        size_t size = 0;
+        const auto result = authentication->challenger.Reply(
+            authentication->association, handler.reply, now,
+            ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()), size);
+        authentication->replyTimer.cancel();
+        if (result == OutstationChallenger::Result::AUTHENTICATED)
+        {
+            const auto original
+                = APDUHeaderParser::ParseRequest(ser4cpp::rseq_t(authentication->authorized.data(), size));
+            if (original.success)
+            {
+                // One-shot release directly into the original dispatcher. No
+                // reusable "authenticated" flag and no recursive OnReceive.
+                this->ProcessObjects(ParsedRequest(message.addresses, original.header, original.objects));
+            }
+        }
+        crypto::Clear(ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()));
+        return true;
+    }
+    // Unexpected authentication messages cannot reach ordinary request handlers.
+    if (header.function == FunctionCode::AUTH_REQUEST_NO_ACK || FunctionCodeSpec::to_type(header.function) >= 0x80)
+    {
+        this->ResetAuthentication();
+        return true;
+    }
+    // Table 7-8 (IEEE PDF p257): discard new critical/non-critical messages while
+    // waiting. Authentication never uses the normal deferred-request bypass.
+    if (authentication->challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
+        return true;
+    if (header.function == FunctionCode::READ || header.function == FunctionCode::CONFIRM)
+        return false;
+
+    // Test policy additionally protects optional ordinary requests. If the normal
+    // response state is busy, discard rather than admitting an unauthenticated
+    // operation to the broadcast/no-ack/deferred execution paths.
+    if (!this->CanTransmit() || !this->state->IsIdle())
+        return true;
+    size_t size = 0;
+    authentication->replyTimer.cancel();
+    if (authentication->challenger.Challenge(
+            authentication->association, message.payload, this->GetResponseIIN(), now,
+            ser4cpp::wseq_t(authentication->challenge.data(), authentication->challenge.size()), size)
+        == OutstationChallenger::Result::OK)
+    {
+        authentication->sequence = header.control.SEQ;
+        authentication->replyTimer = executor->start(std::chrono::milliseconds(2000), [this]() {
+            const auto time = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+            authentication->challenger.Tick(time);
+        });
+        this->BeginTx(message.addresses.source, ser4cpp::rseq_t(authentication->challenge.data(), size));
+    }
+    return true;
+#else
+    (void)message;
+    (void)header;
+    (void)objects;
+    return false;
+#endif
 }
 
 } // namespace opendnp3

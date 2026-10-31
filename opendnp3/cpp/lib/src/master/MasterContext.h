@@ -25,6 +25,7 @@
 #include "master/HeaderBuilder.h"
 #include "master/IMasterScheduler.h"
 #include "master/MasterTasks.h"
+#include "master/MasterResponder.h"
 
 #include "opendnp3/app/MeasurementTypes.h"
 #include "opendnp3/gen/RestartType.h"
@@ -202,6 +203,29 @@ public:
     void Transmit(const ser4cpp::rseq_t& data);
 
 private:
+    // No production setter/configuration. The friend is defined ONLY in the
+    // unit-test translation unit; public stack APIs cannot provision/enable SA.
+    friend class AuthenticationRuntimeTestAccess;
+    struct AuthenticationState
+    {
+        AuthenticationState(uint16_t association, size_t tagLength)
+            : association(association), responder(association, tagLength)
+        {
+        }
+        const uint16_t association;
+        MasterResponder responder;
+        std::array<uint8_t, 30> reply{};
+        size_t replySize = 0;
+        bool replyPending = false;
+        bool replyInFlight = false;
+        bool protectedTask = false;
+        bool replyIssued = false;
+    };
+    std::shared_ptr<AuthenticationState> authentication; // null in production
+    void ResetAuthentication();
+    bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
+    void TransmitAuthenticationReply();
+
     // --- implement  IMasterTaskRunner ------
 
     virtual bool Run(const std::shared_ptr<IMasterTask>& task) override;

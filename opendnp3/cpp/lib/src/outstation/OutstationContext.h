@@ -32,6 +32,7 @@
 #include "outstation/RequestHistory.h"
 #include "outstation/ResponseContext.h"
 #include "outstation/TimeSyncState.h"
+#include "outstation/OutstationChallenger.h"
 #include "outstation/event/EventBuffer.h"
 
 #include "opendnp3/link/Addresses.h"
@@ -87,6 +88,30 @@ public:
     void SetRestartIIN();
 
 private:
+    // Only the unit-test translation unit defines this friend. No production
+    // configuration or public stack API can create this otherwise-null state.
+    friend class AuthenticationRuntimeTestAccess;
+    struct AuthenticationState
+    {
+        AuthenticationState(uint16_t association, size_t tagLength)
+            : association(association), challenger(association, tagLength)
+        {
+        }
+        ~AuthenticationState()
+        {
+            replyTimer.cancel();
+        }
+        const uint16_t association;
+        OutstationChallenger challenger;
+        std::array<uint8_t, OutstationChallenger::CHALLENGE_SIZE> challenge{};
+        std::array<uint8_t, OutstationChallenger::MAX_REQUEST_SIZE> authorized{};
+        uint8_t sequence = 0;
+        exe4cpp::Timer replyTimer;
+    };
+    std::shared_ptr<AuthenticationState> authentication; // null in production
+    void ResetAuthentication();
+    bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);
+
     /// ---- Helper functions that operate on the current state, and may return a new state ----
 
     OutstationState& ContinueMultiFragResponse(const Addresses& addresses, const AppSeqNum& seq);

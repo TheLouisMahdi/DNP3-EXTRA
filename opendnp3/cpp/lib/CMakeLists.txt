@@ -694,6 +694,9 @@ set_target_properties(opendnp3 PROPERTIES FOLDER cpp/lib)
 if(DNP3_TLS)
     target_compile_definitions(opendnp3 PRIVATE OPENDNP3_USE_TLS)
 endif()
+if(DNP3_SA_CRYPTO)
+    target_compile_definitions(opendnp3 PRIVATE OPENDNP3_USE_SA_CRYPTO)
+endif()
 
 install(TARGETS opendnp3
     EXPORT opendnp3-export
