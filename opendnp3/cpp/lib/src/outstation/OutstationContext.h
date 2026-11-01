@@ -94,6 +94,7 @@ private:
     // Manual session-key injection is test-only. Production obtains its session
     // state through configured credentials and the normal protocol exchange.
     friend class AuthenticationRuntimeTestAccess;
+    friend class ProductionAuthenticationTestAccess;
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
@@ -126,6 +127,11 @@ private:
         std::unique_ptr<AuthenticationSession> sessions;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
         size_t pendingWireSize = 0;
+        uint8_t deferredControlCount = 0;
+        uint32_t deferredControlKSQ = 0;
+        uint32_t pendingReplyKSQ = 0;
+        uint64_t pendingReplyCreated = 0;
+        uint64_t pendingReplyExpires = 0;
         uint16_t selectUser = 0;
         bool monitoringPending = false;
         exe4cpp::Timer monitoringTimer;
@@ -137,6 +143,8 @@ private:
         exe4cpp::Timer replyTimer;
     };
     std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
+    void CountControlAuthentication(uint16_t user, uint8_t count, uint64_t now);
+    void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();
     void TransmitPendingAuthentication();
     bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);

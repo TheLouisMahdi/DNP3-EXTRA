@@ -22,6 +22,24 @@ class ProductionAuthenticationTestAccess
 public:
     static SessionKeys& Common(MContext& context) { return *context.authentication->sessions->Find(1); }
     static uint8_t Deferred(MContext& context) { return context.authentication->deferredAuthenticationCount; }
+    static SessionKeys& Common(OContext& context) { return *context.authentication->sessions->Find(1); }
+    static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
+    static uint8_t Deferred(OContext& context) { return context.authentication->deferredControlCount; }
+    static rseq_t AggressiveBytes(OContext& context, size_t size)
+    {
+        REQUIRE(size <= context.authentication->aggressiveWire.size());
+        return rseq_t(context.authentication->aggressiveWire.data(), size);
+    }
+    static void LeaveMessages(OContext& context, uint32_t remaining)
+    {
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            context.executor->get_time().time_since_epoch()).count());
+        auto& session = Common(context);
+        REQUIRE(session.Ready(now));
+        REQUIRE(session.RemainingMessages() >= remaining);
+        while (session.RemainingMessages() > remaining)
+            session.CountAuthentication(now);
+    }
     static void LeaveMessages(MContext& context, uint32_t remaining)
     {
         const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -926,4 +944,176 @@ TEST_CASE("ProductionAuthentication - normal verified response completes before 
     REQUIRE(pair.master.context->solSeq.Get() == processed);
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
     REQUIRE(pair.changes == 2); // Subsequent operations cannot use the exhausted session.
+}
+
+TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts on send and respects its lifetime", "[production-sa]")
+{
+    const auto budget = GENERATE(1u, 3u);
+    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, disconnect, abort, key replacement, key expiry.
+    RuntimePair pair;
+    pair.Pump();
+    pair.SelectOperate();
+    const auto before = pair.master.context->solSeq.Get();
+    for (size_t step = 0; step < 2; ++step)
+    {
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto request = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto response = pair.outstation.lower->PopWriteAsHex();
+        if (step == 0)
+            pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(response));
+        pair.master.exe->run_many();
+    }
+    // The native SELECT response is still in flight when its monitoring Challenge arrives.
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto challenge = pair.master.lower->PopWriteAsHex();
+    HexSequence challenged(challenge);
+    REQUIRE(challenged.ToRSeq()[1] == 0x20);
+    REQUIRE(challenged.ToRSeq()[3] == 1);
+    REQUIRE(pair.master.context->OnTxReady());
+    auto& session = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+    const auto expiry = session.ValidUntil();
+    ProductionAuthenticationTestAccess::LeaveMessages(pair.outstation.context, budget);
+    pair.outstation.SendToOutstation(challenge);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(pair.outstation.context) != 0);
+    REQUIRE(session.RemainingMessages() == budget - 1); // Only the received Challenge has been counted.
+    REQUIRE(pair.master.context->solSeq.Get() == before);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    if (scenario == 1)
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+    else if (scenario == 2)
+        pair.outstation.LowerLayerDown();
+    else if (scenario == 3)
+        pair.outstation.SendToOutstation("C0 20 78 02 5B 01 01 00 00");
+    else if (scenario == 4)
+        REQUIRE(session.Configure(rseq_t(pair.source->keys[0].data(), 32), 10000000, 0) == SessionKeys::Result::OK);
+    else if (scenario == 5)
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(expiry));
+    if (scenario == 2)
+        REQUIRE_FALSE(pair.outstation.context.OnTxReady());
+    else
+        REQUIRE(pair.outstation.context.OnTxReady());
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(pair.outstation.context) == 0);
+    if (scenario != 0)
+    {
+        REQUIRE(pair.outstation.lower->NumWrites() == 0); // No stale precomputed Reply after abort/expiry/rekey.
+        REQUIRE(pair.master.context->solSeq.Get() == before);
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+        if (scenario == 1 || scenario == 3)
+            REQUIRE(session.RemainingMessages() == budget - 1); // An unsent Reply is never counted.
+        if (scenario == 4 || scenario == 5)
+            REQUIRE_FALSE(session.Ready(scenario == 5 ? expiry : 0));
+        return;
+    }
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto reply = pair.outstation.lower->PopWriteAsHex();
+    HexSequence accepted(reply);
+    REQUIRE(accepted.ToRSeq()[1] == 0x83);
+    REQUIRE(accepted.ToRSeq()[5] == 2);
+    REQUIRE(session.RemainingMessages() == (budget == 3 ? 1 : 0));
+    pair.outstation.OnTxReady();
+    pair.outstation.SendToOutstation(challenge); // Replayed Challenge cannot regenerate or recount the Reply.
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(session.RemainingMessages() == (budget == 3 ? 1 : 0));
+    REQUIRE(pair.master.SendToMaster(reply)); // Existing Master verifies the exact queued MAC transcript.
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.context->solSeq.Get() == ((before + 1) & 0x0F));
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    if (budget == 1)
+        REQUIRE_FALSE(session.Ready(0)); // The precomputed Reply does not revive expired session keys.
+}
+
+TEST_CASE("ProductionAuthentication - outstation reset preserves aggressive response bytes already in flight", "[production-sa]")
+{
+    RuntimePair pair(false, true);
+    pair.Pump();
+    pair.SelectOperate();
+    pair.Pump();
+    pair.SelectOperate();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    HexSequence response(pair.outstation.lower->PopWriteAsHex());
+    REQUIRE(response.ToRSeq()[4] == 120);
+    REQUIRE(response.ToRSeq()[5] == 3);
+    const auto selections = pair.outstation.cmdHandler->NumSelect();
+    REQUIRE(ProductionAuthenticationTestAccess::AggressiveBytes(pair.outstation.context, response.ToRSeq().length())
+                .equals(response.ToRSeq()));
+    pair.outstation.SendToOutstation("C0 20 78 02 5B 01 01 00 00");
+    REQUIRE(ProductionAuthenticationTestAccess::AggressiveBytes(pair.outstation.context, response.ToRSeq().length())
+                .equals(response.ToRSeq()));
+    REQUIRE(pair.outstation.context.OnTxReady());
+    const auto cleared = ProductionAuthenticationTestAccess::AggressiveBytes(pair.outstation.context, response.ToRSeq().length());
+    for (size_t i = 0; i < cleared.length(); ++i)
+        REQUIRE(cleared[i] == 0);
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections);
+}
+
+TEST_CASE("ProductionAuthentication - outstation common-user control accounting preserves its retained response", "[production-sa]")
+{
+    const auto budget = GENERATE(1u, 2u);
+    const bool timeout = GENERATE(false, true);
+    RuntimePair pair;
+    pair.Pump();
+    auto& session = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+    MasterResponder controlPeer(7, 16, 2000);
+    REQUIRE(controlPeer.SetSessionKey(1, session.ControlKey(0), session.ValidUntil(), 0) == MasterResponder::Result::OK);
+    OutstationChallenger monitoringPeer(7, 16, 2000, true);
+    REQUIRE(monitoringPeer.SetSessionKey(1, session.MonitoringKey(0), session.ValidUntil(), 0)
+            == OutstationChallenger::Result::OK);
+    HexSequence read("C5 01 3C 01 06");
+    REQUIRE(controlPeer.RetainRequest(7, read.ToRSeq(), 0) == MasterResponder::Result::OK);
+    pair.outstation.SendToOutstation("C5 01 3C 01 06");
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    HexSequence challenge(pair.outstation.lower->PopWriteAsHex());
+    pair.outstation.OnTxReady();
+    std::array<uint8_t, 2048> wire{}, verified{};
+    size_t size = 0, verifiedSize = 0;
+    REQUIRE(controlPeer.Respond(7, challenge.ToRSeq(), 0, wseq_t(wire.data(), wire.size()), size)
+            == MasterResponder::Result::OK);
+    ProductionAuthenticationTestAccess::LeaveMessages(pair.outstation.context, budget);
+    pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(wire.data(), size)));
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    HexSequence response(pair.outstation.lower->PopWriteAsHex());
+    REQUIRE(response.ToRSeq()[1] == 0x81);
+    REQUIRE((response.ToRSeq()[0] & 0x20) == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 3 - budget);
+    REQUIRE(session.RemainingMessages() == 1);
+    pair.outstation.OnTxReady();
+    pair.outstation.SendToOutstation("C6 01 3C 01 06"); // A new READ cannot consume the retained response's key budget.
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 3 - budget);
+    if (timeout)
+    {
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 0);
+        REQUIRE_FALSE(session.Ready(pair.master.context->params.authentication.replyTimeoutMs));
+        REQUIRE(pair.outstation.lower->NumWrites() == 0);
+        return;
+    }
+    REQUIRE(monitoringPeer.Challenge(7, response.ToRSeq(), IINField::Empty(), 0,
+                                     wseq_t(wire.data(), wire.size()), size) == OutstationChallenger::Result::OK);
+    const auto request = HexConversions::to_hex(rseq_t(wire.data(), size));
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    HexSequence reply(pair.outstation.lower->PopWriteAsHex());
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 0);
+    REQUIRE_FALSE(session.Ready(0));
+    Group120Var2 value;
+    REQUIRE(value.Read(reply.ToRSeq().skip(10)));
+    REQUIRE(monitoringPeer.Reply(7, value, 0, wseq_t(verified.data(), verified.size()), verifiedSize)
+            == OutstationChallenger::Result::AUTHENTICATED);
+    REQUIRE(rseq_t(verified.data(), verifiedSize).equals(response.ToRSeq()));
+    pair.outstation.OnTxReady();
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(session.RemainingMessages() == 0);
 }

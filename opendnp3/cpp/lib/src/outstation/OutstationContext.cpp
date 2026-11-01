@@ -38,6 +38,8 @@
 
 #include "opendnp3/logging/LogLevels.h"
 
+#include <algorithm>
+
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -144,7 +146,10 @@ bool OContext::OnTxReady()
     this->isTransmitting = false;
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
+    {
         crypto::Clear(ser4cpp::wseq_t(authentication->challenge.data(), authentication->challenge.size()));
+        crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
+    }
 #endif
     this->TransmitPendingAuthentication();
     if (!isTransmitting)
@@ -320,7 +325,7 @@ void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
                     ser4cpp::wseq_t(auth.aggressiveWire.data(), auth.aggressiveWire.size()), size))
                 return;
             encoded = ser4cpp::rseq_t(auth.aggressiveWire.data(), size);
-            session->CountAuthentication(now);
+            session->CountAuthentication(now); // One outgoing aggressive-response ASDU (V3/native/V9).
         }
         else
         {
@@ -335,6 +340,14 @@ void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
                       const auto time = static_cast<uint64_t>(
                           std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch())
                               .count());
+                      if (authentication->pendingWireSize >= 6 && authentication->pendingWire[1] == 0x83
+                          && authentication->pendingWire[4] == 120 && authentication->pendingWire[5] == 2)
+                      {
+                          this->ResetAuthentication(); // Expired, unsent monitoring Reply; preserve in-flight bytes.
+                          this->CheckForTaskStart();
+                          return;
+                      }
+                      this->FinalizeControlCounts(time);
                       authentication->monitoring.Tick(time);
                       authentication->monitoringPending = false;
                       this->CheckForTaskStart();
@@ -981,18 +994,75 @@ IINField OContext::HandleFreezeAndClear(const ser4cpp::rseq_t& objects)
     return IINFromParseResult(result);
 }
 
+void OContext::CountControlAuthentication(uint16_t user, uint8_t count, uint64_t now)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto& auth = *authentication;
+    auto* session = auth.sessions->Find(user);
+    // Only the common user's already-dispatched operation can exhaust the key
+    // still needed to authenticate its retained normal response.
+    if (user == 1 && auth.monitoringPending && session->Ready(now) && session->RemainingMessages() <= count)
+    {
+        auth.deferredControlCount = count;
+        auth.deferredControlKSQ = session->Sequence();
+        while (session->RemainingMessages() > 1)
+        {
+            session->CountAuthentication(now);
+            --auth.deferredControlCount;
+        }
+        return;
+    }
+    for (uint8_t i = 0; i < count; ++i)
+        session->CountAuthentication(now);
+#else
+    (void)user;
+    (void)count;
+    (void)now;
+#endif
+}
+
+void OContext::FinalizeControlCounts(uint64_t now)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto& auth = *authentication;
+    const auto count = auth.deferredControlCount;
+    const auto epoch = auth.deferredControlKSQ;
+    auth.deferredControlCount = 0;
+    auth.deferredControlKSQ = 0;
+    auto* session = auth.sessions ? auth.sessions->Find(1) : nullptr;
+    if (session && session->Sequence() == epoch)
+        for (uint8_t i = 0; i < count; ++i)
+            session->CountAuthentication(now);
+#else
+    (void)now;
+#endif
+}
+
 void OContext::ResetAuthentication()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return;
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    FinalizeControlCounts(now);
     authentication->replyTimer.cancel();
     authentication->challenger.Reset();
     authentication->controlAggressive.Reset();
     authentication->monitoringAggressive.Reset();
     authentication->controlEligible = {{false, false}};
     authentication->monitoringEligible = false;
-    crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
+    if (!isTransmitting)
+        crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
+    // Only the queued G120V2 belongs to the aborted monitoring exchange. V5 key-status traffic is independent.
+    if (authentication->pendingWireSize >= 6 && authentication->pendingWire[1] == 0x83
+        && authentication->pendingWire[4] == 120 && authentication->pendingWire[5] == 2)
+    {
+        crypto::Clear(ser4cpp::wseq_t(authentication->pendingWire.data(), authentication->pendingWireSize));
+        authentication->pendingWireSize = 0;
+    }
+    authentication->pendingReplyKSQ = 0;
+    authentication->pendingReplyCreated = authentication->pendingReplyExpires = 0;
     authentication->monitoring.Reset();
     authentication->monitoringPending = false;
     authentication->monitoringTimer.cancel();
@@ -1008,10 +1078,35 @@ void OContext::TransmitPendingAuthentication()
     if (!authentication || !authentication->sessions || !authentication->pendingWireSize || !CanTransmit())
         return;
     auto& auth = *authentication;
+    const bool reply = auth.pendingWireSize >= 6 && auth.pendingWire[1] == 0x83
+        && auth.pendingWire[4] == 120 && auth.pendingWire[5] == 2;
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    auto* session = reply ? auth.sessions->Find(1) : nullptr;
+    if (reply)
+    {
+        if (session)
+            session->Tick(now);
+        // MAC was generated while the key was valid. Count-only invalidation may
+        // complete this precomputed Reply, but never past its original validity or on replacement keys.
+        if (!session || session->Sequence() != auth.pendingReplyKSQ || now < auth.pendingReplyCreated
+            || now >= auth.pendingReplyExpires)
+        {
+            ResetAuthentication();
+            return;
+        }
+    }
     const auto size = auth.pendingWireSize;
     std::memcpy(auth.wire.data(), auth.pendingWire.data(), size);
     auth.pendingWireSize = 0;
     BeginTx(addresses.destination, ser4cpp::rseq_t(auth.wire.data(), size));
+    if (reply)
+    {
+        auth.monitoringTimer.cancel();
+        auth.pendingReplyKSQ = 0;
+        auth.pendingReplyCreated = auth.pendingReplyExpires = 0;
+        session->CountAuthentication(now); // The outgoing G120V2 is counted only when transmission begins.
+    }
 #endif
 }
 
@@ -1067,6 +1162,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             auto* session = auth.sessions->Find(value.user);
             if (!session)
                 return true;
+            if (auth.deferredControlCount)
+                ResetAuthentication(); // Settle the old exchange before any session replacement.
             size_t size = 0;
             const auto result = session->Process(auth.association, message.payload, now,
                                                  ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
@@ -1095,7 +1192,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             if (!auth.monitoringPending || auth.pendingWireSize)
                 return true;
             auto* session = auth.sessions->Find(1);
-            if (!session || !session->Ready(now))
+            if (!session || !session->Ready(now)
+                || (auth.deferredControlCount && session->Sequence() != auth.deferredControlKSQ))
             {
                 ResetAuthentication();
                 return true;
@@ -1107,13 +1205,16 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 == MasterResponder::Result::OK)
             {
                 auth.monitoringPending = false;
-                auth.monitoringTimer.cancel();
+                // Keep the existing timeout active until a queued Reply actually starts transmission.
                 if (auth.monitoringAggressive.RememberChallenge(auth.monitoring.LastAcceptedChallenge(),
                                                                 auth.monitoring.LastChallengeWasUnsolicited()))
                     auth.monitoringEligible = true;
                 auth.pendingWireSize = size;
-                session->CountAuthentication(now);
-                session->CountAuthentication(now);
+                auth.pendingReplyKSQ = session->Sequence();
+                auth.pendingReplyCreated = now;
+                auth.pendingReplyExpires = std::min(session->ValidUntil(), now + auth.sessions->config.replyTimeoutMs);
+                FinalizeControlCounts(now); // The response's MAC no longer needs the old key.
+                session->CountAuthentication(now); // Incoming monitoring G120V1; outgoing V2 is counted at BeginTx.
                 TransmitPendingAuthentication();
             }
             else
@@ -1121,6 +1222,10 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             return true;
         }
     }
+    // Held common-key counts belong only to the retained response. Its monitoring
+    // Challenge and key replacement were handled above; no new operation may use this budget.
+    if (authentication->sessions && authentication->deferredControlCount)
+        return true;
     if (header.function == FunctionCode::AUTH_REQUEST)
     {
         // Parsing is side-effect free. Only a single, well-framed G120V2 may
@@ -1197,9 +1302,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             }
             if (authentication->sessions)
             {
-                auto* session = authentication->sessions->Find(handler.reply.userNum);
-                session->CountAuthentication(now);
-                session->CountAuthentication(now);
+                // Two distinct ASDUs: outgoing control Challenge and incoming verified Reply.
+                CountControlAuthentication(handler.reply.userNum, 2, now);
             }
         }
         crypto::Clear(ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()));
@@ -1239,7 +1343,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             auth.selectUser = user;
         if (allowed)
             ProcessObjects(ParsedRequest(message.addresses, original.header, original.objects));
-        session->CountAuthentication(now);
+        CountControlAuthentication(user, 1, now); // One incoming authenticated V3/native/V9 ASDU, after dispatch.
         crypto::Clear(ser4cpp::wseq_t(auth.authorized.data(), auth.authorized.size()));
         return true;
     }
