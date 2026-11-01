@@ -118,7 +118,10 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
                                        const ParserSettings& settings,
                                        IAPDUHandler* pHandler)
 {
-    if (record.group == 120 && record.GetQualifierCode() != QualifierCode::FREE_FORMAT)
+    const bool fixedAuth = record.enumeration == GroupVariation::Group120Var3 ||
+                           record.enumeration == GroupVariation::Group120Var4;
+    if (record.group == 120 && record.GetQualifierCode() !=
+        (fixedAuth ? QualifierCode::UINT8_CNT : QualifierCode::FREE_FORMAT))
     {
         return ParseResult::INVALID_OBJECT_QUALIFIER;
     }

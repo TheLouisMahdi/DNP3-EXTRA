@@ -54,6 +54,126 @@ IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<
     return ProcessUnsupportedHeader();
 }
 
+void IAPDUHandler::OnHeader(const CountHeader& header, const ICollection<Group120Var3>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const CountHeader&, const ICollection<Group120Var3>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const CountHeader& header, const ICollection<Group120Var4>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const CountHeader&, const ICollection<Group120Var4>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var5>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var5>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var6>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var6>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var8>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var8>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var9>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var9>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var10>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var10>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var11>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var11>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var12>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var12>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var13>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var13>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var14>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var14>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var15>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var15>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
 void IAPDUHandler::Reset()
 {
     numTotalHeaders = 0;

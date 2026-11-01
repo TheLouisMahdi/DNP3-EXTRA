@@ -114,6 +114,33 @@ bool IsValidAuthObject(const Group120Var7& value)
            (value.errorCode < 128 || value.errorText.length() != 0) && ValidUTF8(value.errorText);
 }
 
+// Known MAL values prescribe exact tag lengths. Reserved/vendor algorithms remain
+// opaque at the wire layer; algorithm selection belongs to the authentication engine.
+bool IsValidAuthObject(const Group120Var5& value)
+{
+    static const size_t lengths[] = {0, 4, 10, 8, 16, 8, 12};
+    return value.challengeData.length() >= 4 &&
+           (value.macAlgorithm >= sizeof(lengths) / sizeof(lengths[0]) ||
+            value.hmacValue.length() == lengths[value.macAlgorithm]);
+}
+bool IsValidAuthObject(const Group120Var6& value) { return value.keyWrapData.length() != 0; }
+bool IsValidAuthObject(const Group120Var8& value) { return value.certificate.length() != 0; }
+bool IsValidAuthObject(const Group120Var9& value) { return value.hmacValue.length() != 0; }
+bool IsValidAuthObject(const Group120Var10& value)
+{
+    return value.userName.length() != 0 && value.certificationData.length() != 0 &&
+           (value.keyChangeMethod >= 64 || value.userPublicKey.length() == 0);
+}
+bool IsValidAuthObject(const Group120Var11& value)
+{
+    return value.userName.length() != 0 &&
+           (value.keyChangeMethod >= 64 || value.challengeData.length() >= 4);
+}
+bool IsValidAuthObject(const Group120Var12& value) { return value.challengeData.length() >= 4; }
+bool IsValidAuthObject(const Group120Var13& value) { return value.encryptedUpdateKey.length() != 0; }
+bool IsValidAuthObject(const Group120Var14& value) { return value.digitalSignature.length() != 0; }
+bool IsValidAuthObject(const Group120Var15& value) { return value.hmacValue.length() != 0; }
+
 ParseResult FreeFormatParser::Parse(ser4cpp::rseq_t& buffer, const HeaderRecord& record,
                                     const ParserSettings& settings, IAPDUHandler* handler)
 {
@@ -122,6 +149,16 @@ ParseResult FreeFormatParser::Parse(ser4cpp::rseq_t& buffer, const HeaderRecord&
     {
     case GroupVariation::Group120Var1: return ParseObjects<Group120Var1>(buffer, record, handler);
     case GroupVariation::Group120Var2: return ParseObjects<Group120Var2>(buffer, record, handler);
+    case GroupVariation::Group120Var5: return ParseObjects<Group120Var5>(buffer, record, handler);
+    case GroupVariation::Group120Var6: return ParseObjects<Group120Var6>(buffer, record, handler);
+    case GroupVariation::Group120Var8: return ParseObjects<Group120Var8>(buffer, record, handler);
+    case GroupVariation::Group120Var9: return ParseObjects<Group120Var9>(buffer, record, handler);
+    case GroupVariation::Group120Var10: return ParseObjects<Group120Var10>(buffer, record, handler);
+    case GroupVariation::Group120Var11: return ParseObjects<Group120Var11>(buffer, record, handler);
+    case GroupVariation::Group120Var12: return ParseObjects<Group120Var12>(buffer, record, handler);
+    case GroupVariation::Group120Var13: return ParseObjects<Group120Var13>(buffer, record, handler);
+    case GroupVariation::Group120Var14: return ParseObjects<Group120Var14>(buffer, record, handler);
+    case GroupVariation::Group120Var15: return ParseObjects<Group120Var15>(buffer, record, handler);
     case GroupVariation::Group120Var7: return ParseObjects<Group120Var7>(buffer, record, handler);
     default: return ParseResult::INVALID_OBJECT_QUALIFIER;
     }

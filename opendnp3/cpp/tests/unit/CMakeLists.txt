@@ -22,6 +22,7 @@ set(unittests_src
     ./main.cpp
 
     ./TestAuthWireCodec.cpp
+    ./TestSessionKeyWireCodec.cpp
     ./TestAPDUParsing.cpp
     ./TestAPDUWriting.cpp    
     ./TestCollectionTransform.cpp

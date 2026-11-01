@@ -157,7 +157,19 @@ enum class GroupVariation : uint16_t
   Group113Var0 = 0x7100,
   Group120Var1 = 0x7801,
   Group120Var2 = 0x7802,
+  Group120Var3 = 0x7803,
+  Group120Var4 = 0x7804,
+  Group120Var5 = 0x7805,
+  Group120Var6 = 0x7806,
   Group120Var7 = 0x7807,
+  Group120Var8 = 0x7808,
+  Group120Var9 = 0x7809,
+  Group120Var10 = 0x780A,
+  Group120Var11 = 0x780B,
+  Group120Var12 = 0x780C,
+  Group120Var13 = 0x780D,
+  Group120Var14 = 0x780E,
+  Group120Var15 = 0x780F,
   UNKNOWN = 0xFFFF
 };
 

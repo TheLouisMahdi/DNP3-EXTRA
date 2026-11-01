@@ -97,6 +97,97 @@ struct Group120Var2 : public IVariableLength
   ser4cpp::rseq_t hmacValue;
 };
 
+// Authentication - Aggressive Mode Request
+struct Group120Var3
+{
+  static GroupVariationID ID() { return GroupVariationID(120,3); }
+
+  Group120Var3();
+
+  static size_t Size() { return 6; }
+  static bool Read(ser4cpp::rseq_t&, Group120Var3&);
+  static bool Write(const Group120Var3&, ser4cpp::wseq_t&);
+
+  uint32_t seqNum;
+  uint16_t userNum;
+};
+
+// Authentication - Session Key Status Request
+struct Group120Var4
+{
+  static GroupVariationID ID() { return GroupVariationID(120,4); }
+
+  Group120Var4();
+
+  static size_t Size() { return 2; }
+  static bool Read(ser4cpp::rseq_t&, Group120Var4&);
+  static bool Write(const Group120Var4&, ser4cpp::wseq_t&);
+
+  uint16_t userNum;
+};
+
+// Authentication - Session Key Status
+struct Group120Var5 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,5); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var5();
+
+  Group120Var5(
+    uint32_t seqNum,
+    uint16_t userNum,
+    uint8_t keyWrapAlgorithm,
+    uint8_t keyStatus,
+    uint8_t macAlgorithm,
+    const ser4cpp::rseq_t& challengeData,
+    const ser4cpp::rseq_t& hmacValue
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 11;
+
+  // member variables
+  uint32_t seqNum;
+  uint16_t userNum;
+  uint8_t keyWrapAlgorithm;
+  uint8_t keyStatus;
+  uint8_t macAlgorithm;
+  ser4cpp::rseq_t challengeData;
+  ser4cpp::rseq_t hmacValue;
+};
+
+// Authentication - Session Key Change
+struct Group120Var6 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,6); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var6();
+
+  Group120Var6(
+    uint32_t seqNum,
+    uint16_t userNum,
+    const ser4cpp::rseq_t& keyWrapData
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 6;
+
+  // member variables
+  uint32_t seqNum;
+  uint16_t userNum;
+  ser4cpp::rseq_t keyWrapData;
+};
+
 // Authentication - Error
 struct Group120Var7 : public IVariableLength
 {
@@ -128,6 +219,220 @@ struct Group120Var7 : public IVariableLength
   uint8_t errorCode;
   DNPTime time;
   ser4cpp::rseq_t errorText;
+};
+
+// Authentication - User Certificate
+struct Group120Var8 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,8); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var8();
+
+  Group120Var8(
+    uint8_t keyChangeMethod,
+    uint8_t certificateType,
+    const ser4cpp::rseq_t& certificate
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 2;
+
+  // member variables
+  uint8_t keyChangeMethod;
+  uint8_t certificateType;
+  ser4cpp::rseq_t certificate;
+};
+
+// Authentication - Message Authentication Code
+struct Group120Var9 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,9); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var9();
+
+  explicit Group120Var9(
+    const ser4cpp::rseq_t& hmacValue
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 0;
+
+  // member variables
+  ser4cpp::rseq_t hmacValue;
+};
+
+// Authentication - User Status Change
+struct Group120Var10 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,10); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var10();
+
+  Group120Var10(
+    uint8_t keyChangeMethod,
+    uint8_t operation,
+    uint32_t seqNum,
+    uint16_t userRole,
+    uint16_t userRoleExpiryDays,
+    const ser4cpp::rseq_t& userName,
+    const ser4cpp::rseq_t& userPublicKey,
+    const ser4cpp::rseq_t& certificationData
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 16;
+
+  // member variables
+  uint8_t keyChangeMethod;
+  uint8_t operation;
+  uint32_t seqNum;
+  uint16_t userRole;
+  uint16_t userRoleExpiryDays;
+  ser4cpp::rseq_t userName;
+  ser4cpp::rseq_t userPublicKey;
+  ser4cpp::rseq_t certificationData;
+};
+
+// Authentication - Update Key Change Request
+struct Group120Var11 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,11); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var11();
+
+  Group120Var11(
+    uint8_t keyChangeMethod,
+    const ser4cpp::rseq_t& userName,
+    const ser4cpp::rseq_t& challengeData
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 5;
+
+  // member variables
+  uint8_t keyChangeMethod;
+  ser4cpp::rseq_t userName;
+  ser4cpp::rseq_t challengeData;
+};
+
+// Authentication - Update Key Change Reply
+struct Group120Var12 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,12); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var12();
+
+  Group120Var12(
+    uint32_t seqNum,
+    uint16_t userNum,
+    const ser4cpp::rseq_t& challengeData
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 8;
+
+  // member variables
+  uint32_t seqNum;
+  uint16_t userNum;
+  ser4cpp::rseq_t challengeData;
+};
+
+// Authentication - Update Key Change
+struct Group120Var13 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,13); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var13();
+
+  Group120Var13(
+    uint32_t seqNum,
+    uint16_t userNum,
+    const ser4cpp::rseq_t& encryptedUpdateKey
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 8;
+
+  // member variables
+  uint32_t seqNum;
+  uint16_t userNum;
+  ser4cpp::rseq_t encryptedUpdateKey;
+};
+
+// Authentication - Update Key Change Signature
+struct Group120Var14 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,14); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var14();
+
+  explicit Group120Var14(
+    const ser4cpp::rseq_t& digitalSignature
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 0;
+
+  // member variables
+  ser4cpp::rseq_t digitalSignature;
+};
+
+// Authentication - Update Key Change Confirmation
+struct Group120Var15 : public IVariableLength
+{
+  static GroupVariationID ID() { return GroupVariationID(120,15); }
+
+  virtual GroupVariationID InstanceID() const override final { return ID(); }
+
+  Group120Var15();
+
+  explicit Group120Var15(
+    const ser4cpp::rseq_t& hmacValue
+  );
+
+  virtual size_t Size() const override final;
+  virtual bool Read(const ser4cpp::rseq_t&) override final;
+  virtual bool Write(ser4cpp::wseq_t&) const override final;
+
+  static const size_t MIN_SIZE = 0;
+
+  // member variables
+  ser4cpp::rseq_t hmacValue;
 };
 
 

@@ -55,6 +55,19 @@ public:
     IINField Errors() const;
 
     void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var1>& values);
+    void OnHeader(const CountHeader& header, const ICollection<Group120Var3>& values);
+    void OnHeader(const CountHeader& header, const ICollection<Group120Var4>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var5>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var6>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var8>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var9>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var10>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var11>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var12>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var13>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var14>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var15>& values);
+
     void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var2>& values);
     void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var7>& values);
     void OnHeader(const AllObjectsHeader& header);
@@ -123,6 +136,19 @@ protected:
     }
 
     virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var1>& values);
+    virtual IINField ProcessHeader(const CountHeader& header, const ICollection<Group120Var3>& values);
+    virtual IINField ProcessHeader(const CountHeader& header, const ICollection<Group120Var4>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var5>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var6>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var8>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var9>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var10>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var11>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var12>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var13>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var14>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var15>& values);
+
     virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var2>& values);
     virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var7>& values);
     virtual IINField ProcessHeader(const AllObjectsHeader& record);

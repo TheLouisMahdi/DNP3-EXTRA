@@ -26,5 +26,16 @@ namespace opendnp3
 bool IsValidAuthObject(const Group120Var1& value);
 bool IsValidAuthObject(const Group120Var2& value);
 bool IsValidAuthObject(const Group120Var7& value);
+bool IsValidAuthObject(const Group120Var5& value);
+bool IsValidAuthObject(const Group120Var6& value);
+bool IsValidAuthObject(const Group120Var8& value);
+bool IsValidAuthObject(const Group120Var9& value);
+bool IsValidAuthObject(const Group120Var10& value);
+bool IsValidAuthObject(const Group120Var11& value);
+bool IsValidAuthObject(const Group120Var12& value);
+bool IsValidAuthObject(const Group120Var13& value);
+bool IsValidAuthObject(const Group120Var14& value);
+bool IsValidAuthObject(const Group120Var15& value);
+
 }
 #endif
