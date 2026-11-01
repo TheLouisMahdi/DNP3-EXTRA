@@ -69,6 +69,8 @@ public:
     Result SetSessionKey(uint16_t user, ser4cpp::rseq_t key, uint64_t validUntilMs, uint64_t nowMs);
     void Reset(); // wipes keys and pending state, but preserves CSQ (7.5.2.3.3).
     void Tick(uint64_t nowMs);
+    // Table 7-8 row 13: cancel only the exact outstanding Challenge, retaining keys/CSQ.
+    bool CancelOnError(const Group120Var7& error, uint8_t appSequence, uint64_t nowMs);
     State GetState() const;
     ser4cpp::rseq_t LastAcceptedChallenge() const
     {

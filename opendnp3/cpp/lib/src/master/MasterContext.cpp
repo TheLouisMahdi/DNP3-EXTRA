@@ -1209,6 +1209,61 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return false;
+    // Standalone errors are Info objects (Table 7-9); native V7 events retain
+    // their ordinary RESPONSE/UNSOLICITED_RESPONSE processing path.
+    if (apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 7
+        && header.function != FunctionCode::RESPONSE && header.function != FunctionCode::UNSOLICITED_RESPONSE)
+    {
+        auto& auth = *authentication;
+        if (header.function != FunctionCode::AUTH_RESPONSE)
+            return true;
+        class ErrorHandler final : public IAPDUHandler
+        {
+        public:
+            Group120Var7 value;
+            bool valid = false;
+            bool IsAllowed(uint32_t n, GroupVariation gv, QualifierCode qc) override
+            {
+                return n == 0 && gv == GroupVariation::Group120Var7 && qc == QualifierCode::FREE_FORMAT;
+            }
+            IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var7>& values) override
+            {
+                valid = values.Count() == 1;
+                if (valid)
+                    values.ForeachItem([this](const Group120Var7& v) { value = v; });
+                return IINField::Empty();
+            }
+        } error;
+        if (!header.control.IsFirAndFin() || header.control.CON || header.control.UNS
+            || APDUParser::Parse(apdu.skip(4), error, nullptr) != ParseResult::OK || !error.valid
+            || error.value.associationId != auth.association
+            || error.value.errorCode == 0 || error.value.errorCode == 2 || error.value.errorCode == 3
+            || (error.value.errorCode >= 13 && error.value.errorCode < 128))
+            return true;
+        FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication error received: code=%u user=%u sequence=%u",
+                         error.value.errorCode, error.value.userNum, error.value.seqNum);
+        // Valid unknown-user Errors remain useful diagnostics, but an unconfigured
+        // nonzero user cannot own an active authentication exchange.
+        if (error.value.userNum && auth.sessions && !auth.sessions->Find(error.value.userNum))
+            return true;
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count());
+        if (auth.monitorWaiting && auth.monitoring.CancelOnError(error.value, header.control.SEQ, now))
+        {
+            auth.monitorWaiting = false;
+            // Only this operation's unsent Challenge is discarded; wire may be in flight.
+            if (auth.pendingWireSize >= 8 && auth.pendingWire[1] == 0x20
+                && auth.pendingWire[2] == 120 && auth.pendingWire[3] == 1
+                && (auth.pendingWire[0] & 0x0F) == auth.monitorSequence)
+            {
+                crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWireSize));
+                auth.pendingWireSize = 0;
+            }
+        }
+        // Responder/key-change recovery is code-specific (P4-FIX-02). An Error
+        // never authenticates data, starts a retry or resets another exchange.
+        return true;
+    }
     if (authentication->sessions)
     {
         auto& auth = *authentication;

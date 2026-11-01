@@ -52,6 +52,14 @@ public:
     static SessionKeys& Common(OContext& context) { return *context.authentication->sessions->Find(1); }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
     static bool MonitoringPending(OContext& context) { return context.authentication->monitoringPending; }
+    static OutstationChallenger::State ChallengeState(OContext& context)
+    {
+        return context.authentication->challenger.GetState();
+    }
+    static rseq_t ChallengeBytes(OContext& context)
+    {
+        return rseq_t(context.authentication->challenge.data(), context.authentication->challenge.size());
+    }
     static uint8_t Deferred(OContext& context) { return context.authentication->deferredControlCount; }
     static rseq_t AggressiveBytes(OContext& context, size_t size)
     {
@@ -154,8 +162,9 @@ struct RuntimePair
     bool corruptAggressiveControl = false, corruptAggressiveMonitoring = false, denyAggressiveControl = false;
     size_t aggressiveRequests = 0, aggressiveResponses = 0;
     std::string savedAggressive;
-    explicit RuntimePair(bool unsolicited = false, bool aggressive = false, bool receiveAggressive = false)
-        : master(MasterSettings(source, policy, aggressive, receiveAggressive), Addresses()),
+    explicit RuntimePair(bool unsolicited = false, bool aggressive = false, bool receiveAggressive = false,
+                         const std::shared_ptr<ILogHandler>& masterLog = nullptr)
+        : master(MasterSettings(source, policy, aggressive, receiveAggressive), Addresses(), "test", masterLog),
           outstation(OutSettings(source, policy, unsolicited, aggressive))
     {
         outstation.LowerLayerUp();
@@ -255,6 +264,225 @@ struct RuntimePair
     }
 };
 } // namespace
+TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its Challenge owner", "[production-sa][auth-error]")
+{
+    const bool masterChallenger = GENERATE(false, true);
+    // Match, association, user, CSQ, app SEQ, CON, UNS, qualifier, count,
+    // obsolete code, another valid code, wrong function, extra object, unknown user.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+    const auto code = fault == 0 ? GENERATE(uint8_t{5}, uint8_t{7}, uint8_t{128}) : uint8_t{5};
+    const bool cancels = fault == 0 || fault == 10;
+    auto masterLog = std::make_shared<MockLogHandlerImpl>();
+    RuntimePair pair(false, false, false, masterLog);
+    std::string pendingRequest, lateReply;
+    Group120Var1 challenge;
+    rseq_t borrowed;
+    if (masterChallenger)
+    {
+        // Complete user 1 only; user 2's V4 stays in flight concurrently.
+        for (size_t step = 0; step < 2; ++step)
+        {
+            const auto request = pair.master.lower->PopWriteAsHex();
+            REQUIRE(pair.master.context->OnTxReady());
+            pair.outstation.SendToOutstation(request);
+            REQUIRE(pair.outstation.lower->NumWrites() == 1);
+            const auto status = pair.outstation.lower->PopWriteAsHex();
+            pair.outstation.OnTxReady();
+            REQUIRE(pair.master.SendToMaster(status));
+            pair.master.exe->run_many();
+        }
+        pendingRequest = pair.master.lower->PopWriteAsHex();
+        HexSequence inFlight(pendingRequest);
+        REQUIRE(inFlight.ToRSeq()[3] == 4);
+        borrowed = ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, inFlight.ToRSeq().length());
+        REQUIRE(pair.master.SendToMaster("F3 82 00 00"));
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+        const auto pending = ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context);
+        REQUIRE(challenge.Read(pending.take(ProductionAuthenticationTestAccess::Pending(*pair.master.context)).skip(8)));
+    }
+    else
+    {
+        pair.Pump();
+        pair.SelectOperate();
+        const auto request = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto c1 = pair.outstation.lower->PopWriteAsHex();
+        HexSequence packet(c1);
+        REQUIRE(challenge.Read(packet.ToRSeq().skip(10)));
+        borrowed = ProductionAuthenticationTestAccess::ChallengeBytes(pair.outstation.context);
+        pendingRequest = c1;
+        REQUIRE(pair.master.SendToMaster(c1));
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        lateReply = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+    }
+    const auto appSequence = masterChallenger ? uint8_t{3} : uint8_t{0};
+    const auto user = masterChallenger ? uint16_t{1} : uint16_t{0};
+    Group120Var7 error(challenge.seqNum, user, 7, code, DNPTime(0), rseq_t());
+    const uint8_t privateText = 'E';
+    if (code >= 128) error.errorText = rseq_t(&privateText, 1);
+    if (fault == 1) error.associationId = 8;
+    if (fault == 2) error.userNum = masterChallenger ? 2 : 1;
+    if (fault == 3) --error.seqNum;
+    if (fault == 9) error.errorCode = 2;
+    if (fault == 10) error.errorCode = 1; // Matching ownership, not code 5, determines cancellation.
+    if (fault == 13)
+    {
+        error.userNum = 3;
+        error.errorCode = 11; // Valid Unknown User error: log it without cancelling the active exchange.
+    }
+    std::array<uint8_t, 128> data{};
+    size_t errorSize = 0;
+    const auto seq = fault == 4 ? uint8_t(appSequence + 1) : appSequence;
+    if (masterChallenger)
+    {
+        APDUResponse response(wseq_t(data.data(), data.size()));
+        response.SetFunction(FunctionCode::AUTH_RESPONSE);
+        response.SetControl(AppControlField(true, true, false, false, seq));
+        response.SetIIN(IINField::Empty());
+        auto writer = response.GetWriter();
+        REQUIRE(writer.WriteFreeFormat(&error, 1));
+        if (fault == 12) REQUIRE(writer.WriteFreeFormat(&error, 1));
+        errorSize = response.Size();
+    }
+    else
+    {
+        APDURequest request(wseq_t(data.data(), data.size()));
+        request.ConfigureHeader(FunctionCode::AUTH_REQUEST_NO_ACK, seq);
+        auto writer = request.GetWriter();
+        REQUIRE(writer.WriteFreeFormat(&error, 1));
+        if (fault == 12) REQUIRE(writer.WriteFreeFormat(&error, 1));
+        errorSize = request.Size();
+    }
+    const size_t objectOffset = masterChallenger ? 4 : 2;
+    if (fault == 5) data[0] |= 0x20;
+    if (fault == 6) data[0] |= 0x10;
+    if (fault == 7) data[objectOffset + 2] = 0x07;
+    if (fault == 8) data[objectOffset + 3] = 0;
+    if (fault == 11) data[1] = 0x20;
+    const auto errorWire = HexConversions::to_hex(rseq_t(data.data(), errorSize));
+    masterLog->messages.clear();
+    pair.outstation.log.ClearLog();
+    if (masterChallenger)
+    {
+        REQUIRE(pair.master.SendToMaster(errorWire));
+        if (fault == 13)
+        {
+            bool logged = false;
+            for (const auto& record : masterLog->messages)
+                logged = logged || record.message.find("Authentication error received: code=11 user=3 ") == 0;
+            REQUIRE(logged);
+        }
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context) == (!cancels));
+        HexSequence inFlight(pendingRequest);
+        REQUIRE(borrowed.equals(inFlight.ToRSeq()));
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(pair.master.context->solSeq.Get() == 0); // Error never releases the protected response.
+        REQUIRE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).IsExchanging());
+        if (!cancels)
+        {
+            // The valid response path must still complete after any ignored Error.
+            REQUIRE(pair.master.context->OnTxReady());
+            REQUIRE(pair.master.lower->NumWrites() == 1);
+            HexSequence c1(pair.master.lower->PopWriteAsHex());
+            REQUIRE(c1.ToRSeq()[3] == 1);
+            REQUIRE(pair.master.context->OnTxReady());
+            auto& common = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+            MasterResponder peer(7, 16, 2000, true);
+            REQUIRE(peer.SetSessionKey(1, common.MonitoringKey(0), common.ValidUntil(), 0) == MasterResponder::Result::OK);
+            HexSequence original("F3 82 00 00");
+            REQUIRE(peer.RetainRequest(7, original.ToRSeq(), 0) == MasterResponder::Result::OK);
+            std::array<uint8_t, 64> reply{};
+            size_t size = 0;
+            REQUIRE(peer.Respond(7, c1.ToRSeq(), 0, wseq_t(reply.data(), reply.size()), size)
+                == MasterResponder::Result::OK);
+            REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(reply.data(), size))));
+        }
+        else
+        {
+            REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+            REQUIRE(pair.master.SendToMaster(errorWire)); // Replay cannot revive the discarded response.
+            REQUIRE(pair.master.context->OnTxReady());
+        }
+        // The independent user 2 exchange must still accept its real V5/V6/V5.
+        pair.outstation.SendToOutstation(pendingRequest);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto status = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(status));
+        pair.Pump();
+        REQUIRE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).Ready(0));
+    }
+    else
+    {
+        pair.outstation.SendToOutstation(errorWire);
+        if (fault == 13)
+        {
+            bool logged = false;
+            LogRecord record;
+            while (pair.outstation.log.GetNextEntry(record))
+                logged = logged || record.message.find("Authentication error received: code=11 user=3 ") == 0;
+            REQUIRE(logged);
+        }
+        REQUIRE((ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+            == OutstationChallenger::State::WAITING_FOR_REPLY) == (!cancels));
+        HexSequence inFlight(pendingRequest);
+        REQUIRE(borrowed.equals(inFlight.ToRSeq()));
+        REQUIRE(pair.outstation.lower->NumWrites() == 0);
+        REQUIRE(ProductionAuthenticationTestAccess::Common(pair.outstation.context).Ready(0));
+        pair.outstation.OnTxReady();
+        if (cancels) pair.outstation.SendToOutstation(errorWire);
+        pair.outstation.SendToOutstation(lateReply);
+        REQUIRE(pair.outstation.cmdHandler->NumSelect() == (cancels ? 0 : 1));
+    }
+}
+
+TEST_CASE("ProductionAuthentication - standalone Error preserves independent outstation monitoring", "[production-sa][auth-error]")
+{
+    RuntimePair pair;
+    pair.Pump();
+    pair.SelectOperate();
+    // Authenticate SELECT and retain its response for Monitoring Direction authentication.
+    for (size_t step = 0; step < 2; ++step)
+    {
+        const auto request = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto response = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(response));
+    }
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+    REQUIRE(pair.outstation.NumPendingTimers() == 1);
+    const auto challenge = pair.master.lower->PopWriteAsHex();
+    HexSequence c1(challenge);
+    Group120Var1 value;
+    REQUIRE(value.Read(c1.ToRSeq().skip(8)));
+    // An Error without a matching control Challenge must not reset the
+    // independent response waiting for its monitoring Challenge.
+    Group120Var7 error(value.seqNum, 1, 7, 1, DNPTime(0), rseq_t());
+    std::array<uint8_t, 64> data{};
+    APDURequest request(wseq_t(data.data(), data.size()));
+    request.ConfigureHeader(FunctionCode::AUTH_REQUEST_NO_ACK, c1.ToRSeq()[0] & 15);
+    auto writer = request.GetWriter();
+    REQUIRE(writer.WriteFreeFormat(&error, 1));
+    pair.outstation.SendToOutstation(HexConversions::to_hex(request.ToRSeq()));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+    REQUIRE(pair.outstation.NumPendingTimers() == 1);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(challenge);
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+}
+
 TEST_CASE("ProductionAuthentication - real key negotiation gates both request and response paths", "[production-sa]")
 {
     RuntimePair pair;

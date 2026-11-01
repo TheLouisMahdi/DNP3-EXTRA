@@ -1117,6 +1117,46 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         return false;
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    if (objects.length() >= 2 && objects[0] == 120 && objects[1] == 7)
+    {
+        auto& auth = *authentication;
+        if (header.function != FunctionCode::AUTH_REQUEST_NO_ACK)
+            return true;
+        class ErrorHandler final : public IAPDUHandler
+        {
+        public:
+            Group120Var7 value;
+            bool valid = false;
+            bool IsAllowed(uint32_t n, GroupVariation gv, QualifierCode qc) override
+            {
+                return n == 0 && gv == GroupVariation::Group120Var7 && qc == QualifierCode::FREE_FORMAT;
+            }
+            IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var7>& values) override
+            {
+                valid = values.Count() == 1;
+                if (valid)
+                    values.ForeachItem([this](const Group120Var7& v) { value = v; });
+                return IINField::Empty();
+            }
+        } error;
+        if (!header.control.IsFirAndFin() || header.control.CON || header.control.UNS
+            || APDUParser::Parse(objects, error, nullptr) != ParseResult::OK || !error.valid
+            || error.value.associationId != auth.association
+            || error.value.errorCode == 0 || error.value.errorCode == 2 || error.value.errorCode == 3
+            || (error.value.errorCode >= 13 && error.value.errorCode < 128))
+            return true;
+        FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication error received: code=%u user=%u sequence=%u",
+                         error.value.errorCode, error.value.userNum, error.value.seqNum);
+        // Valid unknown-user Errors remain useful diagnostics, but an unconfigured
+        // nonzero user cannot own an active authentication exchange.
+        if (error.value.userNum && auth.sessions && !auth.sessions->Find(error.value.userNum))
+            return true;
+        if (auth.challenger.CancelOnError(error.value, header.control.SEQ, now))
+            auth.replyTimer.cancel();
+        // No retry or broad ResetAuthentication: monitoring, key exchange and
+        // transmitted buffers have independent owners.
+        return true;
+    }
     authentication->challenger.Tick(now);
     if (header.control.UNS && header.function != FunctionCode::CONFIRM)
     {

@@ -86,6 +86,21 @@ void OutstationChallenger::Tick(uint64_t nowMs)
         ClearPending();
 }
 
+bool OutstationChallenger::CancelOnError(const Group120Var7& error, uint8_t appSequence, uint64_t nowMs)
+{
+    // A.45.7: echo the user of the challenged operation. Our standalone
+    // Challenges carry USR=0 in Control Direction and USR=1 in Monitoring Direction.
+    // Table 7-8 row 13 applies to any valid Error belonging to this exchange;
+    // code-specific recovery and MAC algorithm reselection are separate.
+    if (error.associationId != associationId || error.userNum != (monitoringDirection ? 1 : 0))
+        return false;
+    Tick(nowMs);
+    if (!requestSize || error.seqNum != pendingSequence || (transcript[0] & 0x0F) != appSequence)
+        return false;
+    ClearPending(); // Never publish the challenged ASDU, invalidate keys or reset CSQ.
+    return true;
+}
+
 bool OutstationChallenger::HasKeys() const
 {
     for (const auto& user : users)
