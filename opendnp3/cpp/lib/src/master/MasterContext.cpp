@@ -609,7 +609,35 @@ MContext::TaskState MContext::ResumeActiveTask()
         authentication->protectedTask = request.GetFunction() != FunctionCode::CONFIRM
             && (authentication->sessions || request.GetFunction() != FunctionCode::READ);
         authentication->replyIssued = false;
-        if (authentication->protectedTask
+        bool aggressive = false;
+        if (authentication->protectedTask && authentication->sessions)
+        {
+            auto& auth = *authentication;
+            auto* session = auth.sessions->Find(activeTask->AuthenticationUser());
+            const auto index = session->User() == auth.sessions->config.users[0] ? 0u : 1u;
+            if (auth.sessions->config.aggressiveTransmit && auth.controlEligible[index]
+                && auth.controlAggressive.HasChallenge(request.GetControl().UNS))
+            {
+                size_t size = 0;
+                const auto now = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch())
+                        .count());
+                if (!auth.controlAggressive.Create(
+                        auth.association, session->User(), session->ControlKey(now), apdu,
+                        ser4cpp::wseq_t(auth.aggressiveWire.data(), auth.aggressiveWire.size()), size))
+                {
+                    responseTimer.cancel();
+                    activeTask->OnMessageFormatError(Timestamp(executor->get_time()));
+                    CompleteActiveTask();
+                    return TaskState::IDLE;
+                }
+                apdu = ser4cpp::rseq_t(auth.aggressiveWire.data(), size);
+                aggressive = true;
+                auth.replyIssued = true;
+                session->CountAuthentication(now);
+            }
+        }
+        if (authentication->protectedTask && !aggressive
             && authentication->responder.RetainRequest(
                    authentication->association, apdu,
                    static_cast<uint64_t>(
@@ -732,6 +760,11 @@ void MContext::ResetAuthentication()
     if (!authentication)
         return;
     authentication->responder.Reset();
+    authentication->controlAggressive.Reset();
+    authentication->monitoringAggressive.Reset();
+    authentication->controlEligible = {{false, false}};
+    authentication->monitoringEligible = false;
+    crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
     authentication->protectedConfirm = false;
     if (authentication->monitorWaiting)
         authentication->pendingWireSize = 0;
@@ -758,7 +791,14 @@ void MContext::TransmitAuthenticationReply()
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         auto* session = authentication->sessions->Find(authentication->responderUser);
         if (session)
+        {
+            const auto index = session->User() == authentication->sessions->config.users[0] ? 0u : 1u;
+            if (authentication->controlAggressive.RememberChallenge(
+                    authentication->responder.LastAcceptedChallenge(),
+                    authentication->responder.LastChallengeWasUnsolicited()))
+                authentication->controlEligible[index] = true;
             session->CountAuthentication(now);
+        }
     }
 #endif
 }
@@ -880,7 +920,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             if (result == SessionKeys::Result::INSTALLED)
             {
                 auth.established = true;
+                auth.controlEligible[auth.exchangeIndex] = false;
                 auto* session = auth.sessions->At(auth.exchangeIndex);
+                if (session->User() == 1)
+                    auth.monitoringEligible = false;
                 if (session->User() == 1)
                     auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now);
                 auth.exchangeIndex = 2;
@@ -919,6 +962,9 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     == OutstationChallenger::Result::AUTHENTICATED)
             {
                 auth.monitorWaiting = false;
+                if (auth.monitoringAggressive.RememberChallenge(auth.monitoring.LastAcceptedChallenge(),
+                                                                auth.monitoring.LastChallengeWasUnsolicited()))
+                    auth.monitoringEligible = true;
                 const auto original
                     = APDUHeaderParser::ParseResponse(ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
                 auth.sessions->Find(1)->CountAuthentication(now);
@@ -928,6 +974,35 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             }
             else
                 this->ResetAuthentication();
+            crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
+            return true;
+        }
+        if ((header.function == FunctionCode::RESPONSE || header.function == FunctionCode::UNSOLICITED_RESPONSE)
+            && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 3)
+        {
+            if (!auth.sessions->config.aggressiveReceive || !auth.monitoringEligible
+                || (header.function == FunctionCode::RESPONSE && auth.protectedTask && !auth.replyIssued))
+                return true;
+            uint16_t user = 0;
+            auto* session = auth.sessions->Find(1);
+            size_t size = 0;
+            if (session && session->Ready(now) && AggressiveMode::InspectUser(apdu, true, user) && user == 1
+                && auth.monitoringAggressive.Verify(
+                    auth.association, user, session->MonitoringKey(now), apdu,
+                    ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()), size))
+            {
+                auth.monitoring.ObserveAggressiveSequence(auth.monitoringAggressive.Sequence());
+                if (!header.control.UNS && auth.monitorWaiting && header.control.SEQ == auth.monitorSequence)
+                {
+                    auth.monitoring.CancelPending();
+                    auth.monitorWaiting = false;
+                }
+                session->CountAuthentication(now);
+                const auto original
+                    = APDUHeaderParser::ParseResponse(ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
+                if (original.success)
+                    ProcessAPDU(original.header, original.objects);
+            }
             crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
             return true;
         }

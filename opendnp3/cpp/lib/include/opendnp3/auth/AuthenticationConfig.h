@@ -43,7 +43,6 @@ struct AuthenticationConfig
     uint32_t replyTimeoutMs = 2000;
     uint8_t tagLength = 16;
     uint16_t maxRestartRekeys = 2;
-    // Aggressive runtime support is a separate milestone; enabling it currently fails configuration.
     bool aggressiveTransmit = false;
     bool aggressiveReceive = false;
     std::shared_ptr<IAuthenticationCredentials> credentials;

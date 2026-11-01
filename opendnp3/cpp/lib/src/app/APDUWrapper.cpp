@@ -34,6 +34,16 @@ APDUWrapper::APDUWrapper(const ser4cpp::wseq_t& buffer) : valid(true), buffer(bu
     remaining.advance(2);
 }
 
+bool APDUWrapper::AppendObjects(ser4cpp::rseq_t objects)
+{
+    if (!valid || objects.length() > remaining.length() || (objects.length() && !static_cast<const uint8_t*>(objects)))
+        return false;
+    if (objects.is_empty())
+        return true;
+    remaining.copy_from(objects);
+    return true;
+}
+
 bool APDUWrapper::IsValid() const
 {
     return valid;

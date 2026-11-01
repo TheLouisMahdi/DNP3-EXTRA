@@ -23,7 +23,6 @@ bool AuthenticationSession::Load(uint64_t now)
     for (auto& entry : sessions)
         entry->Reset();
     if (config.mode != AuthenticationConfig::Mode::REQUIRED || !config.credentials || !config.authorization
-        || config.aggressiveTransmit || config.aggressiveReceive
         || config.users[0] != 1 || !config.users[1] || config.users[0] == config.users[1])
         return false;
     struct Key

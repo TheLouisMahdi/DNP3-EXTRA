@@ -79,6 +79,14 @@ public:
     void Tick(uint64_t nowMs);
     void Reset(); // wipes sensitive state; preserves association CSQ replay history.
     State GetState() const;
+    ser4cpp::rseq_t LastAcceptedChallenge() const
+    {
+        return ser4cpp::rseq_t(acceptedChallenge.data(), acceptedSize);
+    }
+    bool LastChallengeWasUnsolicited() const
+    {
+        return acceptedUnsolicited;
+    }
 
 private:
     bool ObserveTime(uint64_t nowMs);
@@ -97,6 +105,9 @@ private:
     // Original request retained at offset MAX_CHALLENGE_SIZE, then moved next
     // to the received Challenge for Table A-3 MAC calculation (IEEE PDF p765).
     std::array<uint8_t, MAX_CHALLENGE_SIZE + MAX_REQUEST_SIZE> transcript{};
+    std::array<uint8_t, MAX_CHALLENGE_SIZE> acceptedChallenge{};
+    size_t acceptedSize = 0;
+    bool acceptedUnsolicited = false;
     size_t requestSize = 0;
     uint64_t requestTime = 0;
     uint64_t lastTime = 0;

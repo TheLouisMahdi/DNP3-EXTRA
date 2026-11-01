@@ -23,6 +23,7 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
 - `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
+- `auth/AggressiveMode.*` → authenticated V3/V9 envelopes, separate solicited/unsolicited challenge histories and replay checks.
 - `auth/WindowsAuthenticationCredentials.cpp` → read-only Windows Credential Manager adapter.
 - `master/MasterResponder.*`, `outstation/OutstationChallenger.*` → Control/Monitoring challenge-response cores.
 - `transport/` → fragment segmentation/reassembly.

@@ -22,6 +22,7 @@
 
 #include "LayerInterfaces.h"
 #include "app/AppSeqNum.h"
+#include "auth/AggressiveMode.h"
 #include "auth/AuthenticationSession.h"
 #include "master/HeaderBuilder.h"
 #include "master/IMasterScheduler.h"
@@ -206,19 +207,23 @@ public:
     void Transmit(const ser4cpp::rseq_t& data);
 
 private:
-    // No production setter/configuration. The friend is defined ONLY in the
-    // unit-test translation unit; public stack APIs cannot provision/enable SA.
+    // Manual session-key injection friend exists only in unit tests. Production
+    // uses configured credential retrieval and the authenticated session exchange.
     friend class AuthenticationRuntimeTestAccess;
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
             : monitoring(association, tagLength, 2000, true),
+              controlAggressive(association, tagLength, false),
+              monitoringAggressive(association, tagLength, true),
               association(association),
               responder(association, tagLength)
         {
         }
         explicit AuthenticationState(const AuthenticationConfig& config)
             : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true),
+              controlAggressive(config.association, config.tagLength, false),
+              monitoringAggressive(config.association, config.tagLength, true),
               sessions(new AuthenticationSession(SessionKeys::Role::MASTER, config)),
               association(config.association),
               responder(association, config.tagLength, config.replyTimeoutMs)
@@ -229,6 +234,10 @@ private:
             serviceTimer.cancel();
         }
         OutstationChallenger monitoring;
+        AggressiveMode controlAggressive, monitoringAggressive;
+        std::array<bool, 2> controlEligible{{false, false}};
+        bool monitoringEligible = false;
+        std::array<uint8_t, SessionKeys::MAX_APDU> aggressiveWire{};
         std::unique_ptr<AuthenticationSession> sessions;
         exe4cpp::Timer serviceTimer;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{}, verifiedResponse{};
@@ -255,7 +264,7 @@ private:
         bool protectedTask = false;
         bool replyIssued = false;
     };
-    std::shared_ptr<AuthenticationState> authentication; // null in production
+    std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
     void ResetAuthentication();
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
     void TransmitAuthenticationReply();

@@ -144,7 +144,8 @@ bool IsValidAuthObject(const Group120Var15& value) { return value.hmacValue.leng
 ParseResult FreeFormatParser::Parse(ser4cpp::rseq_t& buffer, const HeaderRecord& record,
                                     const ParserSettings& settings, IAPDUHandler* handler)
 {
-    if (!settings.ExpectsContents()) return ParseResult::INVALID_OBJECT_QUALIFIER;
+    if (!settings.ExpectsContents() && record.enumeration != GroupVariation::Group120Var9)
+        return ParseResult::INVALID_OBJECT_QUALIFIER;
     switch (record.enumeration)
     {
     case GroupVariation::Group120Var1: return ParseObjects<Group120Var1>(buffer, record, handler);

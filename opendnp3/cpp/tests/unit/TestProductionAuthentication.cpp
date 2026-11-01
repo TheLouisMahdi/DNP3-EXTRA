@@ -47,9 +47,12 @@ struct RuntimePolicy final : IAuthenticationAuthorization
     }
 };
 MasterParams MasterSettings(const std::shared_ptr<RuntimeCredentials>& source,
-                            const std::shared_ptr<RuntimePolicy>& policy)
+                            const std::shared_ptr<RuntimePolicy>& policy,
+                            bool aggressive = false)
 {
     auto p = NoStartupTasks();
+    p.authentication.aggressiveTransmit = aggressive;
+    p.authentication.aggressiveReceive = aggressive;
     p.ignoreRestartIIN = true;
     p.authentication.association = 7;
     p.authentication.credentials = source;
@@ -58,9 +61,12 @@ MasterParams MasterSettings(const std::shared_ptr<RuntimeCredentials>& source,
 }
 OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
                              const std::shared_ptr<RuntimePolicy>& policy,
-                             bool unsolicited = false)
+                             bool unsolicited = false,
+                             bool aggressive = false)
 {
     OutstationConfig c;
+    c.params.authentication.aggressiveTransmit = aggressive;
+    c.params.authentication.aggressiveReceive = aggressive;
     c.params.allowUnsolicited = unsolicited;
     c.params.authentication.association = 7;
     c.params.authentication.credentials = source;
@@ -77,7 +83,12 @@ struct RuntimePair
     size_t changes = 0, controlReplies = 0, monitorReplies = 0;
     std::string savedReply;
     bool corruptControl = false, corruptMonitoring = false;
-    explicit RuntimePair(bool unsolicited = false) : outstation(OutSettings(source, policy, unsolicited))
+    bool corruptAggressiveControl = false, corruptAggressiveMonitoring = false, denyAggressiveControl = false;
+    size_t aggressiveRequests = 0, aggressiveResponses = 0;
+    std::string savedAggressive;
+    explicit RuntimePair(bool unsolicited = false, bool aggressive = false)
+        : master(MasterSettings(source, policy, aggressive), Addresses()),
+          outstation(OutSettings(source, policy, unsolicited, aggressive))
     {
         outstation.LowerLayerUp();
         REQUIRE(master.context->OnLowerLayerUp());
@@ -109,6 +120,19 @@ struct RuntimePair
                         hex = ser4cpp::HexConversions::to_hex(rseq_t(bytes.data(), bytes.size()));
                     }
                 }
+                if (bytes.size() > 3 && bytes[1] < 0x20 && bytes[2] == 120 && bytes[3] == 3)
+                {
+                    ++aggressiveRequests;
+                    savedAggressive = hex;
+                    if (denyAggressiveControl)
+                        policy->allowControl = false;
+                    if (corruptAggressiveControl)
+                    {
+                        bytes.back() ^= 1;
+                        corruptAggressiveControl = false;
+                        hex = HexConversions::to_hex(rseq_t(bytes.data(), bytes.size()));
+                    }
+                }
                 REQUIRE(master.context->OnTxReady());
                 outstation.SendToOutstation(hex);
             }
@@ -127,6 +151,16 @@ struct RuntimePair
                         bytes.back() ^= 1;
                         corruptMonitoring = false;
                         hex = ser4cpp::HexConversions::to_hex(rseq_t(bytes.data(), bytes.size()));
+                    }
+                }
+                if (bytes.size() > 5 && (bytes[1] == 0x81 || bytes[1] == 0x82) && bytes[4] == 120 && bytes[5] == 3)
+                {
+                    ++aggressiveResponses;
+                    if (corruptAggressiveMonitoring)
+                    {
+                        bytes.back() ^= 1;
+                        corruptAggressiveMonitoring = false;
+                        hex = HexConversions::to_hex(rseq_t(bytes.data(), bytes.size()));
                     }
                 }
                 outstation.OnTxReady();
@@ -236,15 +270,71 @@ TEST_CASE("ProductionAuthentication - unsolicited confirmation is authenticated 
 TEST_CASE("ProductionAuthentication - missing credentials fails construction", "[production-sa]")
 {
     MasterTestFixture fixture(NoStartupTasks());
-    auto master=[&]() {
-        return MContext::Create(Addresses(),Logger(nullptr,ModuleId(),"missing",LogLevels::none()),fixture.exe,
-            fixture.lower,fixture.meas,fixture.application,fixture.scheduler,MasterParams{});
+    auto master = [&]() {
+        return MContext::Create(Addresses(), Logger(nullptr, ModuleId(), "missing", LogLevels::none()), fixture.exe,
+                                fixture.lower, fixture.meas, fixture.application, fixture.scheduler, MasterParams{});
     };
-    REQUIRE_THROWS_AS(master(),std::invalid_argument);
-    auto outstation=[&]() {
-        return std::make_shared<OContext>(Addresses(),OutstationConfig{},DatabaseConfig{},
-            Logger(nullptr,ModuleId(),"missing",LogLevels::none()),fixture.exe,fixture.lower,
-            std::make_shared<MockCommandHandler>(CommandStatus::SUCCESS),std::make_shared<MockOutstationApplication>());
+    REQUIRE_THROWS_AS(master(), std::invalid_argument);
+    auto outstation = [&]() {
+        return std::make_shared<OContext>(Addresses(), OutstationConfig{}, DatabaseConfig{},
+                                          Logger(nullptr, ModuleId(), "missing", LogLevels::none()), fixture.exe,
+                                          fixture.lower, std::make_shared<MockCommandHandler>(CommandStatus::SUCCESS),
+                                          std::make_shared<MockOutstationApplication>());
     };
-    REQUIRE_THROWS_AS(outstation(),std::invalid_argument);
+    REQUIRE_THROWS_AS(outstation(), std::invalid_argument);
+}
+
+TEST_CASE("ProductionAuthentication - aggressive operation and response require prior challenge completion",
+          "[production-sa][aggressive-runtime]")
+{
+    RuntimePair pair(false, true);
+    pair.SelectOperate();
+    pair.Pump();
+    REQUIRE(pair.controlReplies == 1);
+    REQUIRE(pair.monitorReplies == 1);
+    REQUIRE(pair.aggressiveRequests == 1);
+    REQUIRE(pair.aggressiveResponses == 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    pair.outstation.SendToOutstation(pair.savedAggressive);
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+    REQUIRE(pair.master.context->OnLowerLayerDown());
+    pair.outstation.LowerLayerDown();
+    pair.outstation.LowerLayerUp();
+    REQUIRE(pair.master.context->OnLowerLayerUp());
+    pair.master.exe->run_many();
+    pair.Pump();
+    pair.outstation.SendToOutstation(pair.savedAggressive);
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+}
+TEST_CASE("ProductionAuthentication - aggressive invalid MAC authorization and replay fail closed",
+          "[production-sa][aggressive-runtime]")
+{
+    RuntimePair pair(false, true);
+    const auto fault = GENERATE(0, 1, 2);
+    if (fault == 0)
+        pair.corruptAggressiveControl = true;
+    if (fault == 1)
+        pair.corruptAggressiveMonitoring = true;
+    if (fault == 2)
+        pair.denyAggressiveControl = true;
+    pair.SelectOperate();
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == (fault == 1 ? 1 : 0));
+    REQUIRE(pair.results.values.empty());
+    if (fault == 2)
+    {
+        pair.policy->allowControl = true;
+        pair.outstation.SendToOutstation(pair.savedAggressive);
+        pair.Pump();
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    }
+    pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
+    pair.master.exe->run_many();
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary != TaskCompletion::SUCCESS);
 }

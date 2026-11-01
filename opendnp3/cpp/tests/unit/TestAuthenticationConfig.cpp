@@ -110,7 +110,7 @@ TEST_CASE("AuthenticationConfig - missing invalid expired or duplicate credentia
     auto source = std::make_shared<Credentials>();
     auto policy = std::make_shared<Authorization>();
     auto config = Config(source, policy);
-    const auto failure = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+    const auto failure = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8);
     if (failure == 0)
         config.credentials.reset();
     if (failure == 1)
@@ -129,8 +129,6 @@ TEST_CASE("AuthenticationConfig - missing invalid expired or duplicate credentia
         config.users[0] = 0;
     if (failure == 8)
         config.mode = AuthenticationConfig::Mode::COMPATIBILITY;
-    if(failure==9) config.aggressiveTransmit=true;
-    if(failure==10) config.aggressiveReceive=true;
     AuthenticationSession master(SessionKeys::Role::MASTER, config);
     REQUIRE_FALSE(master.Load(1000));
     for (size_t n = 0; n < 2; ++n)

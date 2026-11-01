@@ -21,6 +21,7 @@
 #define OPENDNP3_OUTSTATIONCONTEXT_H
 
 #include "LayerInterfaces.h"
+#include "auth/AggressiveMode.h"
 #include "auth/AuthenticationSession.h"
 #include "link/LinkLayerConstants.h"
 #include "master/MasterResponder.h"
@@ -90,13 +91,15 @@ public:
     void SetRestartIIN();
 
 private:
-    // Only the unit-test translation unit defines this friend. No production
-    // configuration or public stack API can create this otherwise-null state.
+    // Manual session-key injection is test-only. Production obtains its session
+    // state through configured credentials and the normal protocol exchange.
     friend class AuthenticationRuntimeTestAccess;
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
             : monitoring(association, tagLength, 2000, true),
+              controlAggressive(association, tagLength, false),
+              monitoringAggressive(association, tagLength, true),
               association(association),
               challenger(association, tagLength)
         {
@@ -108,12 +111,18 @@ private:
         }
         explicit AuthenticationState(const AuthenticationConfig& config)
             : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true),
+              controlAggressive(config.association, config.tagLength, false),
+              monitoringAggressive(config.association, config.tagLength, true),
               sessions(new AuthenticationSession(SessionKeys::Role::OUTSTATION, config)),
               association(config.association),
               challenger(association, config.tagLength, config.replyTimeoutMs)
         {
         }
         MasterResponder monitoring;
+        AggressiveMode controlAggressive, monitoringAggressive;
+        std::array<bool, 2> controlEligible{{false, false}};
+        bool monitoringEligible = false;
+        std::array<uint8_t, SessionKeys::MAX_APDU> aggressiveWire{};
         std::unique_ptr<AuthenticationSession> sessions;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
         size_t pendingWireSize = 0;
@@ -127,7 +136,7 @@ private:
         uint8_t sequence = 0;
         exe4cpp::Timer replyTimer;
     };
-    std::shared_ptr<AuthenticationState> authentication; // null in production
+    std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
     void ResetAuthentication();
     void TransmitPendingAuthentication();
     bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);

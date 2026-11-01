@@ -69,6 +69,8 @@ void MasterResponder::ClearRequest()
 void MasterResponder::Reset()
 {
     ClearRequest();
+    crypto::Clear(ser4cpp::wseq_t(acceptedChallenge.data(), acceptedChallenge.size()));
+    acceptedSize = 0;
     crypto::Clear(ser4cpp::wseq_t(key.data(), key.size()));
     keySize = 0;
     user = 0;
@@ -150,7 +152,8 @@ MasterResponder::Result MasterResponder::RetainRequest(uint16_t association, ser
         || parsed.header.function == FunctionCode::UNSOLICITED_RESPONSE;
     if (!parsed.success || (!monitoringDirection && !parsed.header.control.IsFirAndFin())
         || (monitoringDirection ? (!normalResponse || request.length() < 4)
-                                : (parsed.header.control.CON || (parsed.header.control.UNS && parsed.header.function != FunctionCode::CONFIRM)
+                                : (parsed.header.control.CON
+                                   || (parsed.header.control.UNS && parsed.header.function != FunctionCode::CONFIRM)
                                    || parsed.header.function == FunctionCode::UNKNOWN
                                    || FunctionCodeSpec::to_type(parsed.header.function) >= 0x20)))
         return Fail(Result::INVALID_INPUT);
@@ -255,6 +258,9 @@ MasterResponder::Result MasterResponder::Respond(uint16_t association,
         return Fail(Result::CRYPTO_ERROR);
     }
     outputSize = required;
+    std::memcpy(acceptedChallenge.data(), fragment, fragment.length());
+    acceptedSize = fragment.length();
+    acceptedUnsolicited = original.UNS;
     lastSequence = challenge.seqNum;
     haveSequence = true;
     ClearRequest();

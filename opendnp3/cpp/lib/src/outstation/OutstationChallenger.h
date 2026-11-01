@@ -69,6 +69,20 @@ public:
     void Reset(); // wipes keys and pending state, but preserves CSQ (7.5.2.3.3).
     void Tick(uint64_t nowMs);
     State GetState() const;
+    ser4cpp::rseq_t LastAcceptedChallenge() const
+    {
+        return ser4cpp::rseq_t(acceptedChallenge.data(), acceptedSize);
+    }
+    bool LastChallengeWasUnsolicited() const
+    {
+        return acceptedUnsolicited;
+    }
+    void CancelPending()
+    {
+        ClearPending();
+    }
+    // Trusted caller invokes only after Aggressive Mode MAC verification.
+    void ObserveAggressiveSequence(uint32_t value);
 
     // request is an already-classified critical Application Layer fragment,
     // INCLUDING its header, without transport/link bytes. No request is executed.
@@ -113,7 +127,12 @@ private:
     // Table A-3 (PDF p765): full Challenge fragment || full challenged fragment.
     // No addressing, Reply user field or application-added HMAC padding is added.
     std::array<uint8_t, CHALLENGE_SIZE + MAX_REQUEST_SIZE> transcript{};
+    std::array<uint8_t, CHALLENGE_SIZE> acceptedChallenge{};
+    size_t acceptedSize = 0;
+    bool acceptedUnsolicited = false;
+    bool pendingUnsolicited = false;
     size_t requestSize = 0;
+    uint32_t pendingSequence = 0;
     uint32_t sequence = 0; // startup zero, independent of user; wraps modulo 2^32.
     uint64_t challengeTime = 0;
     uint64_t lastTime = 0;

@@ -61,6 +61,9 @@ public:
 
     size_t Remaining() const;
 
+    // Append already encoded object bytes; used to retain exact authenticated payloads.
+    bool AppendObjects(ser4cpp::rseq_t objects);
+
 protected:
     bool valid;
     ser4cpp::wseq_t buffer;

@@ -12,11 +12,37 @@
 
 #include <array>
 #include <atomic>
+#include <deque>
 #include <future>
+#include <mutex>
+#include <sstream>
 
 using namespace opendnp3;
 namespace
 {
+class AuthenticationTrace final : public ILogHandler
+{
+public:
+    void log(ModuleId, const char* id, LogLevel, char const*, char const* message) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (messages.size() == 128)
+            messages.pop_front();
+        messages.push_back(std::string(id) + " " + message);
+    }
+    std::string Snapshot()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::ostringstream out;
+        for (const auto& line : messages)
+            out << line << "\n";
+        return out.str();
+    }
+
+private:
+    std::mutex mutex;
+    std::deque<std::string> messages;
+};
 class TcpCredentials final : public IAuthenticationCredentials
 {
 public:
@@ -85,8 +111,10 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     auto policy = std::make_shared<TcpPolicy>();
     auto commands = std::make_shared<TcpCommands>();
     auto listener = std::make_shared<QueuedChannelListener>();
-    DNP3Manager manager(1);
-    const auto levels = LogLevels::none();
+    auto trace = std::make_shared<AuthenticationTrace>();
+    DNP3Manager manager(1, trace);
+    const auto levels = opendnp3::levels::NORMAL | flags::APP_HEADER_RX | flags::APP_HEADER_TX | flags::APP_OBJECT_RX
+        | flags::APP_OBJECT_TX;
     const uint16_t port = 20197;
     auto server = manager.AddTCPServer("sa-server", levels, ServerAcceptMode::CloseExisting,
                                        IPEndpoint("127.0.0.1", port), nullptr);
@@ -99,6 +127,9 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     oc.outstation.params.authentication.credentials = credentials;
     oc.outstation.params.authentication.authorization = policy;
     oc.outstation.params.authentication.renewalMessageCount = 12;
+    const bool aggressive = GENERATE(false, true);
+    oc.outstation.params.authentication.aggressiveTransmit = aggressive;
+    oc.outstation.params.authentication.aggressiveReceive = aggressive;
     MasterStackConfig mc;
     mc.link.LocalAddr = 1;
     mc.link.RemoteAddr = 10;
@@ -119,7 +150,9 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
         auto future = result->result.get_future();
         master->ScanClasses(ClassField::AllClasses(), NullSOEHandler::Create(), TaskConfig::With(result));
         REQUIRE(future.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
-        REQUIRE(future.get() == TaskCompletion::SUCCESS);
+        const auto outcome = future.get();
+        INFO(trace->Snapshot());
+        REQUIRE(outcome == TaskCompletion::SUCCESS);
     };
     auto control = [&]() {
         auto result = std::make_shared<std::promise<TaskCompletion>>();
@@ -130,7 +163,9 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
             ControlRelayOutputBlock(OperationType::LATCH_ON), 0,
             [result](const ICommandTaskResult& status) { result->set_value(status.summary); }, config);
         REQUIRE(future.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
-        REQUIRE(future.get() == TaskCompletion::SUCCESS);
+        const auto outcome = future.get();
+        INFO(trace->Snapshot());
+        REQUIRE(outcome == TaskCompletion::SUCCESS);
     };
     read();
     control();

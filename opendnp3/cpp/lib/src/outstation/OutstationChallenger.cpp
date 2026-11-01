@@ -56,6 +56,8 @@ void OutstationChallenger::ClearPending()
 void OutstationChallenger::Reset()
 {
     ClearPending();
+    crypto::Clear(ser4cpp::wseq_t(acceptedChallenge.data(), acceptedChallenge.size()));
+    acceptedSize = 0;
     for (auto& user : users)
         ClearUser(user);
 }
@@ -87,6 +89,13 @@ bool OutstationChallenger::HasKeys() const
         if (user.number)
             return true;
     return false;
+}
+
+void OutstationChallenger::ObserveAggressiveSequence(uint32_t value)
+{
+    const uint32_t delta = value - sequence;
+    if (delta && delta < 0x80000000u)
+        sequence = value;
 }
 
 OutstationChallenger::User* OutstationChallenger::FindUser(uint16_t number)
@@ -193,8 +202,9 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
     }
     std::memcpy(transcript.data() + challengeSize, request, request.length());
     std::memcpy(output, transcript.data(), challengeSize);
-    sequence = nextSequence;
+    sequence = pendingSequence = nextSequence;
     requestSize = request.length();
+    pendingUnsolicited = (requestBytes[0] & 0x10) != 0;
     challengeTime = nowMs;
     outputSize = challengeSize;
     return Result::OK; // challenge produced, NEVER an authorization verdict.
@@ -215,7 +225,7 @@ OutstationChallenger::Result OutstationChallenger::Reply(
     Result result = Result::INVALID_MAC;
     if (nowMs - challengeTime >= replyTimeoutMs)
         result = Result::EXPIRED;
-    else if (reply.seqNum != sequence)
+    else if (reply.seqNum != pendingSequence)
         result = Result::INVALID_SEQUENCE;
     else if (auto user = FindUser(reply.userNum))
     {
@@ -235,6 +245,9 @@ OutstationChallenger::Result OutstationChallenger::Reply(
                 {
                     std::memcpy(output, transcript.data() + challengeSize, requestSize);
                     outputSize = requestSize;
+                    std::memcpy(acceptedChallenge.data(), transcript.data(), challengeSize);
+                    acceptedSize = challengeSize;
+                    acceptedUnsolicited = pendingUnsolicited;
                     result = Result::AUTHENTICATED;
                 }
             }

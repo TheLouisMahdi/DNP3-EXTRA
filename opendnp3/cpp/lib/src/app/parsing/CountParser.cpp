@@ -63,14 +63,15 @@ ParseResult CountParser::ParseHeader(ser4cpp::rseq_t& buffer,
     {
         if ((record.enumeration == GroupVariation::Group120Var3 ||
              record.enumeration == GroupVariation::Group120Var4) &&
-            (record.GetQualifierCode() != QualifierCode::UINT8_CNT || count != 1 || !settings.ExpectsContents()))
+            (record.GetQualifierCode() != QualifierCode::UINT8_CNT || count != 1 ||
+             (!settings.ExpectsContents() && record.enumeration != GroupVariation::Group120Var3)))
             return ParseResult::INVALID_OBJECT_QUALIFIER;
 
         FORMAT_LOGGER_BLOCK(pLogger, settings.LoggingLevel(), "%03u,%03u %s, %s [%u]", record.group, record.variation,
                             GroupVariationSpec::to_human_string(record.enumeration),
                             QualifierCodeSpec::to_human_string(record.GetQualifierCode()), count);
 
-        if (settings.ExpectsContents())
+        if (settings.ExpectsContents() || record.enumeration == GroupVariation::Group120Var3)
         {
             return ParseCountOfObjects(buffer, record, count, pLogger, pHandler);
         }
