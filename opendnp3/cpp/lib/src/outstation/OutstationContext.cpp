@@ -1162,8 +1162,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             auto* session = auth.sessions->Find(value.user);
             if (!session)
                 return true;
-            if (auth.deferredControlCount)
-                ResetAuthentication(); // Settle the old exchange before any session replacement.
+            if (auth.deferredControlCount && session->User() == 1)
+                ResetAuthentication(); // Settle the owning common-user exchange before session replacement.
             size_t size = 0;
             const auto result = session->Process(auth.association, message.payload, now,
                                                  ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
@@ -1176,9 +1176,11 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                     auth.monitoringEligible = false;
                 auth.challenger.SetSessionKey(session->User(), session->ControlKey(now), session->ValidUntil(), now);
                 if (session->User() == 1)
+                {
                     auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now, true);
-                auth.monitoringPending = false;
-                auth.monitoringTimer.cancel();
+                    auth.monitoringPending = false;
+                    auth.monitoringTimer.cancel();
+                }
                 auth.replyTimer.cancel();
                 // A completed SELECT keeps its native timeout and user binding
                 // across session renewal. OPERATE still requires a fresh MAC.

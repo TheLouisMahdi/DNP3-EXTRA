@@ -21,6 +21,10 @@ class ProductionAuthenticationTestAccess
 {
 public:
     static SessionKeys& Common(MContext& context) { return *context.authentication->sessions->Find(1); }
+    static SessionKeys& Session(MContext& context, uint16_t user)
+    {
+        return *context.authentication->sessions->Find(user);
+    }
     static uint8_t Deferred(MContext& context) { return context.authentication->deferredAuthenticationCount; }
     static bool ControlEligible(MContext& context) { return context.authentication->controlEligible[1]; }
     static bool ReplyIssued(MContext& context) { return context.authentication->replyIssued; }
@@ -47,6 +51,7 @@ public:
     }
     static SessionKeys& Common(OContext& context) { return *context.authentication->sessions->Find(1); }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
+    static bool MonitoringPending(OContext& context) { return context.authentication->monitoringPending; }
     static uint8_t Deferred(OContext& context) { return context.authentication->deferredControlCount; }
     static rseq_t AggressiveBytes(OContext& context, size_t size)
     {
@@ -337,6 +342,104 @@ TEST_CASE("ProductionAuthentication - unsolicited confirmation is authenticated 
         REQUIRE(pair.outstation.NumPendingTimers() == 0);
     REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
 }
+TEST_CASE("ProductionAuthentication - outstation monitoring survives only independent user renewal",
+          "[production-sa][outstation-monitoring-owner]")
+{
+    const auto renewedUser = GENERATE(uint16_t{1}, uint16_t{2});
+    const bool deferred = GENERATE(false, true);
+    const bool timeout = renewedUser == 2 ? GENERATE(false, true) : false;
+    RuntimePair pair;
+    pair.Pump();
+    auto& common = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+    const auto commonKSQ = common.Sequence();
+    MasterResponder controlPeer(7, 16, 2000);
+    REQUIRE(controlPeer.SetSessionKey(1, common.ControlKey(0), common.ValidUntil(), 0) == MasterResponder::Result::OK);
+    OutstationChallenger monitoringPeer(7, 16, 2000, true);
+    REQUIRE(monitoringPeer.SetSessionKey(1, common.MonitoringKey(0), common.ValidUntil(), 0)
+        == OutstationChallenger::Result::OK);
+    HexSequence read("C5 01 3C 01 06");
+    REQUIRE(controlPeer.RetainRequest(7, read.ToRSeq(), 0) == MasterResponder::Result::OK);
+    pair.outstation.SendToOutstation("C5 01 3C 01 06");
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    HexSequence controlChallenge(pair.outstation.lower->PopWriteAsHex());
+    pair.outstation.OnTxReady();
+    std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, verified{};
+    size_t size = 0, verifiedSize = 0;
+    REQUIRE(controlPeer.Respond(7, controlChallenge.ToRSeq(), 0, wseq_t(wire.data(), wire.size()), size)
+        == MasterResponder::Result::OK);
+    if (deferred)
+        ProductionAuthenticationTestAccess::LeaveMessages(pair.outstation.context, 2);
+    pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(wire.data(), size)));
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    HexSequence response(pair.outstation.lower->PopWriteAsHex());
+    REQUIRE(response.ToRSeq()[1] == 0x81);
+    REQUIRE((response.ToRSeq()[0] & 0x20) == 0); // No native CONFIRM timer obscures authentication ownership.
+    pair.outstation.OnTxReady();
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+    REQUIRE(pair.outstation.NumPendingTimers() == 1);
+    const auto held = ProductionAuthenticationTestAccess::Deferred(pair.outstation.context);
+    REQUIRE((held != 0) == deferred);
+    REQUIRE(monitoringPeer.Challenge(7, response.ToRSeq(), IINField::Empty(), 0,
+        wseq_t(wire.data(), wire.size()), size) == OutstationChallenger::Result::OK);
+    const auto monitoringChallenge = HexConversions::to_hex(rseq_t(wire.data(), size));
+
+    // Drive the real V4/V5/V6/V5 exchange while the normal response awaits its C1.
+    auto& renewal = ProductionAuthenticationTestAccess::Session(*pair.master.context, renewedUser);
+    renewal.RequestRenewal(0);
+    REQUIRE(renewal.Begin(7, 9, 0, wseq_t(wire.data(), wire.size()), size) == SessionKeys::Result::OK);
+    for (size_t step = 0; step < 2; ++step)
+    {
+        pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(wire.data(), size)));
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        HexSequence status(pair.outstation.lower->PopWriteAsHex());
+        pair.outstation.OnTxReady();
+        REQUIRE(renewal.Process(7, status.ToRSeq(), 0, wseq_t(wire.data(), wire.size()), size)
+            == (step == 0 ? SessionKeys::Result::OK : SessionKeys::Result::INSTALLED));
+        if (renewedUser == 2)
+        {
+            REQUIRE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+            REQUIRE(pair.outstation.NumPendingTimers() == 1);
+            REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == held);
+            REQUIRE(common.Sequence() == commonKSQ);
+        }
+    }
+    REQUIRE(renewal.Ready(0));
+    if (renewedUser == 1)
+    {
+        REQUIRE(common.Sequence() != commonKSQ);
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 0);
+        REQUIRE(pair.outstation.NumPendingTimers() == 0);
+    }
+    else if (timeout)
+    {
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(2000));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 0);
+        REQUIRE(pair.outstation.NumPendingTimers() == 0);
+    }
+    pair.outstation.SendToOutstation(monitoringChallenge);
+    if (renewedUser == 1 || timeout)
+        REQUIRE(pair.outstation.lower->NumWrites() == 0); // Old keys/deadline cannot release the retained response.
+    else
+    {
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        HexSequence reply(pair.outstation.lower->PopWriteAsHex());
+        Group120Var2 value;
+        REQUIRE(value.Read(reply.ToRSeq().skip(10)));
+        REQUIRE(monitoringPeer.Reply(7, value, 0, wseq_t(verified.data(), verified.size()), verifiedSize)
+            == OutstationChallenger::Result::AUTHENTICATED);
+        REQUIRE(rseq_t(verified.data(), verifiedSize).equals(response.ToRSeq()));
+        pair.outstation.OnTxReady();
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(pair.outstation.context) == 0);
+        REQUIRE(pair.outstation.NumPendingTimers() == 0);
+        pair.outstation.SendToOutstation(monitoringChallenge);
+        REQUIRE(pair.outstation.lower->NumWrites() == 0); // No duplicate Reply after completion.
+    }
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
+
 // Default construction must not accidentally create an insecure production stack.
 TEST_CASE("ProductionAuthentication - missing credentials fails construction", "[production-sa]")
 {
