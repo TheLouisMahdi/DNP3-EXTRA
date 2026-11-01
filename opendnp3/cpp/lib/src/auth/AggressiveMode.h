@@ -6,8 +6,9 @@
 #include <array>
 namespace opendnp3
 {
-// Authentication-mode helper, not a dispatcher. Seeds come ONLY from an existing
-// successfully completed Challenge/Reply exchange. Runtime owns user eligibility,
+struct Group120Var1;
+// Authentication-mode helper, not a dispatcher. Seeds come from a completed
+// Challenge/Reply exchange or an authenticated embedded Challenge. Runtime owns user eligibility,
 // session validity, authorization and the explicit transmit/receive enable policy.
 class AggressiveMode final
 {
@@ -18,7 +19,13 @@ public:
     AggressiveMode(const AggressiveMode&) = delete;
     AggressiveMode& operator=(const AggressiveMode&) = delete;
     void Reset();
-    bool RememberChallenge(ser4cpp::rseq_t challenge, bool unsolicited);
+    bool RememberChallenge(ser4cpp::rseq_t challenge, bool unsolicited, bool embedded = false);
+    // Inspect a normal response, including the V3/.../V1/V9 arrangement. No trust
+    // is granted here: the runtime must authenticate the entire response first.
+    bool InspectEmbeddedChallenge(ser4cpp::rseq_t response, Group120Var1& challenge, size_t& nativeSize) const;
+    bool HasPendingConfirm() const;
+    bool RequiresConfirm(uint8_t appSequence, bool unsolicited) const;
+    void DiscardPendingConfirms();
     bool HasChallenge(bool unsolicited) const;
     // Metadata is untrusted: this is only for choosing a configured user's key.
     static bool InspectUser(ser4cpp::rseq_t apdu, bool monitoringDirection, uint16_t& user);
@@ -45,6 +52,7 @@ private:
         std::array<uint8_t, MAX_APDU> apdu{};
         size_t size = 0;
         uint32_t sequence = 0, challengeSequence = 0;
+        bool haveChallenge = false, confirmPending = false;
     };
     const uint16_t association;
     const size_t tagLength;

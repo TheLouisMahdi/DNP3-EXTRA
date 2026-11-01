@@ -11,6 +11,7 @@
 
 namespace opendnp3
 {
+struct Group120Var1;
 
 // Internal, single-threaded, one association and one configured user per instance.
 // No runtime dispatch, request execution, credential storage or key exchange.
@@ -77,6 +78,10 @@ public:
                    size_t& outputSize,
                    IINField iin = IINField::Empty());
 
+    // Trusted runtime calls only after authenticating the full response containing
+    // this Challenge. Preserve any separate pending critical request and its key.
+    bool ObserveEmbeddedChallenge(uint16_t associationId, const Group120Var1& challenge,
+                                  bool unsolicited, uint64_t nowMs);
     void Tick(uint64_t nowMs);
     void Reset(); // wipes sensitive state; preserves association CSQ replay history.
     State GetState() const;

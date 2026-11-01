@@ -195,6 +195,9 @@ bool MContext::OnTxReady()
             this->TransmitAuthenticationReply();
             return true;
         }
+        if (authentication->wireInFlight && authentication->wireSize >= 2
+            && authentication->wire[1] == FunctionCodeSpec::to_type(FunctionCode::CONFIRM))
+            authentication->protectedConfirm = false;
         authentication->wireInFlight = false;
         this->ServiceAuthentication();
         if (isSending)
@@ -335,6 +338,14 @@ void MContext::ProcessResponse(const APDUResponseHeader& header, const ser4cpp::
 
 void MContext::QueueConfirm(const APDUHeader& header)
 {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    // Embedded-response dispatch queues the CONFIRM already reserved at the front.
+    if (authentication && authentication->controlAggressive.RequiresConfirm(header.control.SEQ, header.control.UNS))
+    {
+        this->CheckConfirmTransmit();
+        return;
+    }
+#endif
     this->confirmQueue.push_back(header);
     this->CheckConfirmTransmit();
 }
@@ -357,6 +368,31 @@ bool MContext::CheckConfirmTransmit()
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         auto* session = auth.sessions->Find(1);
+        if (auth.controlAggressive.RequiresConfirm(confirm.control.SEQ, confirm.control.UNS))
+        {
+            if (!session || !session->Ready(now) || now >= auth.confirmDeadline)
+            {
+                DiscardEmbeddedConfirm();
+                auth.protectedConfirm = false;
+                return false;
+            }
+            if (auth.exchangeIndex < 2 || auth.pendingWireSize || auth.replyPending || auth.replyInFlight)
+                return false;
+            if (!auth.controlAggressive.Create(auth.association, 1, session->ControlKey(now), wrapper.ToRSeq(),
+                                               ser4cpp::wseq_t(auth.wire.data(), auth.wire.size()), auth.wireSize))
+            {
+                DiscardEmbeddedConfirm();
+                auth.protectedConfirm = false;
+                return false;
+            }
+            auth.wireInFlight = true;
+            auth.protectedConfirm = true;
+            auth.controlEligible[0] = true; // This exception constitutes the Challenge Reply.
+            session->CountAuthentication(now);
+            this->Transmit(ser4cpp::rseq_t(auth.wire.data(), auth.wireSize));
+            this->confirmQueue.pop_front();
+            return true;
+        }
         if (auth.protectedConfirm || auth.exchangeIndex < 2 || auth.pendingWireSize || !session || !session->Ready(now)
             || auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE)
             return false;
@@ -754,12 +790,78 @@ MContext::TaskState MContext::OnResponseTimeout_WaitForResponse()
     return TaskState::IDLE;
 }
 
+void MContext::DiscardEmbeddedConfirm()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication)
+        return;
+    auto& aggressive = authentication->controlAggressive;
+    // ProcessAuthenticatedResponse reserves exactly one owned entry at the front.
+    // Older entries, even with identical SEQ/UNS, belong to other operations.
+    if (!confirmQueue.empty()
+        && aggressive.RequiresConfirm(confirmQueue.front().control.SEQ, confirmQueue.front().control.UNS))
+        confirmQueue.pop_front();
+    aggressive.DiscardPendingConfirms();
+#endif
+}
+
+void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto& auth = *authentication;
+    if (auth.controlAggressive.HasPendingConfirm())
+        return;
+    const auto original = APDUHeaderParser::ParseResponse(native);
+    Group120Var1 challenge;
+    size_t nativeSize = 0;
+    if (!original.success || !auth.controlAggressive.InspectEmbeddedChallenge(native, challenge, nativeSize))
+        return;
+    if (nativeSize != native.length())
+    {
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        auto* session = auth.sessions->Find(1);
+        const auto& header = original.header;
+        if (!session || !session->Ready(now) || auth.exchangeIndex < 2 || auth.pendingWireSize
+            || auth.protectedConfirm || auth.replyPending || auth.replyInFlight
+            || (header.function == FunctionCode::RESPONSE
+                && (!activeTask || tstate != TaskState::WAIT_FOR_RESPONSE || header.control.SEQ != solSeq)))
+            return;
+        if (!auth.responder.ObserveEmbeddedChallenge(auth.association, challenge, header.control.UNS, now)
+            || !auth.controlAggressive.RememberChallenge(wire, header.control.UNS, true))
+            return;
+        // The full authenticated wire APDU is the Table A-9 seed. Strip only
+        // G120V1 for native dispatch; reserve its own CONFIRM ahead of older entries.
+        auth.keyEpoch[0] = session->Sequence();
+        if (!(wire.length() >= 6 && wire[4] == 120 && wire[5] == 3))
+            session->CountAuthentication(now); // Embedded Challenge is an authentication ASDU.
+        if (!session->Ready(now))
+        {
+            // No queue entry has been reserved yet.
+            auth.controlAggressive.DiscardPendingConfirms();
+            return;
+        }
+        auth.protectedConfirm = true;
+        auth.confirmDeadline = now + auth.sessions->config.replyTimeoutMs;
+        confirmQueue.push_front(header.control.UNS ? APDUHeader::UnsolicitedConfirm(header.control.SEQ)
+                                                   : APDUHeader::SolicitedConfirm(header.control.SEQ));
+    }
+    this->ProcessAPDU(original.header, original.objects.take(nativeSize - 4));
+    if (auth.controlAggressive.HasPendingConfirm())
+        this->CheckConfirmTransmit();
+#else
+    (void)wire;
+    (void)native;
+#endif
+}
+
 void MContext::ResetAuthentication()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return;
     authentication->responder.Reset();
+    DiscardEmbeddedConfirm();
     authentication->controlAggressive.Reset();
     authentication->monitoringAggressive.Reset();
     authentication->controlEligible = {{false, false}};
@@ -817,8 +919,24 @@ void MContext::ServiceAuthentication()
     for (size_t n = 0; n < 2; ++n)
         auth.sessions->At(n)->Tick(now);
     auth.monitoring.Tick(now);
-    if (auth.protectedConfirm && now >= auth.confirmDeadline && !auth.replyInFlight)
+    if (auth.monitorWaiting && auth.monitoring.GetState() != OutstationChallenger::State::WAITING_FOR_REPLY)
     {
+        auth.monitorWaiting = false;
+        // One monitoring operation owns the queued G120V1. Other variations are
+        // key exchange messages; wire is separate and may still be in flight.
+        if (auth.pendingWireSize >= 8
+            && auth.pendingWire[1] == FunctionCodeSpec::to_type(FunctionCode::AUTH_REQUEST)
+            && auth.pendingWire[2] == 120 && auth.pendingWire[3] == 1
+            && (auth.pendingWire[0] & 0x0F) == auth.monitorSequence)
+        {
+            crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWireSize));
+            auth.pendingWireSize = 0;
+        }
+    }
+    if (auth.protectedConfirm && now >= auth.confirmDeadline && !auth.replyInFlight
+        && !(auth.wireInFlight && auth.wireSize >= 2 && auth.wire[1] == 0))
+    {
+        DiscardEmbeddedConfirm();
         auth.protectedConfirm = false;
         auth.responder.Reset();
     }
@@ -965,12 +1083,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 if (auth.monitoringAggressive.RememberChallenge(auth.monitoring.LastAcceptedChallenge(),
                                                                 auth.monitoring.LastChallengeWasUnsolicited()))
                     auth.monitoringEligible = true;
-                const auto original
-                    = APDUHeaderParser::ParseResponse(ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
                 auth.sessions->Find(1)->CountAuthentication(now);
                 auth.sessions->Find(1)->CountAuthentication(now);
-                if (original.success)
-                    this->ProcessAPDU(original.header, original.objects);
+                const auto verified = ser4cpp::rseq_t(auth.verifiedResponse.data(), size);
+                this->ProcessAuthenticatedResponse(verified, verified);
             }
             else
                 this->ResetAuthentication();
@@ -998,10 +1114,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     auth.monitorWaiting = false;
                 }
                 session->CountAuthentication(now);
-                const auto original
-                    = APDUHeaderParser::ParseResponse(ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
-                if (original.success)
-                    ProcessAPDU(original.header, original.objects);
+                this->ProcessAuthenticatedResponse(apdu, ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
             }
             crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
             return true;
@@ -1010,7 +1123,11 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
         {
             if (auth.protectedTask && !auth.replyIssued && header.function == FunctionCode::RESPONSE)
                 return true;
-            if (auth.monitorWaiting || auth.pendingWireSize)
+            if (auth.monitorWaiting || auth.pendingWireSize || auth.controlAggressive.HasPendingConfirm())
+                return true;
+            Group120Var1 embedded;
+            size_t nativeSize = 0;
+            if (!auth.controlAggressive.InspectEmbeddedChallenge(apdu, embedded, nativeSize))
                 return true;
             auto* session = auth.sessions->Find(1);
             if (!session || !session->Ready(now))
@@ -1032,6 +1149,8 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
     }
     if (header.function == FunctionCode::AUTH_RESPONSE)
     {
+        if (authentication->controlAggressive.HasPendingConfirm())
+            return true;
         if ((!authentication->protectedConfirm
              && (!authentication->protectedTask || tstate != TaskState::WAIT_FOR_RESPONSE))
             || authentication->replyPending || authentication->replyInFlight)

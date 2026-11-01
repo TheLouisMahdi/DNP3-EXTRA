@@ -295,3 +295,214 @@ TEST_CASE("AggressiveMode - explicit IEEE legacy MAC options", "[aggressive]")
     REQUIRE(rseq_t(out.data(), n).equals(original.ToRSeq()));
     REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(wire.data(), size), wseq_t(out.data(), out.size()), n));
 }
+
+TEST_CASE("AggressiveMode - embedded Challenge produces exact first Aggressive Confirm transcript", "[aggressive]")
+{
+    const auto tag = GENERATE(8u, 16u);
+    const bool unsolicited = GENERATE(false, true);
+    AggressiveKey key, wrong;
+    AggressiveMode sender(7, tag, false), receiver(7, tag, false);
+    auto embedded = Seed(41, false, tag);
+    embedded[0] = unsolicited ? 0xF5 : 0xE5;
+    embedded[1] = unsolicited ? 0x82 : 0x81;
+    Group120Var1 challenge;
+    size_t nativeSize = 0;
+    REQUIRE(sender.InspectEmbeddedChallenge(Read(embedded), challenge, nativeSize));
+    REQUIRE(nativeSize == 4);
+    REQUIRE_FALSE(sender.RememberChallenge(Read(embedded), unsolicited)); // Not a standalone APDU.
+    REQUIRE(sender.RememberChallenge(Read(embedded), unsolicited, true));
+    REQUIRE(receiver.RememberChallenge(Read(embedded), unsolicited, true));
+    REQUIRE(sender.RequiresConfirm(5, unsolicited));
+    auto newer = embedded;
+    newer[10] = 42; // A second Challenge must not replace the pending transcript.
+    REQUIRE_FALSE(sender.RememberChallenge(Read(newer), unsolicited, true));
+    newer[0] = unsolicited ? 0xE5 : 0xF5;
+    newer[1] = unsolicited ? 0x81 : 0x82;
+    REQUIRE_FALSE(sender.RememberChallenge(Read(newer), !unsolicited, true));
+    REQUIRE(sender.RequiresConfirm(5, unsolicited));
+    REQUIRE_FALSE(sender.RequiresConfirm(5, !unsolicited));
+    HexSequence confirm(unsolicited ? "D5 00" : "C5 00");
+    std::array<uint8_t, 2048> wire{}, native{};
+    size_t size = 0, decoded = 0;
+    REQUIRE(sender.Create(7, 1, key.Read(), confirm.ToRSeq(), wseq_t(wire.data(), wire.size()), size));
+    const std::string prefix = std::string(unsolicited ? "D5" : "C5")
+        + " 00 78 03 07 01 29 00 00 00 01 00 78 09 5B 01 " + (tag == 8 ? "08" : "10") + " 00";
+    HexSequence expected(prefix);
+    REQUIRE(rseq_t(wire.data(), size - tag).equals(expected.ToRSeq()));
+    auto transcript = embedded;
+    transcript.insert(transcript.end(), wire.data(), wire.data() + size - tag);
+    std::array<uint8_t, 16> mac{};
+    REQUIRE(crypto::ComputeHMACSHA256(key.Read(), Read(transcript), wseq_t(mac.data(), tag)) == crypto::Result::OK);
+    REQUIRE(crypto::ConstantTimeEqual(rseq_t(mac.data(), tag), rseq_t(wire.data() + size - tag, tag)));
+    REQUIRE_FALSE(sender.RequiresConfirm(5, unsolicited));
+    REQUIRE_FALSE(receiver.Verify(7, 1, wrong.Read(), rseq_t(wire.data(), size), wseq_t(native.data(), native.size()), decoded));
+    REQUIRE(decoded == 0);
+    REQUIRE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), size), wseq_t(native.data(), native.size()), decoded));
+    REQUIRE(rseq_t(native.data(), decoded).equals(confirm.ToRSeq()));
+    REQUIRE_FALSE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), size), wseq_t(native.data(), native.size()), decoded));
+    REQUIRE_FALSE(sender.RememberChallenge(Read(embedded), unsolicited, true));
+}
+
+TEST_CASE("AggressiveMode - embedded Challenge ordering fields and cancellation fail closed", "[aggressive]")
+{
+    AggressiveKey key;
+    AggressiveMode engine(7, 16, false);
+    auto embedded = Seed(41, false);
+    embedded[0] = 0xE5;
+    embedded[1] = 0x81;
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7);
+    if (fault == 0) embedded[0] &= ~0x20; // CON required.
+    if (fault == 1) embedded[14] = 1;     // Outstation Challenge must use unknown USR.
+    if (fault == 2) embedded[16] = 3;     // Algorithm/tag mismatch.
+    if (fault == 3) embedded[17] = 0;     // Invalid reason.
+    if (fault == 4) embedded[6] = 0x07;   // Wrong qualifier.
+    if (fault == 5) embedded.push_back(0); // Trailing malformed object.
+    if (fault == 6) embedded.insert(embedded.end(), {1, 2, 0, 0, 0, 1}); // Native data after G120V1.
+    if (fault == 7) embedded[0] |= 0x10;  // RESPONSE/UNS mismatch.
+    Group120Var1 challenge;
+    size_t nativeSize = 0;
+    REQUIRE_FALSE(engine.InspectEmbeddedChallenge(Read(embedded), challenge, nativeSize));
+    REQUIRE_FALSE(engine.RememberChallenge(Read(embedded), false, true));
+    REQUIRE_FALSE(engine.HasPendingConfirm());
+    auto valid = Seed(42, false);
+    valid[0] = 0xE5; valid[1] = 0x81;
+    REQUIRE(engine.RememberChallenge(Read(valid), false, true));
+    HexSequence confirm("C5 00"), wrongSequence("C4 00"), request("C5 01 3C 01 06");
+    std::array<uint8_t, 2048> output{};
+    size_t size = 0;
+    REQUIRE_FALSE(engine.Create(8, 1, key.Read(), confirm.ToRSeq(), wseq_t(output.data(), output.size()), size));
+    REQUIRE_FALSE(engine.Create(7, 2, key.Read(), confirm.ToRSeq(), wseq_t(output.data(), output.size()), size));
+    REQUIRE_FALSE(engine.Create(7, 1, rseq_t(), confirm.ToRSeq(), wseq_t(output.data(), output.size()), size));
+    REQUIRE_FALSE(engine.Create(7, 1, key.Read(), wrongSequence.ToRSeq(), wseq_t(output.data(), output.size()), size));
+    REQUIRE_FALSE(engine.Create(7, 1, key.Read(), request.ToRSeq(), wseq_t(output.data(), output.size()), size));
+    REQUIRE(size == 0);
+    engine.DiscardPendingConfirms();
+    REQUIRE_FALSE(engine.HasPendingConfirm());
+    REQUIRE_FALSE(engine.Create(7, 1, key.Read(), confirm.ToRSeq(), wseq_t(output.data(), output.size()), size));
+    REQUIRE_FALSE(engine.RememberChallenge(Read(valid), false, true)); // Watermark survives cancellation.
+}
+
+TEST_CASE("AggressiveMode - V3 native V1 V9 response uses full incoming MAC in Confirm seed", "[aggressive]")
+{
+    const bool unsolicited = GENERATE(false, true);
+    AggressiveKey monitoring, control;
+    AggressiveMode peer(7, 16, true), verifier(7, 16, true), master(7, 16, false);
+    auto monitorChallenge = Seed(1, true);
+    REQUIRE(peer.RememberChallenge(Read(monitorChallenge), unsolicited));
+    REQUIRE(verifier.RememberChallenge(Read(monitorChallenge), unsolicited));
+    auto embedded = Seed(41, false);
+    embedded[0] = unsolicited ? 0xF5 : 0xE5;
+    embedded[1] = unsolicited ? 0x82 : 0x81;
+    std::array<uint8_t, 2048> wire{}, native{}, confirm{};
+    size_t size = 0, nativeSize = 0, confirmSize = 0;
+    REQUIRE(peer.Create(7, 1, monitoring.Read(), Read(embedded), wseq_t(wire.data(), wire.size()), size));
+    wire[size - 1] ^= 1;
+    REQUIRE_FALSE(verifier.Verify(7, 1, monitoring.Read(), rseq_t(wire.data(), size), wseq_t(native.data(), native.size()), nativeSize));
+    REQUIRE(nativeSize == 0);
+    wire[size - 1] ^= 1;
+    REQUIRE(verifier.Verify(7, 1, monitoring.Read(), rseq_t(wire.data(), size), wseq_t(native.data(), native.size()), nativeSize));
+    REQUIRE(rseq_t(native.data(), nativeSize).equals(Read(embedded)));
+    REQUIRE(master.RememberChallenge(rseq_t(wire.data(), size), unsolicited, true));
+    HexSequence original(unsolicited ? "D5 00" : "C5 00");
+    REQUIRE(master.Create(7, 1, control.Read(), original.ToRSeq(), wseq_t(confirm.data(), confirm.size()), confirmSize));
+    std::vector<uint8_t> transcript(wire.data(), wire.data() + size); // Includes incoming G120V9 MAC bytes.
+    transcript.insert(transcript.end(), confirm.data(), confirm.data() + confirmSize - 16);
+    std::array<uint8_t, 16> expected{};
+    REQUIRE(crypto::ComputeHMACSHA256(control.Read(), Read(transcript), wseq_t(expected.data(), expected.size())) == crypto::Result::OK);
+    REQUIRE(crypto::ConstantTimeEqual(rseq_t(expected.data(), expected.size()), rseq_t(confirm.data() + confirmSize - 16, 16)));
+}
+
+TEST_CASE("AggressiveMode - native authentication Error remains native with strict embedded framing", "[aggressive]")
+{
+    const bool unsolicited = GENERATE(false, true);
+    const bool confirm = GENERATE(false, true);
+    AggressiveKey key;
+    AggressiveMode inspector(7, 16, false), sender(7, 16, true), receiver(7, 16, true);
+    const auto seed = Seed(1, true);
+    REQUIRE(sender.RememberChallenge(Read(seed), unsolicited));
+    REQUIRE(receiver.RememberChallenge(Read(seed), unsolicited));
+    std::array<uint8_t, 2048> native{}, wire{}, decoded{};
+    APDUResponse response(wseq_t(native.data(), native.size()));
+    response.SetFunction(unsolicited ? FunctionCode::UNSOLICITED_RESPONSE : FunctionCode::RESPONSE);
+    response.SetControl(AppControlField(static_cast<uint8_t>(0xC5 | (unsolicited ? 0x10 : 0) | (confirm ? 0x20 : 0))));
+    response.SetIIN(IINField::Empty());
+    Group120Var7 error;
+    error.seqNum = 1;
+    error.userNum = 1;
+    error.associationId = 7;
+    error.errorCode = 1;
+    auto writer = response.GetWriter();
+    REQUIRE(writer.WriteFreeFormat(&error, 1));
+    const auto errorSize = response.Size();
+    Group120Var1 challenge;
+    size_t nativeSize = 0, wireSize = 0, decodedSize = 0;
+    REQUIRE(inspector.InspectEmbeddedChallenge(response.ToRSeq(), challenge, nativeSize));
+    REQUIRE(nativeSize == errorSize); // G120V7 is not an embedded Challenge.
+    REQUIRE_FALSE(inspector.HasPendingConfirm());
+    REQUIRE(sender.Create(7, 1, key.Read(), response.ToRSeq(), wseq_t(wire.data(), wire.size()), wireSize));
+    REQUIRE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), wireSize),
+                            wseq_t(decoded.data(), decoded.size()), decodedSize));
+    REQUIRE(rseq_t(decoded.data(), decodedSize).equals(response.ToRSeq()));
+    REQUIRE(inspector.InspectEmbeddedChallenge(rseq_t(wire.data(), wireSize), challenge, nativeSize));
+    REQUIRE(nativeSize == wireSize);
+    // Existing codecs must still reject a malformed V7 qualifier or truncated body.
+    native[6] = 0x07;
+    REQUIRE_FALSE(inspector.InspectEmbeddedChallenge(response.ToRSeq(), challenge, nativeSize));
+    native[6] = 0x5B;
+    REQUIRE_FALSE(inspector.InspectEmbeddedChallenge(response.ToRSeq().take(errorSize - 1), challenge, nativeSize));
+    if (confirm)
+    {
+        const auto embedded = Seed(41, false);
+        REQUIRE(challenge.Read(Read(embedded).skip(10)));
+        REQUIRE(writer.WriteFreeFormat(&challenge, 1));
+        REQUIRE(inspector.InspectEmbeddedChallenge(response.ToRSeq(), challenge, nativeSize));
+        REQUIRE(nativeSize == errorSize); // V7 before V1 is valid native content.
+        std::vector<uint8_t> reversed(native.data(), native.data() + 4);
+        reversed.insert(reversed.end(), embedded.begin() + 4, embedded.end());
+        reversed.insert(reversed.end(), native.data() + 4, native.data() + errorSize);
+        REQUIRE_FALSE(inspector.InspectEmbeddedChallenge(Read(reversed), challenge, nativeSize));
+    }
+}
+
+TEST_CASE("AggressiveMode - association Challenge watermark spans UNS categories and preserves forward gaps", "[aggressive]")
+{
+    const auto mode = GENERATE(0, 1, 2); // Control, monitoring, embedded Control Challenge.
+    const bool monitoring = mode == 1;
+    const bool embedded = mode == 2;
+    AggressiveMode engine(7, 16, monitoring);
+    auto challenge = [&](uint32_t sequence, bool unsolicited) {
+        auto bytes = Seed(sequence, monitoring);
+        if (embedded)
+        {
+            bytes[0] = unsolicited ? 0xF5 : 0xE5;
+            bytes[1] = unsolicited ? 0x82 : 0x81;
+        }
+        return bytes;
+    };
+    auto accept = [&](uint32_t sequence, bool unsolicited) {
+        const auto bytes = challenge(sequence, unsolicited);
+        REQUIRE(engine.RememberChallenge(Read(bytes), unsolicited, embedded));
+        if (embedded)
+            engine.DiscardPendingConfirms(); // Cancellation must retain the shared watermark.
+    };
+    auto reject = [&](uint32_t sequence, bool unsolicited) {
+        const auto bytes = challenge(sequence, unsolicited);
+        if (embedded)
+        {
+            Group120Var1 value;
+            size_t nativeSize = 0;
+            REQUIRE_FALSE(engine.InspectEmbeddedChallenge(Read(bytes), value, nativeSize));
+        }
+        REQUIRE_FALSE(engine.RememberChallenge(Read(bytes), unsolicited, embedded));
+    };
+    accept(0xFFFFFFFEu, true);
+    reject(0xFFFFFFFDu, false);
+    reject(0xFFFFFFFEu, false);
+    accept(0, false); // UINT32 rollover across UNS categories.
+    reject(0xFFFFFFFFu, true);
+    reject(0, true);
+    accept(0x60000000u, true);
+    accept(0xC0000000u, true); // The older solicited transcript must not constrain the current watermark.
+    accept(0x20000000u, false);
+    reject(0xC0000000u, true);
+}

@@ -317,8 +317,12 @@ TEST_CASE("MasterResponder - CSQ replay history is association wide", "[sa4a]")
     SECTION("UINT32 rollover and forward gaps are accepted")
     {
         REQUIRE(f.master.RetainRequest(7, Read(f.request), 1003) == MR::OK);
-        REQUIRE(f.Respond(Read(Challenge(0)), 1004) == MR::OK);
-        REQUIRE(f.master.RetainRequest(7, Read(f.request), 1005) == MR::OK);
+        Group120Var1 embedded;
+        const auto wrapped = Challenge(0);
+        REQUIRE(embedded.Read(Read(wrapped).skip(10)));
+        REQUIRE(f.master.ObserveEmbeddedChallenge(7, embedded, true, 1004));
+        REQUIRE(f.Respond(Read(wrapped), 1004) == MR::INVALID_SEQUENCE);
+        f.Provision(1005);
         REQUIRE(f.Respond(Read(Challenge(3)), 1006) == MR::OK);
         return;
     }
@@ -470,5 +474,36 @@ TEST_CASE("MasterResponder - CryptoProvider failure cannot emit a Reply", "[sa4a
     } restore{context.get(), OSSL_LIB_CTX_set0_default(context.get())};
     REQUIRE(restore.previous);
     REQUIRE(f.Respond(Read(bytes)) == MR::CRYPTO_ERROR);
+    f.Denied();
+}
+
+TEST_CASE("MasterResponder - embedded and standalone Challenges share association CSQ history", "[sa4a]")
+{
+    Fixture f;
+    auto unsolicited = Challenge(11);
+    Group120Var1 value;
+    REQUIRE(value.Read(Read(unsolicited).skip(10)));
+    REQUIRE(f.master.ObserveEmbeddedChallenge(7, value, true, 1001));
+    REQUIRE(f.master.GetState() == MS::WAITING_FOR_CHALLENGE);
+    REQUIRE_FALSE(f.master.ObserveEmbeddedChallenge(7, value, true, 1001));
+    const auto stale = GENERATE(10u, 11u);
+    REQUIRE(f.Respond(Read(Challenge(stale)), 1002) == MR::INVALID_SEQUENCE);
+    f.Denied();
+    f.Provision(1003); // Failure/reset preserves the association watermark.
+    auto solicited = Challenge(12);
+    REQUIRE(f.Respond(Read(solicited), 1004) == MR::OK);
+    value.seqNum = 12;
+    REQUIRE_FALSE(f.master.ObserveEmbeddedChallenge(7, value, true, 1005));
+    value.seqNum = 13;
+    REQUIRE_FALSE(f.master.ObserveEmbeddedChallenge(8, value, false, 1005));
+    value.userNum = 1;
+    REQUIRE_FALSE(f.master.ObserveEmbeddedChallenge(7, value, false, 1005));
+    value.userNum = 0; value.macAlgorithm = 3;
+    REQUIRE_FALSE(f.master.ObserveEmbeddedChallenge(7, value, false, 1005));
+    value.macAlgorithm = 4;
+    REQUIRE(f.master.ObserveEmbeddedChallenge(7, value, true, 1005));
+    REQUIRE(f.master.SetSessionKey(1, Read(f.key), 100000, 1006) == MR::OK);
+    REQUIRE(f.master.RetainRequest(7, Read(f.request), 1006) == MR::OK);
+    REQUIRE(f.Respond(Read(solicited), 1007) == MR::INVALID_SEQUENCE);
     f.Denied();
 }

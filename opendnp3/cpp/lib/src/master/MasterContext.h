@@ -269,6 +269,8 @@ private:
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
     void TransmitAuthenticationReply();
     void ServiceAuthentication();
+    void ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native);
+    void DiscardEmbeddedConfirm();
 
     // --- implement  IMasterTaskRunner ------
 

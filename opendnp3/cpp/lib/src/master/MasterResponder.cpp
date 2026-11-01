@@ -166,6 +166,20 @@ MasterResponder::Result MasterResponder::RetainRequest(uint16_t association, ser
     return Result::OK;
 }
 
+bool MasterResponder::ObserveEmbeddedChallenge(
+    uint16_t association, const Group120Var1& challenge, bool, uint64_t nowMs)
+{
+    if (monitoringDirection || association != associationId || !ObserveTime(nowMs)
+        || challenge.userNum != 0 || challenge.reason != 1 || challenge.macAlgorithm != macAlgorithm)
+        return false;
+    const uint32_t delta = challenge.seqNum - lastSequence;
+    if (haveSequence && (!delta || delta >= 0x80000000u))
+        return false;
+    lastSequence = challenge.seqNum;
+    haveSequence = true;
+    return true;
+}
+
 MasterResponder::Result MasterResponder::Respond(uint16_t association,
                                                  ser4cpp::rseq_t fragment,
                                                  uint64_t nowMs,
