@@ -53,6 +53,8 @@ public:
     // session state. Expiry is an absolute monotonic deadline, never a default key.
     Result Configure(ser4cpp::rseq_t updateKey, uint64_t credentialExpiry, uint64_t now);
     bool NeedsExchange(uint64_t now);
+    uint8_t LastKeyStatus() const { return lastKeyStatus; } // Zero means no accepted remote status.
+    bool CanSendUnkeyedCritical(uint64_t now);
     bool HasMonitoringHistory() const
     {
         return haveMonitoring || recoverySize != 0;
@@ -148,6 +150,7 @@ private:
     uint64_t nextAttempt = 0;
     uint8_t appSequence = 0;
     uint8_t attempts = 0;
+    uint8_t lastKeyStatus = 0;
     Phase phase = Phase::IDLE;
 };
 } // namespace opendnp3

@@ -29,6 +29,7 @@ public:
     static bool ControlEligible(MContext& context) { return context.authentication->controlEligible[1]; }
     static bool ReplyIssued(MContext& context) { return context.authentication->replyIssued; }
     static bool ReplyPending(MContext& context) { return context.authentication->replyPending; }
+    static bool CheckConfirm(MContext& context) { return context.CheckConfirmTransmit(); }
     static bool MonitoringWaiting(MContext& context) { return context.authentication->monitorWaiting; }
     static size_t Pending(MContext& context) { return context.authentication->pendingWireSize; }
     static rseq_t PendingBytes(MContext& context)
@@ -50,6 +51,10 @@ public:
         return rseq_t(context.authentication->aggressiveWire.data(), size);
     }
     static SessionKeys& Common(OContext& context) { return *context.authentication->sessions->Find(1); }
+    static SessionKeys& Session(OContext& context, uint16_t user)
+    {
+        return *context.authentication->sessions->Find(user);
+    }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
     static bool MonitoringPending(OContext& context) { return context.authentication->monitoringPending; }
     static OutstationChallenger::State ChallengeState(OContext& context)
@@ -481,6 +486,189 @@ TEST_CASE("ProductionAuthentication - standalone Error preserves independent out
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
     REQUIRE(pair.results.values.size() == 1);
     REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+}
+
+TEST_CASE("ProductionAuthentication - user critical transmission during non OK key backoff stays unauthenticated",
+          "[production-sa][unkeyed-critical]")
+{
+    // Qualifies, unknown status, last OK/local invalid, transient retry, authentication busy,
+    // recurring task, expired credentials, one-shot READ, CONFIRM, DELAY_MEASURE, INITIALIZE_DATA.
+    const auto condition = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+    const bool queuedConfirm = condition == 0 ? GENERATE(false, true) : false;
+    RuntimePair pair(false, true); // Ordinary Aggressive transmission enabled; this exception must remain normal.
+    pair.Pump();
+    auto& masterSession = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+    auto& peerSession = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2);
+    uint64_t now = 0;
+    if (condition == 1)
+        masterSession.PeerRestart(now);
+    else if (condition == 2)
+    {
+        now = masterSession.ValidUntil();
+        pair.master.exe->advance_time(std::chrono::milliseconds(now));
+    }
+    else
+    {
+        masterSession.PeerRestart(now);
+        REQUIRE(peerSession.Configure(rseq_t(pair.source->keys[1].data(), 32), 10000000, now) == SessionKeys::Result::OK);
+        std::array<uint8_t, SessionKeys::MAX_APDU> request{}, status{}, change{};
+        size_t requestSize = 0, statusSize = 0, changeSize = 0;
+        const size_t attempts = condition == 3 ? 1 : 3;
+        for (size_t n = 0; n < attempts; ++n)
+        {
+            REQUIRE(masterSession.Begin(7, 9, now, wseq_t(request.data(), request.size()), requestSize)
+                == SessionKeys::Result::OK);
+            REQUIRE(peerSession.Process(7, rseq_t(request.data(), requestSize), now,
+                wseq_t(status.data(), status.size()), statusSize) == SessionKeys::Result::OK);
+            REQUIRE(masterSession.Process(7, rseq_t(status.data(), statusSize), now,
+                wseq_t(change.data(), change.size()), changeSize) == SessionKeys::Result::OK);
+            masterSession.SetChangeQueued(rseq_t(change.data(), changeSize), true);
+            masterSession.CancelQueuedChange(now); // Actual existing failure/backoff path; no keys installed.
+            if (n + 1 < attempts)
+            {
+                const auto delay = pair.master.context->params.authentication.replyTimeoutMs;
+                pair.master.exe->advance_time(std::chrono::milliseconds(delay)); // Service after setup, not mid exchange.
+                pair.outstation.AdvanceTime(TimeDuration::Milliseconds(delay));
+                now += delay;
+            }
+        }
+        REQUIRE(masterSession.LastKeyStatus() == 2);
+    }
+    if (condition == 6)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(10000000 - now));
+        now = 10000000;
+    }
+    pair.master.exe->run_many();
+    // A timer alone never causes a keyless ordinary request.
+    while (pair.master.lower->NumWrites())
+    {
+        HexSequence packet(pair.master.lower->PopWriteAsHex());
+        REQUIRE(packet.ToRSeq()[1] == 0x20);
+    }
+    if (condition == 4)
+    {
+        REQUIRE(pair.master.SendToMaster("F3 82 00 00"));
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        HexSequence challenge(pair.master.lower->PopWriteAsHex());
+        REQUIRE(challenge.ToRSeq()[3] == 1);
+    }
+    if (condition == 5)
+    {
+        auto config = TaskConfig::Default();
+        config.authenticationUser = 2;
+        pair.master.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(1), pair.master.meas, config);
+        pair.master.exe->run_many();
+    }
+    else if (condition >= 7)
+    {
+        auto config = TaskConfig::Default();
+        config.authenticationUser = 2;
+        if (condition == 7)
+            pair.master.context->ScanClasses(ClassField::AllClasses(), pair.master.meas, config);
+        else
+            pair.master.context->PerformFunction("noncritical user request",
+                condition == 8 ? FunctionCode::CONFIRM
+                    : (condition == 9 ? FunctionCode::DELAY_MEASURE : FunctionCode::INITIALIZE_DATA),
+                [](HeaderWriter&) { return true; }, config);
+        pair.master.exe->run_many();
+    }
+    else
+        pair.SelectOperate();
+    if (condition != 0)
+    {
+        while (pair.master.lower->NumWrites())
+        {
+            HexSequence packet(pair.master.lower->PopWriteAsHex());
+            REQUIRE(packet.ToRSeq()[1] == 0x20); // Only existing key/authentication traffic, never a critical request.
+        }
+        if (condition == 4)
+        {
+            REQUIRE(pair.master.context->OnTxReady());
+            pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+            pair.master.exe->run_many();
+            REQUIRE(pair.master.lower->NumWrites() == 0); // Ending another exchange must not arm this waiting task.
+        }
+        if (condition >= 7)
+        {
+            REQUIRE(pair.master.context->tstate == MContext::TaskState::TASK_READY);
+            REQUIRE(pair.master.context->activeTask);
+            REQUIRE_FALSE(pair.master.context->isSending);
+            REQUIRE(pair.master.context->params.responseTimeout.value < pair.master.context->params.taskStartTimeout.value);
+            const auto sequence = pair.master.context->solSeq.Get();
+            const auto delay = pair.master.context->params.responseTimeout.value;
+            pair.master.exe->advance_time(delay);
+            pair.outstation.AdvanceTime(TimeDuration::Milliseconds(delay.count()));
+            pair.master.exe->run_many();
+            // An orphan response timer would move TASK_READY to IDLE and strand the task.
+            REQUIRE(pair.master.context->tstate == MContext::TaskState::TASK_READY);
+            REQUIRE(pair.master.context->activeTask);
+            REQUIRE(pair.master.context->solSeq.Get() == sequence);
+            REQUIRE(pair.master.lower->NumWrites() == 0);
+            if (condition == 7)
+            {
+                // A rejected one-shot UserPollTask must still build and authenticate
+                // normally once the existing renewal procedure supplies valid keys.
+                now += static_cast<uint64_t>(delay.count());
+                masterSession.RequestRenewal(now);
+                pair.master.exe->advance_time(std::chrono::milliseconds(100));
+                pair.outstation.AdvanceTime(TimeDuration::Milliseconds(100));
+                pair.master.exe->run_many();
+                REQUIRE(pair.master.lower->NumWrites() == 1);
+                const auto replies = pair.controlReplies;
+                pair.Pump();
+                REQUIRE(pair.controlReplies > replies);
+                REQUIRE_FALSE(pair.master.context->activeTask);
+            }
+        }
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+        return;
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    HexSequence critical(request);
+    REQUIRE(critical.ToRSeq()[1] == 3); // Normal SELECT, with no G120V3/V9 envelope.
+    REQUIRE(critical.ToRSeq()[2] != 120);
+    REQUIRE(masterSession.ControlKey(now).is_empty());
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    const auto sequence = pair.master.context->solSeq.Get();
+    REQUIRE(pair.master.SendToMaster("C0 81 00 00")); // Transmission did not authenticate a response.
+    REQUIRE(pair.master.context->solSeq.Get() == sequence);
+    REQUIRE(pair.results.values.empty());
+    REQUIRE(pair.master.context->OnTxReady());
+    if (queuedConfirm)
+    {
+        pair.master.context->confirmQueue.push_back(APDUHeader::SolicitedConfirm(7));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::CheckConfirm(*pair.master.context));
+        REQUIRE(pair.master.context->confirmQueue.size() == 1); // No unrelated key can replace the task's responder.
+    }
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(challenge));
+    REQUIRE(pair.master.lower->NumWrites() == 0); // No usable key: no fabricated G120V2.
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    pair.outstation.AdvanceTime(TimeDuration::Milliseconds(2000));
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+        != OutstationChallenger::State::WAITING_FOR_REPLY);
+    pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
+    pair.master.exe->run_many();
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    if (queuedConfirm)
+    {
+        // Service may drain the entry after the timeout, or the normal explicit check may do so.
+        if (!pair.master.lower->NumWrites())
+            REQUIRE(ProductionAuthenticationTestAccess::CheckConfirm(*pair.master.context));
+        REQUIRE(pair.master.context->confirmQueue.empty());
+        REQUIRE(pair.master.lower->PopWriteAsHex() == "C7 00");
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 0);
 }
 
 TEST_CASE("ProductionAuthentication - real key negotiation gates both request and response paths", "[production-sa]")

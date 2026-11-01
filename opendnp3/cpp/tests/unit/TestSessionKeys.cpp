@@ -642,3 +642,62 @@ TEST_CASE("SessionKeys - count only repeated failures retain a positive retry de
     }
     REQUIRE(pair.master.NeedsExchange(pair.now));
 }
+
+TEST_CASE("SessionKeys - accepted remote status is distinct from local key validity", "[session-keys][unkeyed-critical]")
+{
+    KeyPair pair;
+    REQUIRE(pair.master.LastKeyStatus() == 0);
+    pair.ToChange();
+    REQUIRE(pair.master.LastKeyStatus() == 2);
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+        == R::INSTALLED);
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+        == R::INSTALLED);
+    REQUIRE(pair.master.LastKeyStatus() == 1);
+    pair.master.RequestRenewal(pair.now);
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+    REQUIRE(pair.master.LastKeyStatus() == 1);
+    pair.ToStatus();
+    pair.status.bytes[pair.status.size - 1] ^= 1;
+    REQUIRE(pair.master.Process(7, pair.status.Read(), pair.now, pair.change.Write(), pair.change.size) != R::OK);
+    REQUIRE(pair.master.LastKeyStatus() == 1); // Rejected status cannot replace accepted remote information.
+    REQUIRE_FALSE(pair.master.CanSendUnkeyedCritical(pair.now));
+    pair.master.Disconnect();
+    REQUIRE(pair.master.LastKeyStatus() == 0);
+}
+
+TEST_CASE("SessionKeys - non OK critical transmission requires capped Security Idle backoff", "[session-keys][unkeyed-critical]")
+{
+    KeyPair pair;
+    for (size_t attempt = 0; attempt < 3; ++attempt)
+    {
+        pair.ToChange();
+        pair.master.SetChangeQueued(pair.change.Read(), true);
+        pair.master.CancelQueuedChange(pair.now);
+        REQUIRE(pair.master.LastKeyStatus() == 2);
+        REQUIRE(pair.master.CanSendUnkeyedCritical(pair.now) == (attempt == 2));
+        REQUIRE(pair.master.ControlKey(pair.now).is_empty());
+        if (attempt < 2) pair.now += pair.config.replyTimeoutMs;
+    }
+    REQUIRE_FALSE(pair.master.IsExchanging());
+    REQUIRE_FALSE(pair.master.NeedsExchange(pair.now));
+    SECTION("renewal timer retains its existing boundary")
+    {
+        pair.now += pair.config.intervalMs;
+        REQUIRE_FALSE(pair.master.CanSendUnkeyedCritical(pair.now));
+        REQUIRE(pair.master.NeedsExchange(pair.now));
+        REQUIRE(pair.master.LastKeyStatus() == 2);
+    }
+    SECTION("disconnect clears association scoped remote status")
+    {
+        pair.master.Disconnect();
+        REQUIRE(pair.master.LastKeyStatus() == 0);
+        REQUIRE_FALSE(pair.master.CanSendUnkeyedCritical(pair.now));
+    }
+    SECTION("credential expiry fails closed")
+    {
+        REQUIRE_FALSE(pair.master.CanSendUnkeyedCritical(10000000));
+        REQUIRE(pair.master.LastKeyStatus() == 0);
+    }
+}

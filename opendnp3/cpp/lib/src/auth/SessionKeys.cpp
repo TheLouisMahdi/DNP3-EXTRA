@@ -152,6 +152,7 @@ void SessionKeys::Reset()
     recoverySize = 0;
     updateSize = 0;
     configured = haveMonitoring = haveKSQ = false;
+    lastKeyStatus = 0;
     keySize = lastChangeSize = 0;
     credentialExpiry = 0;
     ksq = 0;
@@ -196,6 +197,7 @@ void SessionKeys::PeerRestart(uint64_t now)
     crypto::Clear(ser4cpp::wseq_t(recoveryMonitoring.data(), recoveryMonitoring.size()));
     crypto::Clear(ser4cpp::wseq_t(recoveryChange.data(), recoveryChange.size()));
     haveMonitoring = haveKSQ = false;
+    lastKeyStatus = 0;
     ksq = 0;
     keySize = lastChangeSize = recoverySize = 0;
     attempts = 0;
@@ -203,6 +205,7 @@ void SessionKeys::PeerRestart(uint64_t now)
 }
 void SessionKeys::Disconnect()
 {
+    lastKeyStatus = 0;
     RetainRecovery();
     Invalidate();
     ClearPending();
@@ -266,6 +269,14 @@ void SessionKeys::RequestRenewal(uint64_t now)
         Invalidate();
         nextAttempt = now;
     }
+}
+bool SessionKeys::CanSendUnkeyedCritical(uint64_t now)
+{
+    Tick(now);
+    // Table 7-13's exhausted-attempt path resets attempts and waits for the
+    // next Key Change interval. Ordinary inter-attempt retries do not qualify.
+    return role == Role::MASTER && configured && !valid && phase == Phase::IDLE
+        && lastKeyStatus >= 2 && lastKeyStatus <= 4 && attempts == 0 && now < nextAttempt;
 }
 bool SessionKeys::NeedsExchange(uint64_t now)
 {
@@ -454,9 +465,12 @@ SessionKeys::Result SessionKeys::Process(
         return Fail(Result::INVALID, now);
     if (phase == Phase::CONFIRM)
     {
-        if (status.keyStatus != 1 || status.seqNum != static_cast<uint32_t>(ksq + 1)
+        if (status.seqNum != static_cast<uint32_t>(ksq + 1)
             || !CheckStatusMAC(status, ser4cpp::rseq_t(candidate.data() + 32, 32),
                                ser4cpp::rseq_t(pendingChange.data(), pendingChangeSize)))
+            return Fail(Result::INVALID, now);
+        lastKeyStatus = status.keyStatus;
+        if (status.keyStatus != 1)
             return Fail(Result::INVALID, now);
         crypto::Clear(ser4cpp::wseq_t(control.data(), control.size()));
         crypto::Clear(ser4cpp::wseq_t(monitoring.data(), monitoring.size()));
@@ -491,6 +505,7 @@ SessionKeys::Result SessionKeys::Process(
         && !status.hmacValue.length();
     if ((haveKSQ && (!advance || advance >= 0x80000000u)) || (!existingMAC && !recoveryMAC && !initialStatus))
         return Fail(Result::INVALID, now);
+    lastKeyStatus = status.keyStatus; // Only after existing user, sequence and MAC/initial-status validation.
     const size_t rawSize = status.Size() - status.hmacValue.length();
     auto raw = ser4cpp::wseq_t(statusBytes.data(), statusBytes.size());
     if (!status.Write(raw))

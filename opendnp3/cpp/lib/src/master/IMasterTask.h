@@ -73,6 +73,7 @@ public:
     virtual char const* Name() const = 0;
 
     uint16_t AuthenticationUser() const { return config.authenticationUser; }
+    bool IsUserTask() const { return GetTaskType() == MasterTaskType::USER_TASK; }
 
     /**
      * The task's priority. Lower numbers are higher priority.

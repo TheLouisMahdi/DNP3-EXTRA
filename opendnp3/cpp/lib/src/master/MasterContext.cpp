@@ -235,6 +235,7 @@ void MContext::CompleteActiveTask()
     if (authentication)
     {
         authentication->protectedTask = false;
+        authentication->allowUnkeyedCritical = false;
         authentication->replyIssued = false;
     }
 #endif
@@ -427,6 +428,7 @@ bool MContext::CheckConfirmTransmit()
             return false;
         }
         if ((auth.protectedConfirm && !auth.nativeConfirmQueued) || auth.exchangeIndex < 2 || auth.pendingWireSize
+            || (auth.protectedTask && !auth.replyIssued && tstate == TaskState::WAIT_FOR_RESPONSE)
             || !session || !session->Ready(now)
             || auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE)
             return false;
@@ -584,6 +586,21 @@ bool MContext::Run(const std::shared_ptr<IMasterTask>& task)
     this->tstate = TaskState::TASK_READY;
     this->activeTask = task;
     this->activeTask->OnStart();
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+    {
+        auto& auth = *authentication;
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count());
+        auto* session = auth.sessions->Find(task->AuthenticationUser());
+        auth.allowUnkeyedCritical = task->IsUserTask() && !task->IsRecurring() && session
+            && auth.exchangeIndex == 2 && !auth.pendingWireSize && !auth.replyPending && !auth.replyInFlight
+            && !auth.protectedConfirm && !auth.deferredAuthenticationCount && !auth.monitorWaiting
+            && !auth.controlAggressive.HasPendingConfirm()
+            && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE
+            && session->CanSendUnkeyedCritical(now);
+    }
+#endif
     FORMAT_LOG_BLOCK(logger, flags::INFO, "Begining task: %s", this->activeTask->Name());
 
     if (!this->isSending)
@@ -622,6 +639,7 @@ void MContext::ScheduleAdhocTask(const std::shared_ptr<IMasterTask>& task)
 MContext::TaskState MContext::ResumeActiveTask()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
+    bool unkeyedCritical = false;
     if (authentication && authentication->sessions)
     {
         const auto now = static_cast<uint64_t>(
@@ -633,8 +651,18 @@ MContext::TaskState MContext::ResumeActiveTask()
             CompleteActiveTask();
             return TaskState::IDLE;
         }
+        auto& auth = *authentication;
+        unkeyedCritical = auth.allowUnkeyedCritical && auth.exchangeIndex == 2 && !auth.pendingWireSize
+            && !auth.replyPending && !auth.replyInFlight && !auth.protectedConfirm && !auth.deferredAuthenticationCount
+            && !auth.monitorWaiting && !auth.controlAggressive.HasPendingConfirm()
+            && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE
+            && Timestamp(executor->get_time()) < activeTask->StartExpirationTime()
+            && session->CanSendUnkeyedCritical(now);
+        auth.allowUnkeyedCritical = false; // Consume admission once; a later timer cannot create it.
+        if (unkeyedCritical)
+            auth.responder.Reset(); // Never retain a stale cached signing key for this exceptional send.
         auto* common = authentication->sessions->Find(1);
-        if (!authentication->protectedConfirm && !authentication->deferredAuthenticationCount)
+        if (!unkeyedCritical && !authentication->protectedConfirm && !authentication->deferredAuthenticationCount)
         {
             if (common && common->Ready(now) && common->RemainingMessages() < (session->User() == 1 ? 4u : 2u))
                 common->RequestRenewal(now);
@@ -643,8 +671,8 @@ MContext::TaskState MContext::ResumeActiveTask()
         }
         const bool allReady
             = authentication->sessions->At(0)->Ready(now) && authentication->sessions->At(1)->Ready(now);
-        if (!allReady || authentication->exchangeIndex < 2 || !session->Ready(now) || authentication->protectedConfirm
-            || authentication->deferredAuthenticationCount)
+        if (!unkeyedCritical && (!allReady || authentication->exchangeIndex < 2 || !session->Ready(now)
+            || authentication->protectedConfirm || authentication->deferredAuthenticationCount))
         {
             if (Timestamp(executor->get_time()) >= activeTask->StartExpirationTime())
             {
@@ -656,8 +684,8 @@ MContext::TaskState MContext::ResumeActiveTask()
         }
         const auto index = session->User() == authentication->sessions->config.users[0] ? 0u : 1u;
         const bool fresh = authentication->keyEpoch[index] != session->Sequence();
-        if (fresh || authentication->responderUser != session->User()
-            || authentication->responder.GetState() == MasterResponder::State::NO_SESSION_KEYS)
+        if (!unkeyedCritical && (fresh || authentication->responderUser != session->User()
+            || authentication->responder.GetState() == MasterResponder::State::NO_SESSION_KEYS))
         {
             if (authentication->responder.SetSessionKey(session->User(), session->ControlKey(now),
                                                         session->ValidUntil(), now, fresh)
@@ -682,7 +710,19 @@ MContext::TaskState MContext::ResumeActiveTask()
         return TaskState::IDLE;
     }
 
-    this->StartResponseTimer();
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (unkeyedCritical)
+    {
+        // IEEE Table 7-7 mandatory critical functions. Optional functions, including
+        // READ, retain the normal key gate and do not qualify for this exception.
+        const auto function = FunctionCodeSpec::to_type(request.GetFunction());
+        const bool critical = (function >= 0x02 && function <= 0x06)
+            || (function >= 0x0D && function <= 0x0E) || (function >= 0x10 && function <= 0x15)
+            || (function >= 0x18 && function <= 0x1F);
+        if (!critical || request.GetControl().UNS)
+            return TaskState::TASK_READY;
+    }
+#endif
     auto apdu = request.ToRSeq();
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
@@ -693,7 +733,7 @@ MContext::TaskState MContext::ResumeActiveTask()
             && (authentication->sessions || request.GetFunction() != FunctionCode::READ);
         authentication->replyIssued = false;
         bool aggressive = false;
-        if (authentication->protectedTask && authentication->sessions)
+        if (authentication->protectedTask && authentication->sessions && !unkeyedCritical)
         {
             auto& auth = *authentication;
             auto* session = auth.sessions->Find(activeTask->AuthenticationUser());
@@ -720,7 +760,9 @@ MContext::TaskState MContext::ResumeActiveTask()
                 session->CountAuthentication(now);
             }
         }
-        if (authentication->protectedTask && !aggressive
+        // 7.5.3.4(c): this normal transmission grants no trust. With no usable
+        // key, do not create an Aggressive Request or require keyed request retention.
+        if (authentication->protectedTask && !aggressive && !unkeyedCritical
             && authentication->responder.RetainRequest(
                    authentication->association, apdu,
                    static_cast<uint64_t>(
@@ -736,6 +778,7 @@ MContext::TaskState MContext::ResumeActiveTask()
     }
 #endif
     this->RecordLastRequest(apdu);
+    this->StartResponseTimer(); // All validation/formatting succeeded; a request is about to transmit.
     this->Transmit(apdu);
 
     return TaskState::WAIT_FOR_RESPONSE;
@@ -1008,6 +1051,7 @@ void MContext::ResetAuthentication()
         authentication->exchangeIndex = 2;
         authentication->exchangeSequence = (authentication->exchangeSequence + 1) & 15;
     }
+    authentication->allowUnkeyedCritical = false;
     authentication->responder.Reset();
     DiscardEmbeddedConfirm();
     authentication->controlAggressive.Reset();

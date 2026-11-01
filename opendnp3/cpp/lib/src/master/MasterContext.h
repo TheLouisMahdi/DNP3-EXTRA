@@ -270,6 +270,7 @@ private:
         bool replyPending = false;
         bool replyInFlight = false;
         bool protectedTask = false;
+        bool allowUnkeyedCritical = false; // Admission for this task only; never armed by a timer.
         bool replyIssued = false;
     };
     std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
