@@ -264,6 +264,9 @@ private:
         MasterResponder responder;
         std::array<uint8_t, 30> reply{};
         size_t replySize = 0;
+        uint64_t replyDeadline = 0;
+        uint32_t replyKSQ = 0;
+        bool replyCountExhausted = false;
         bool replyPending = false;
         bool replyInFlight = false;
         bool protectedTask = false;
@@ -272,6 +275,8 @@ private:
     std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
     void ResetAuthentication();
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
+    bool IsAuthenticationReplyValid(uint64_t now);
+    void CancelAuthenticationReply();
     void TransmitAuthenticationReply();
     void ServiceAuthentication();
     void ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native, uint8_t count);

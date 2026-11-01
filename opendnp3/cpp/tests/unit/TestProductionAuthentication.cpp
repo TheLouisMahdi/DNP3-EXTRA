@@ -22,6 +22,20 @@ class ProductionAuthenticationTestAccess
 public:
     static SessionKeys& Common(MContext& context) { return *context.authentication->sessions->Find(1); }
     static uint8_t Deferred(MContext& context) { return context.authentication->deferredAuthenticationCount; }
+    static bool ControlEligible(MContext& context) { return context.authentication->controlEligible[1]; }
+    static bool ReplyIssued(MContext& context) { return context.authentication->replyIssued; }
+    static bool ReplyPending(MContext& context) { return context.authentication->replyPending; }
+    static bool MonitoringWaiting(MContext& context) { return context.authentication->monitorWaiting; }
+    static size_t Pending(MContext& context) { return context.authentication->pendingWireSize; }
+    static rseq_t ReplyBytes(MContext& context)
+    {
+        return rseq_t(context.authentication->reply.data(), context.authentication->reply.size());
+    }
+    static rseq_t AggressiveBytes(MContext& context, size_t size)
+    {
+        REQUIRE(size <= context.authentication->aggressiveWire.size());
+        return rseq_t(context.authentication->aggressiveWire.data(), size);
+    }
     static SessionKeys& Common(OContext& context) { return *context.authentication->sessions->Find(1); }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
     static uint8_t Deferred(OContext& context) { return context.authentication->deferredControlCount; }
@@ -1116,4 +1130,271 @@ TEST_CASE("ProductionAuthentication - outstation common-user control accounting 
     pair.outstation.SendToOutstation(request);
     REQUIRE(pair.outstation.lower->NumWrites() == 0);
     REQUIRE(session.RemainingMessages() == 0);
+}
+
+TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives reset timeout and disconnect", "[production-sa]")
+{
+    const auto scenario = GENERATE(0, 1, 2, 3); // Normal completion, repeated reset, response timeout, disconnect.
+    RuntimePair pair(false, true);
+    pair.Pump();
+    pair.SelectOperate();
+    pair.Pump();
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    pair.SelectOperate();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto packet = pair.master.lower->PopWriteAsHex();
+    HexSequence request(packet);
+    REQUIRE(request.ToRSeq()[2] == 120);
+    REQUIRE(request.ToRSeq()[3] == 3);
+    const auto borrowed = ProductionAuthenticationTestAccess::AggressiveBytes(*pair.master.context, request.ToRSeq().length());
+    REQUIRE(borrowed.equals(request.ToRSeq()));
+    REQUIRE(pair.master.context->isSending);
+    REQUIRE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
+    if (scenario == 1)
+    {
+        for (size_t i = 0; i < 2; ++i)
+        {
+            REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
+            pair.master.exe->run_many();
+            REQUIRE(borrowed.equals(request.ToRSeq()));
+            REQUIRE_FALSE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
+            REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+        }
+        // Retaining TX bytes must not retain authorization for a response to the reset exchange.
+        const auto before = pair.master.context->solSeq.Get();
+        const uint8_t response[] = {static_cast<uint8_t>(0xC0 | (request.ToRSeq()[0] & 0x0F)), 0x81, 0, 0};
+        REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(response, sizeof(response)))));
+        pair.master.exe->run_many();
+        REQUIRE(pair.master.context->solSeq.Get() == before);
+        REQUIRE(pair.results.values.size() == 1);
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(borrowed.equals(request.ToRSeq()));
+    }
+    else if (scenario == 2)
+    {
+        pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
+        pair.master.exe->run_many();
+        REQUIRE(pair.results.values.size() == 2);
+        REQUIRE(pair.results.values.back().summary != TaskCompletion::SUCCESS);
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+        REQUIRE(borrowed.equals(request.ToRSeq()));
+        REQUIRE(pair.master.context->isSending);
+    }
+    else if (scenario == 3)
+    {
+        // OnLowerLayerDown is delivered after lower-layer transmission cancellation.
+        REQUIRE(pair.master.context->OnLowerLayerDown());
+        REQUIRE_FALSE(pair.master.context->OnTxReady());
+        REQUIRE_FALSE(pair.master.context->OnLowerLayerDown());
+    }
+    if (scenario != 3)
+        REQUIRE(pair.master.context->OnTxReady());
+    for (size_t i = 0; i < borrowed.length(); ++i)
+        REQUIRE(borrowed[i] == 0);
+    if (scenario == 0)
+    {
+        // Lower-layer-owned bytes were copied above; normal authenticated processing still succeeds.
+        pair.outstation.SendToOutstation(packet);
+        pair.Pump();
+        REQUIRE(pair.results.values.size() == 2);
+        REQUIRE(pair.results.values.back().summary == TaskCompletion::SUCCESS);
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 2);
+    }
+    else if (scenario == 1)
+    {
+        pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
+        pair.master.exe->run_many();
+        REQUIRE(pair.results.values.size() == 2);
+        REQUIRE(pair.results.values.back().summary != TaskCompletion::SUCCESS);
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+    }
+    else if (scenario == 3)
+    {
+        pair.outstation.LowerLayerDown();
+        pair.outstation.LowerLayerUp();
+        REQUIRE(pair.master.context->OnLowerLayerUp());
+        pair.master.exe->run_many();
+        pair.Pump();
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+        pair.SelectOperate();
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        HexSequence fresh(pair.master.lower->PopWriteAsHex());
+        REQUIRE_FALSE(fresh.ToRSeq()[2] == 120 && fresh.ToRSeq()[3] == 3);
+        for (size_t i = 0; i < borrowed.length(); ++i)
+            REQUIRE(borrowed[i] == 0);
+    }
+}
+
+TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply validates lifetime without deferred counts", "[production-sa]")
+{
+    const bool deferred = GENERATE(false, true);
+    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, expiry, reset, new KSQ, reset during Reply TX.
+    RuntimePair pair(true);
+    pair.Pump();
+    pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto unsolicited = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(unsolicited));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto monitoring = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(monitoring);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto verified = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    if (deferred)
+        ProductionAuthenticationTestAccess::LeaveMessages(*pair.master.context, 1);
+    REQUIRE(pair.master.SendToMaster(verified));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto confirmation = pair.master.lower->PopWriteAsHex();
+    HexSequence confirm(confirmation);
+    REQUIRE(confirm.ToRSeq().length() == 2);
+    REQUIRE(confirm.ToRSeq()[1] == 0);
+    pair.outstation.SendToOutstation(confirmation); // Delay Master TX completion until after receipt of its Challenge.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(challenge));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE((ProductionAuthenticationTestAccess::Deferred(*pair.master.context) != 0) == deferred);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    auto& common = ProductionAuthenticationTestAccess::Common(*pair.master.context);
+    if (scenario == 1)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    }
+    else if (scenario == 2)
+    {
+        // Do not run due timers: OnTxReady itself must reject an expired key/Reply.
+        pair.master.exe->advance_time(std::chrono::milliseconds(common.ValidUntil())
+            - std::chrono::duration_cast<std::chrono::milliseconds>(pair.master.exe->get_time().time_since_epoch()));
+    }
+    else if (scenario == 3)
+    {
+        REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    }
+    else if (scenario == 4)
+        REQUIRE(common.Configure(rseq_t(pair.source->keys[0].data(), 32), 10000000, 0) == SessionKeys::Result::OK);
+    REQUIRE(pair.master.context->isSending);
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    if (scenario >= 1 && scenario <= 4)
+    {
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+        while (pair.master.lower->NumWrites())
+        {
+            HexSequence packet(pair.master.lower->PopWriteAsHex());
+            REQUIRE(packet.ToRSeq()[1] == 0x20);
+            REQUIRE(packet.ToRSeq()[3] != 2); // Key negotiation may resume; the obsolete Reply must not.
+        }
+        const auto bytes = ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context);
+        for (size_t i = 0; i < bytes.length(); ++i)
+            REQUIRE(bytes[i] == 0);
+        return;
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto reply = pair.master.lower->PopWriteAsHex();
+    HexSequence packet(reply);
+    REQUIRE(packet.ToRSeq()[1] == 0x20);
+    REQUIRE(packet.ToRSeq()[3] == 2);
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+    const auto borrowed = ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context);
+    REQUIRE(borrowed.equals(packet.ToRSeq()));
+    if (scenario == 5)
+    {
+        REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
+        pair.master.exe->run_many();
+        REQUIRE(borrowed.equals(packet.ToRSeq()));
+        REQUIRE(pair.master.context->isSending);
+    }
+    pair.outstation.SendToOutstation(reply); // The real peer verifies the Reply MAC and releases only this CONFIRM.
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.master.context->OnTxReady());
+    for (size_t i = 0; i < borrowed.length(); ++i)
+        REQUIRE(borrowed[i] == 0);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+}
+
+TEST_CASE("ProductionAuthentication - expired task Reply preserves independent monitoring and TX completion progress", "[production-sa]")
+{
+    const bool serviceBeforeCompletion = GENERATE(false, true);
+    RuntimePair pair;
+    pair.Pump();
+    pair.SelectOperate();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    // Outstation Challenge arrives before the Master receives TX completion for SELECT.
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(challenge));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+    pair.master.context->confirmQueue.push_back(APDUHeader::SolicitedConfirm(7));
+    // Start an independent monitoring exchange later, so its deadline has not elapsed when SELECT's Reply expires.
+    const auto timeout = pair.master.context->params.authentication.replyTimeoutMs;
+    pair.master.exe->advance_time(std::chrono::milliseconds(timeout / 2));
+    pair.master.exe->run_many();
+    HexSequence unsolicited("F3 82 00 00");
+    REQUIRE(pair.master.SendToMaster("F3 82 00 00"));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) != 0);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    pair.master.exe->advance_time(std::chrono::milliseconds(timeout - timeout / 2));
+    if (serviceBeforeCompletion)
+    {
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) != 0);
+        REQUIRE(pair.master.context->confirmQueue.size() == 1);
+    }
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(pair.master.context->confirmQueue.size() == 1);
+    REQUIRE(pair.master.lower->NumWrites() == 1); // Rejection must fall through to servicing the queued monitoring Challenge.
+    const auto monitoring = pair.master.lower->PopWriteAsHex();
+    HexSequence wire(monitoring);
+    REQUIRE(wire.ToRSeq()[1] == 0x20);
+    REQUIRE(wire.ToRSeq()[3] == 1);
+    REQUIRE(wire.ToRSeq()[0] == 0xC3);
+    MasterResponder peer(7, 16, timeout, true);
+    auto& common = ProductionAuthenticationTestAccess::Common(*pair.master.context);
+    REQUIRE(peer.SetSessionKey(1, common.MonitoringKey(timeout), common.ValidUntil(), timeout) == MasterResponder::Result::OK);
+    REQUIRE(peer.RetainRequest(7, unsolicited.ToRSeq(), timeout) == MasterResponder::Result::OK);
+    std::array<uint8_t, 2048> reply{};
+    size_t size = 0;
+    REQUIRE(peer.Respond(7, wire.ToRSeq(), timeout, wseq_t(reply.data(), reply.size()), size) == MasterResponder::Result::OK);
+    const auto before = pair.master.context->solSeq.Get();
+    REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(reply.data(), size))));
+    pair.master.exe->run_many();
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(pair.master.context->solSeq.Get() == before); // The cancelled SELECT Reply cannot authorize its task response.
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    REQUIRE(pair.master.context->confirmQueue.size() == 2);
+    REQUIRE(pair.master.context->confirmQueue.front().control.SEQ == 7);
+    REQUIRE_FALSE(pair.master.context->confirmQueue.front().control.UNS);
+    REQUIRE(pair.master.context->confirmQueue.back().control.SEQ == 3);
+    REQUIRE(pair.master.context->confirmQueue.back().control.UNS);
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    REQUIRE(pair.master.lower->PopWriteAsHex() == "C7 00"); // Older unrelated CONFIRM keeps its place.
+    REQUIRE(pair.master.context->confirmQueue.size() == 1);
 }

@@ -35,6 +35,7 @@
 
 #include "opendnp3/logging/LogLevels.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -185,16 +186,21 @@ bool MContext::OnTxReady()
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
     {
+        // The lower layer has released the previous APDU before any next TX starts.
+        crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
         if (authentication->replyInFlight)
         {
             authentication->replyInFlight = false;
+            authentication->replyDeadline = authentication->replyKSQ = 0;
+            authentication->replyCountExhausted = false;
             authentication->protectedConfirm = authentication->nativeConfirmQueued;
             crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
         }
         if (authentication->replyPending)
         {
             this->TransmitAuthenticationReply();
-            return true;
+            if (isSending)
+                return true;
         }
         if (authentication->wireInFlight && authentication->wireSize >= 2
             && authentication->wire[1] == FunctionCodeSpec::to_type(FunctionCode::CONFIRM))
@@ -856,7 +862,7 @@ void MContext::DiscardEmbeddedConfirm()
     if (!authentication)
         return;
     auto& aggressive = authentication->controlAggressive;
-    const bool nativeReplyPending = authentication->deferredAuthenticationCount && authentication->protectedConfirm
+    const bool nativeReplyPending = authentication->protectedConfirm
         && authentication->replyPending && !authentication->replyInFlight && !authentication->nativeConfirmQueued
         && authentication->responderUser == 1 && !aggressive.HasPendingConfirm();
     if (authentication->nativeConfirmQueued)
@@ -878,6 +884,8 @@ void MContext::DiscardEmbeddedConfirm()
     {
         authentication->replyPending = false;
         authentication->replySize = 0;
+        authentication->replyDeadline = authentication->replyKSQ = 0;
+        authentication->replyCountExhausted = false;
         crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
     }
     aggressive.DiscardPendingConfirms();
@@ -987,7 +995,9 @@ void MContext::ResetAuthentication()
     authentication->monitoringAggressive.Reset();
     authentication->controlEligible = {{false, false}};
     authentication->monitoringEligible = false;
-    crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
+    // Authentication state resets immediately; an active TX still borrows these bytes.
+    if (!isSending)
+        crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
     authentication->protectedConfirm = false;
     if (authentication->monitorWaiting)
         authentication->pendingWireSize = 0;
@@ -995,27 +1005,68 @@ void MContext::ResetAuthentication()
     authentication->monitorWaiting = false;
     authentication->replyPending = false;
     authentication->replySize = 0;
+    authentication->replyDeadline = authentication->replyKSQ = 0;
+    authentication->replyCountExhausted = false;
     authentication->replyIssued = false;
     if (!authentication->replyInFlight)
         crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
 #endif
 }
 
+void MContext::CancelAuthenticationReply()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto& auth = *authentication;
+    if (!auth.replyPending || auth.replyInFlight)
+        return;
+    // A queued native CONFIRM can be independent of the task Reply being cancelled.
+    const bool ownsConfirm = auth.protectedConfirm && !auth.nativeConfirmQueued
+        && auth.responderUser == 1 && !auth.controlAggressive.HasPendingConfirm();
+    auth.replyPending = false;
+    auth.replySize = 0;
+    auth.replyDeadline = auth.replyKSQ = 0;
+    auth.replyCountExhausted = false;
+    auth.replyIssued = false;
+    crypto::Clear(ser4cpp::wseq_t(auth.reply.data(), auth.reply.size()));
+    auth.responder.Reset(); // Retains its CSQ replay watermark; never touches monitoring state.
+    if (ownsConfirm)
+    {
+        auth.protectedConfirm = false;
+        FinalizeAuthenticationCounts();
+    }
+#endif
+}
+
+bool MContext::IsAuthenticationReplyValid(uint64_t now)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto& auth = *authentication;
+    if (!auth.replyPending || auth.replyInFlight || !auth.replySize || now >= auth.replyDeadline)
+        return false;
+    auth.responder.Tick(now);
+    if (auth.responder.LastAcceptedChallenge().is_empty())
+        return false; // Reset/expiry removed the exchange that generated this Reply.
+    if (!auth.sessions)
+        return true;
+    auto* session = auth.sessions->Find(auth.responderUser);
+    // A precomputed MAC can finish after its own count increment, but not on
+    // another KSQ or past the original key validity captured in replyDeadline.
+    return session && session->Sequence() == auth.replyKSQ && (session->Ready(now) || auth.replyCountExhausted);
+#else
+    (void)now;
+    return false;
+#endif
+}
+
 void MContext::TransmitAuthenticationReply()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
-    if (authentication->deferredAuthenticationCount && !authentication->nativeConfirmQueued
-        && authentication->responderUser == 1)
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    if (!IsAuthenticationReplyValid(now))
     {
-        const auto now = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
-        auto* session = authentication->sessions->Find(1);
-        if (!session || !session->Ready(now) || session->Sequence() != authentication->deferredAuthenticationKSQ
-            || now >= authentication->confirmDeadline)
-        {
-            ResetAuthentication();
-            return;
-        }
+        CancelAuthenticationReply();
+        return;
     }
     authentication->replyPending = false;
     authentication->replyInFlight = true;
@@ -1079,6 +1130,8 @@ void MContext::ServiceAuthentication()
         auth.protectedConfirm = false;
         auth.responder.Reset();
     }
+    if (auth.replyPending && !auth.replyInFlight && !IsAuthenticationReplyValid(now))
+        CancelAuthenticationReply();
     if (auth.exchangeIndex < 2 && !auth.sessions->At(auth.exchangeIndex)->IsExchanging())
     {
         auth.exchangeIndex = 2;
@@ -1315,6 +1368,12 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             return true;
         }
         authentication->replyPending = true;
+        authentication->replyDeadline = now + params.authentication.replyTimeoutMs;
+        authentication->replyKSQ = 0;
+        authentication->replyCountExhausted = false;
+        if (authentication->protectedConfirm && !authentication->nativeConfirmQueued
+            && authentication->responderUser == 1)
+            authentication->replyDeadline = std::min(authentication->replyDeadline, authentication->confirmDeadline);
         if (authentication->sessions)
         {
             auto* session = authentication->sessions->Find(authentication->responderUser);
@@ -1328,10 +1387,15 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 ResetAuthentication();
                 return true;
             }
+            authentication->replyKSQ = session->Sequence();
+            authentication->replyDeadline = std::min(authentication->replyDeadline, session->ValidUntil());
             if (authentication->deferredAuthenticationCount && session->User() == 1)
                 ++authentication->deferredAuthenticationCount; // Distinct Challenge using the reserved common session.
             else
+            {
+                authentication->replyCountExhausted = session->RemainingMessages() == 1;
                 session->CountAuthentication(now);
+            }
         }
         if (!authentication->protectedConfirm)
         {
