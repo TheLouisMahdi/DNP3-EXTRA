@@ -210,6 +210,7 @@ private:
     // Manual session-key injection friend exists only in unit tests. Production
     // uses configured credential retrieval and the authenticated session exchange.
     friend class AuthenticationRuntimeTestAccess;
+    friend class ProductionAuthenticationTestAccess;
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
@@ -252,6 +253,10 @@ private:
         uint32_t restartRekeys = 0;
         uint64_t restartWindow = 0;
         bool protectedConfirm = false;
+        uint8_t deferredAuthenticationCount = 0;
+        uint32_t deferredAuthenticationKSQ = 0;
+        bool nativeConfirmQueued = false;
+        uint8_t nativeConfirmControl = 0;
         uint64_t confirmDeadline = 0;
         bool monitorWaiting = false;
         uint8_t monitorSequence = 0;
@@ -269,7 +274,8 @@ private:
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
     void TransmitAuthenticationReply();
     void ServiceAuthentication();
-    void ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native);
+    void ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native, uint8_t count);
+    void FinalizeAuthenticationCounts();
     void DiscardEmbeddedConfirm();
 
     // --- implement  IMasterTaskRunner ------

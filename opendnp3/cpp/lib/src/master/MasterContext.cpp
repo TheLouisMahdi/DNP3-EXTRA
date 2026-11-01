@@ -127,6 +127,7 @@ bool MContext::OnLowerLayerDown()
         authentication->peerRestartAllowed = true;
         authentication->monitorWaiting = false;
         authentication->monitoring.Reset();
+        DiscardEmbeddedConfirm(); // Settle the old session before disconnect invalidates it.
         if (authentication->sessions)
             authentication->sessions->Disconnect();
     }
@@ -187,7 +188,7 @@ bool MContext::OnTxReady()
         if (authentication->replyInFlight)
         {
             authentication->replyInFlight = false;
-            authentication->protectedConfirm = false;
+            authentication->protectedConfirm = authentication->nativeConfirmQueued;
             crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
         }
         if (authentication->replyPending)
@@ -339,6 +340,21 @@ void MContext::ProcessResponse(const APDUResponseHeader& header, const ser4cpp::
 void MContext::QueueConfirm(const APDUHeader& header)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->deferredAuthenticationCount
+        && !authentication->controlAggressive.HasPendingConfirm()
+        && authentication->nativeConfirmControl == (header.control.SEQ | (header.control.UNS ? 0x10 : 0)))
+    {
+        auto& auth = *authentication;
+        if (!auth.protectedConfirm && !auth.nativeConfirmQueued)
+        {
+            // Reserve the actual native-dispatch entry, ahead of unrelated queued CONFIRMs.
+            confirmQueue.push_front(header);
+            auth.nativeConfirmQueued = true;
+            auth.protectedConfirm = true;
+        }
+        this->CheckConfirmTransmit();
+        return;
+    }
     // Embedded-response dispatch queues the CONFIRM already reserved at the front.
     if (authentication && authentication->controlAggressive.RequiresConfirm(header.control.SEQ, header.control.UNS))
     {
@@ -370,7 +386,8 @@ bool MContext::CheckConfirmTransmit()
         auto* session = auth.sessions->Find(1);
         if (auth.controlAggressive.RequiresConfirm(confirm.control.SEQ, confirm.control.UNS))
         {
-            if (!session || !session->Ready(now) || now >= auth.confirmDeadline)
+            if (!session || !session->Ready(now) || now >= auth.confirmDeadline
+                || (auth.deferredAuthenticationCount && session->Sequence() != auth.deferredAuthenticationKSQ))
             {
                 DiscardEmbeddedConfirm();
                 auth.protectedConfirm = false;
@@ -388,21 +405,39 @@ bool MContext::CheckConfirmTransmit()
             auth.wireInFlight = true;
             auth.protectedConfirm = true;
             auth.controlEligible[0] = true; // This exception constitutes the Challenge Reply.
-            session->CountAuthentication(now);
             this->Transmit(ser4cpp::rseq_t(auth.wire.data(), auth.wireSize));
+            FinalizeAuthenticationCounts(); // The required MAC is complete and transmission has begun.
+            session->CountAuthentication(now); // The distinct outgoing Aggressive CONFIRM ASDU.
             this->confirmQueue.pop_front();
             return true;
         }
-        if (auth.protectedConfirm || auth.exchangeIndex < 2 || auth.pendingWireSize || !session || !session->Ready(now)
+        if (auth.nativeConfirmQueued && (!session || !session->Ready(now) || now >= auth.confirmDeadline
+            || session->Sequence() != auth.deferredAuthenticationKSQ))
+        {
+            DiscardEmbeddedConfirm();
+            auth.protectedConfirm = false;
+            return false;
+        }
+        if ((auth.protectedConfirm && !auth.nativeConfirmQueued) || auth.exchangeIndex < 2 || auth.pendingWireSize
+            || !session || !session->Ready(now)
             || auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE)
             return false;
         if (auth.responder.SetSessionKey(1, session->ControlKey(now), session->ValidUntil(), now)
                 != MasterResponder::Result::OK
             || auth.responder.RetainRequest(auth.association, wrapper.ToRSeq(), now) != MasterResponder::Result::OK)
+        {
+            if (auth.nativeConfirmQueued)
+            {
+                DiscardEmbeddedConfirm();
+                auth.protectedConfirm = false;
+            }
             return false;
+        }
         auth.responderUser = 1;
         auth.protectedConfirm = true;
-        auth.confirmDeadline = now + auth.sessions->config.replyTimeoutMs;
+        if (!auth.nativeConfirmQueued)
+            auth.confirmDeadline = now + auth.sessions->config.replyTimeoutMs;
+        auth.nativeConfirmQueued = false; // Ownership now resides in the retained CONFIRM request.
     }
 #endif
     this->Transmit(wrapper.ToRSeq());
@@ -591,13 +626,17 @@ MContext::TaskState MContext::ResumeActiveTask()
             return TaskState::IDLE;
         }
         auto* common = authentication->sessions->Find(1);
-        if (common && common->Ready(now) && common->RemainingMessages() < (session->User() == 1 ? 4u : 2u))
-            common->RequestRenewal(now);
-        if (session->Ready(now) && session->RemainingMessages() < 2)
-            session->RequestRenewal(now);
+        if (!authentication->protectedConfirm && !authentication->deferredAuthenticationCount)
+        {
+            if (common && common->Ready(now) && common->RemainingMessages() < (session->User() == 1 ? 4u : 2u))
+                common->RequestRenewal(now);
+            if (session->Ready(now) && session->RemainingMessages() < 2)
+                session->RequestRenewal(now);
+        }
         const bool allReady
             = authentication->sessions->At(0)->Ready(now) && authentication->sessions->At(1)->Ready(now);
-        if (!allReady || authentication->exchangeIndex < 2 || !session->Ready(now) || authentication->protectedConfirm)
+        if (!allReady || authentication->exchangeIndex < 2 || !session->Ready(now) || authentication->protectedConfirm
+            || authentication->deferredAuthenticationCount)
         {
             if (Timestamp(executor->get_time()) >= activeTask->StartExpirationTime())
             {
@@ -790,68 +829,150 @@ MContext::TaskState MContext::OnResponseTimeout_WaitForResponse()
     return TaskState::IDLE;
 }
 
+void MContext::FinalizeAuthenticationCounts()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication)
+        return;
+    auto& auth = *authentication;
+    const auto count = auth.deferredAuthenticationCount;
+    const auto epoch = auth.deferredAuthenticationKSQ;
+    auth.deferredAuthenticationCount = 0; // Consume once, including abort/reset paths.
+    auth.deferredAuthenticationKSQ = 0;
+    auth.nativeConfirmControl = 0;
+    auto* session = auth.sessions ? auth.sessions->Find(1) : nullptr;
+    if (!count || !session || session->Sequence() != epoch)
+        return; // Never charge an exchange to replacement keys.
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    for (uint8_t i = 0; i < count; ++i)
+        session->CountAuthentication(now);
+#endif
+}
+
 void MContext::DiscardEmbeddedConfirm()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return;
     auto& aggressive = authentication->controlAggressive;
+    const bool nativeReplyPending = authentication->deferredAuthenticationCount && authentication->protectedConfirm
+        && authentication->replyPending && !authentication->replyInFlight && !authentication->nativeConfirmQueued
+        && authentication->responderUser == 1 && !aggressive.HasPendingConfirm();
+    if (authentication->nativeConfirmQueued)
+    {
+        if (!confirmQueue.empty()
+            && authentication->nativeConfirmControl == (confirmQueue.front().control.SEQ
+                | (confirmQueue.front().control.UNS ? 0x10 : 0)))
+            confirmQueue.pop_front();
+        authentication->nativeConfirmQueued = false;
+    }
     // ProcessAuthenticatedResponse reserves exactly one owned entry at the front.
     // Older entries, even with identical SEQ/UNS, belong to other operations.
     if (!confirmQueue.empty()
         && aggressive.RequiresConfirm(confirmQueue.front().control.SEQ, confirmQueue.front().control.UNS))
         confirmQueue.pop_front();
+    // A generated but unsent native-CONFIRM Reply belongs to this aborted exchange.
+    // Never alter an authentication message already in flight.
+    if (nativeReplyPending)
+    {
+        authentication->replyPending = false;
+        authentication->replySize = 0;
+        crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
+    }
     aggressive.DiscardPendingConfirms();
+    FinalizeAuthenticationCounts();
 #endif
 }
 
-void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native)
+void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native, uint8_t count)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     auto& auth = *authentication;
-    if (auth.controlAggressive.HasPendingConfirm())
+    if (auth.controlAggressive.HasPendingConfirm() || auth.deferredAuthenticationCount)
         return;
+    auto* session = auth.sessions->Find(1);
+    if (!session)
+        return;
+    auth.deferredAuthenticationCount = count;
+    auth.deferredAuthenticationKSQ = session->Sequence();
     const auto original = APDUHeaderParser::ParseResponse(native);
     Group120Var1 challenge;
     size_t nativeSize = 0;
     if (!original.success || !auth.controlAggressive.InspectEmbeddedChallenge(native, challenge, nativeSize))
+    {
+        FinalizeAuthenticationCounts();
         return;
+    }
     if (nativeSize != native.length())
     {
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
-        auto* session = auth.sessions->Find(1);
         const auto& header = original.header;
-        if (!session || !session->Ready(now) || auth.exchangeIndex < 2 || auth.pendingWireSize
+        if (!session->Ready(now) || auth.exchangeIndex < 2 || auth.pendingWireSize
             || auth.protectedConfirm || auth.replyPending || auth.replyInFlight
             || (header.function == FunctionCode::RESPONSE
                 && (!activeTask || tstate != TaskState::WAIT_FOR_RESPONSE || header.control.SEQ != solSeq)))
+        {
+            FinalizeAuthenticationCounts();
             return;
+        }
         if (!auth.responder.ObserveEmbeddedChallenge(auth.association, challenge, header.control.UNS, now)
             || !auth.controlAggressive.RememberChallenge(wire, header.control.UNS, true))
+        {
+            FinalizeAuthenticationCounts();
             return;
+        }
         // The full authenticated wire APDU is the Table A-9 seed. Strip only
         // G120V1 for native dispatch; reserve its own CONFIRM ahead of older entries.
         auth.keyEpoch[0] = session->Sequence();
         if (!(wire.length() >= 6 && wire[4] == 120 && wire[5] == 3))
-            session->CountAuthentication(now); // Embedded Challenge is an authentication ASDU.
-        if (!session->Ready(now))
-        {
-            // No queue entry has been reserved yet.
-            auth.controlAggressive.DiscardPendingConfirms();
-            return;
-        }
+            ++auth.deferredAuthenticationCount; // Distinct embedded Challenge ASDU, not an extra aggressive ASDU.
+        // Only retain accounting when it would invalidate keys needed by this CONFIRM.
+        if (session->RemainingMessages() > auth.deferredAuthenticationCount)
+            FinalizeAuthenticationCounts();
+        else
+            while (session->RemainingMessages() > 1)
+            {
+                session->CountAuthentication(now);
+                --auth.deferredAuthenticationCount;
+            }
         auth.protectedConfirm = true;
         auth.confirmDeadline = now + auth.sessions->config.replyTimeoutMs;
         confirmQueue.push_front(header.control.UNS ? APDUHeader::UnsolicitedConfirm(header.control.SEQ)
                                                    : APDUHeader::SolicitedConfirm(header.control.SEQ));
     }
+    else if (original.header.control.CON && session->RemainingMessages() <= count + 1u)
+    {
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        if (!session->Ready(now) || auth.protectedConfirm || auth.replyPending || auth.replyInFlight
+            || auth.exchangeIndex < 2 || auth.pendingWireSize)
+        {
+            FinalizeAuthenticationCounts();
+            return;
+        }
+        auth.nativeConfirmControl = original.header.control.SEQ | (original.header.control.UNS ? 0x10 : 0);
+        auth.confirmDeadline = now + auth.sessions->config.replyTimeoutMs;
+        // Keep accounting deferred through the native CONFIRM's incoming Challenge.
+        while (session->RemainingMessages() > 1 && auth.deferredAuthenticationCount > 1)
+        {
+            session->CountAuthentication(now);
+            --auth.deferredAuthenticationCount;
+        }
+    }
+    else
+        FinalizeAuthenticationCounts(); // Ordinary verified payloads survive count-only invalidation.
     this->ProcessAPDU(original.header, original.objects.take(nativeSize - 4));
+    // A native parser/task can decline the response without queueing a CONFIRM.
+    if (auth.deferredAuthenticationCount && !auth.protectedConfirm && !auth.nativeConfirmQueued)
+        FinalizeAuthenticationCounts();
     if (auth.controlAggressive.HasPendingConfirm())
         this->CheckConfirmTransmit();
 #else
     (void)wire;
     (void)native;
+    (void)count;
 #endif
 }
 
@@ -883,6 +1004,19 @@ void MContext::ResetAuthentication()
 void MContext::TransmitAuthenticationReply()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication->deferredAuthenticationCount && !authentication->nativeConfirmQueued
+        && authentication->responderUser == 1)
+    {
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        auto* session = authentication->sessions->Find(1);
+        if (!session || !session->Ready(now) || session->Sequence() != authentication->deferredAuthenticationKSQ
+            || now >= authentication->confirmDeadline)
+        {
+            ResetAuthentication();
+            return;
+        }
+    }
     authentication->replyPending = false;
     authentication->replyInFlight = true;
     authentication->replyIssued = true;
@@ -899,7 +1033,12 @@ void MContext::TransmitAuthenticationReply()
                     authentication->responder.LastAcceptedChallenge(),
                     authentication->responder.LastChallengeWasUnsolicited()))
                 authentication->controlEligible[index] = true;
-            session->CountAuthentication(now);
+            if (!authentication->nativeConfirmQueued && authentication->responderUser == 1)
+                FinalizeAuthenticationCounts(); // Native CONFIRM's Challenge/Reply is now on the wire.
+            if (authentication->deferredAuthenticationCount && session->User() == 1)
+                ++authentication->deferredAuthenticationCount;
+            else
+                session->CountAuthentication(now);
         }
     }
 #endif
@@ -1050,6 +1189,15 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             this->ServiceAuthentication();
             return true;
         }
+        // Deferred budget belongs exclusively to the current authenticated exchange.
+        const bool nativeConfirmChallenge = auth.deferredAuthenticationCount && auth.protectedConfirm
+            && ((!auth.nativeConfirmQueued && auth.responderUser == 1)
+                || (auth.nativeConfirmQueued && auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE))
+            && !auth.controlAggressive.HasPendingConfirm()
+            && !auth.replyPending && !auth.replyInFlight && header.function == FunctionCode::AUTH_RESPONSE
+            && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 1;
+        if ((auth.deferredAuthenticationCount && !nativeConfirmChallenge) || auth.controlAggressive.HasPendingConfirm())
+            return true;
         if (header.function == FunctionCode::AUTH_RESPONSE && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 2)
         {
             class Reply final : public IAPDUHandler
@@ -1083,10 +1231,9 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 if (auth.monitoringAggressive.RememberChallenge(auth.monitoring.LastAcceptedChallenge(),
                                                                 auth.monitoring.LastChallengeWasUnsolicited()))
                     auth.monitoringEligible = true;
-                auth.sessions->Find(1)->CountAuthentication(now);
-                auth.sessions->Find(1)->CountAuthentication(now);
                 const auto verified = ser4cpp::rseq_t(auth.verifiedResponse.data(), size);
-                this->ProcessAuthenticatedResponse(verified, verified);
+                // Two distinct authentication ASDUs: our monitoring Challenge and its Reply.
+                this->ProcessAuthenticatedResponse(verified, verified, 2);
             }
             else
                 this->ResetAuthentication();
@@ -1113,8 +1260,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     auth.monitoring.CancelPending();
                     auth.monitorWaiting = false;
                 }
-                session->CountAuthentication(now);
-                this->ProcessAuthenticatedResponse(apdu, ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
+                this->ProcessAuthenticatedResponse(apdu, ser4cpp::rseq_t(auth.verifiedResponse.data(), size), 1);
             }
             crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
             return true;
@@ -1174,12 +1320,18 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             auto* session = authentication->sessions->Find(authentication->responderUser);
             const auto now = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
-            if (!session || !session->Ready(now))
+            if (!session || !session->Ready(now)
+                || (authentication->deferredAuthenticationCount && session->User() == 1
+                    && (session->Sequence() != authentication->deferredAuthenticationKSQ
+                        || now >= authentication->confirmDeadline)))
             {
                 ResetAuthentication();
                 return true;
             }
-            session->CountAuthentication(now);
+            if (authentication->deferredAuthenticationCount && session->User() == 1)
+                ++authentication->deferredAuthenticationCount; // Distinct Challenge using the reserved common session.
+            else
+                session->CountAuthentication(now);
         }
         if (!authentication->protectedConfirm)
         {

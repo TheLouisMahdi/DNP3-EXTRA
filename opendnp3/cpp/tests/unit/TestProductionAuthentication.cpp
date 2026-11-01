@@ -15,6 +15,25 @@
 
 using namespace opendnp3;
 using namespace ser4cpp;
+namespace opendnp3
+{
+class ProductionAuthenticationTestAccess
+{
+public:
+    static SessionKeys& Common(MContext& context) { return *context.authentication->sessions->Find(1); }
+    static uint8_t Deferred(MContext& context) { return context.authentication->deferredAuthenticationCount; }
+    static void LeaveMessages(MContext& context, uint32_t remaining)
+    {
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            context.executor->get_time().time_since_epoch()).count());
+        auto& session = Common(context);
+        REQUIRE(session.Ready(now));
+        REQUIRE(session.RemainingMessages() >= remaining);
+        while (session.RemainingMessages() > remaining)
+            session.CountAuthentication(now);
+    }
+};
+}
 namespace
 {
 struct RuntimeCredentials final : IAuthenticationCredentials
@@ -500,7 +519,17 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
     const bool unsolicited = GENERATE(false, true);
     const bool aggressiveResponse = GENERATE(false, true);
     const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6);
-    const auto queueMode = !aggressiveResponse && fault == 0 ? GENERATE(0, 1, 2, 3) : 0;
+    const auto queueMode = !aggressiveResponse && fault == 0 ? GENERATE(0, 1, 2, 3, 4, 5) : 0;
+    const auto budget = fault == 0
+        ? (aggressiveResponse
+            ? GENERATE(0u, 2u)
+            : GENERATE(0u, 1u, 2u, 3u, 5u))
+        : 0u;
+    const bool nativeOnly = budget && budget <= 3 ? (aggressiveResponse ? true : GENERATE(false, true)) : false;
+    const auto authenticatedCount = aggressiveResponse ? 1u : 2u;
+    const auto nativeDeferred = budget <= authenticatedCount ? authenticatedCount + 1 - budget : 1u;
+    const auto nativeRemaining = budget ? budget - (authenticatedCount - nativeDeferred) : 0u;
+    const auto nativeAbort = nativeOnly ? GENERATE(0, 1, 2, 3) : 0;
     RuntimePair pair(unsolicited, false, aggressiveResponse || queueMode == 2);
     pair.Pump();
     // Prime the selected monitoring history through the normal standalone exchange.
@@ -582,7 +611,8 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
     response.SetIIN(IINField(original[2], original[3]));
     REQUIRE(response.AppendObjects(rseq_t(original.data(), original.size()).skip(4)));
     auto writer = response.GetWriter();
-    REQUIRE(writer.WriteFreeFormat(&challenge, 1));
+    if (!nativeOnly)
+        REQUIRE(writer.WriteFreeFormat(&challenge, 1));
     std::vector<uint8_t> incoming(native.data(), native.data() + response.Size());
     if (aggressiveResponse)
     {
@@ -603,6 +633,8 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
         incoming.insert(incoming.end() - (aggressiveResponse ? 22 : 0), binary, binary + sizeof(binary));
     }
     const auto before = pair.master.context->solSeq.Get();
+    if (aggressiveResponse && budget)
+        ProductionAuthenticationTestAccess::LeaveMessages(*pair.master.context, budget);
     REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(incoming.data(), incoming.size()))));
     pair.master.exe->run_many();
     if (!aggressiveResponse && pair.master.lower->NumWrites())
@@ -611,7 +643,7 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
         const auto issued = pair.master.lower->PopWriteAsHex();
         if (queueMode == 0)
             REQUIRE(pair.master.context->OnTxReady());
-        else if (queueMode == 1 || queueMode == 3)
+        else if (queueMode == 1 || queueMode == 3 || queueMode == 4 || queueMode == 5)
         {
             // Even an older identical SEQ/UNS entry must remain independently owned.
             pair.master.context->confirmQueue.push_back(unsolicited
@@ -628,17 +660,42 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
                 == MasterResponder::Result::OK);
         if (fault == 5)
             encoded[size - 1] ^= 1;
+        if (budget)
+            ProductionAuthenticationTestAccess::LeaveMessages(*pair.master.context, budget);
         REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(encoded.data(), size))));
         pair.master.exe->run_many();
+        if (budget && queueMode != 0)
+        {
+            REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context)
+                    == (nativeOnly ? nativeDeferred : (budget <= 3 ? 4 - budget : 0)));
+            REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages()
+                    == (nativeOnly ? nativeRemaining : (budget <= 3 ? 1 : budget - 3)));
+        }
         if (queueMode != 0)
         {
             REQUIRE(pair.master.context->isSending); // Original monitoring Challenge is still in flight.
             REQUIRE(pair.master.lower->NumWrites() == 0);
             REQUIRE(pair.master.context->confirmQueue.size() == (queueMode == 2 ? 1 : 3));
-            if (queueMode == 3)
+            if (queueMode == 4)
             {
-                pair.master.exe->advance_time(
-                    std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+                REQUIRE(pair.master.context->OnLowerLayerDown());
+                REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+                REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0);
+                REQUIRE(pair.master.context->confirmQueue.size() == 2);
+                REQUIRE(pair.master.context->confirmQueue.front().control.SEQ == (incoming[0] & 0x0F));
+                REQUIRE(pair.master.context->confirmQueue.back().control.SEQ == 7);
+                REQUIRE_FALSE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(encoded.data(), size))));
+                REQUIRE_FALSE(pair.master.context->OnTxReady());
+                REQUIRE(pair.master.lower->NumWrites() == 0);
+                return;
+            }
+            if (queueMode == 3 || queueMode == 5)
+            {
+                const auto delay = queueMode == 5
+                    ? std::chrono::milliseconds(ProductionAuthenticationTestAccess::Common(*pair.master.context).ValidUntil())
+                        - std::chrono::duration_cast<std::chrono::milliseconds>(pair.master.exe->get_time().time_since_epoch())
+                    : std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs);
+                pair.master.exe->advance_time(delay);
                 pair.master.exe->run_many();
                 REQUIRE(pair.master.context->isSending); // Do not cancel the in-flight Challenge.
                 REQUIRE(pair.master.lower->NumWrites() == 0);
@@ -647,6 +704,21 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
                 REQUIRE(pair.master.context->confirmQueue.front().control.SEQ == (incoming[0] & 0x0F));
                 REQUIRE(pair.master.context->confirmQueue.back().control.UNS);
                 REQUIRE(pair.master.context->confirmQueue.back().control.SEQ == 7);
+                REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+                if (queueMode == 5 || (budget && budget <= 3))
+                    REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages()
+                            == (queueMode != 5 && nativeOnly && budget > authenticatedCount ? budget - authenticatedCount : 0));
+                if (queueMode == 5)
+                {
+                    REQUIRE(pair.master.context->OnTxReady());
+                    pair.master.exe->run_many();
+                    while (pair.master.lower->NumWrites())
+                    {
+                        HexSequence request(pair.master.lower->PopWriteAsHex());
+                        REQUIRE(request.ToRSeq()[1] == 0x20); // Expired keys cannot transmit a stale CONFIRM.
+                    }
+                    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+                }
                 return;
             }
             if (queueMode == 2)
@@ -676,6 +748,104 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
     }
     REQUIRE(pair.master.lower->NumWrites() == 1);
     HexSequence confirm(pair.master.lower->PopWriteAsHex());
+    if (nativeOnly)
+    {
+        // Native CONFIRM remains plain and uses its existing standalone Challenge/Reply lifecycle.
+        REQUIRE(confirm.ToRSeq().length() == 2);
+        REQUIRE(confirm.ToRSeq()[0] == static_cast<uint8_t>(0xC0 | (unsolicited ? 0x10 : 0) | (incoming[0] & 0x0F)));
+        REQUIRE(confirm.ToRSeq()[1] == 0);
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == nativeDeferred);
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == nativeRemaining);
+        const auto processed = pair.master.context->solSeq.Get();
+        REQUIRE(pair.master.context->confirmQueue.size() == (queueMode == 1 ? 2 : 0));
+        REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(incoming.data(), incoming.size()))));
+        pair.master.exe->run_many();
+        REQUIRE(pair.master.context->solSeq.Get() == processed);
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        APDUResponse issued(wseq_t(encoded.data(), encoded.size()));
+        issued.SetFunction(FunctionCode::AUTH_RESPONSE);
+        issued.SetControl(AppControlField::Request(confirm.ToRSeq()[0] & 0x0F));
+        issued.SetIIN(IINField::Empty());
+        auto challengeWriter = issued.GetWriter();
+        REQUIRE(challengeWriter.WriteFreeFormat(&challenge, 1));
+        std::vector<uint8_t> standalone(encoded.data(), encoded.data() + issued.Size());
+        // Receive the Challenge before completion of the in-flight native CONFIRM.
+        REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(standalone.data(), standalone.size()))));
+        pair.master.exe->run_many();
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == nativeDeferred + 1);
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == nativeRemaining);
+        if (nativeAbort)
+        {
+            if (nativeAbort == 2)
+                REQUIRE(pair.master.context->OnLowerLayerDown());
+            else
+            {
+                const auto delay = nativeAbort == 3
+                    ? std::chrono::milliseconds(ProductionAuthenticationTestAccess::Common(*pair.master.context).ValidUntil())
+                        - std::chrono::duration_cast<std::chrono::milliseconds>(pair.master.exe->get_time().time_since_epoch())
+                    : std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs);
+                pair.master.exe->advance_time(delay);
+                pair.master.exe->run_many();
+                REQUIRE(pair.master.context->isSending); // Native CONFIRM remains in flight; its unsent Reply is discarded.
+                REQUIRE(pair.master.context->OnTxReady());
+                pair.master.exe->run_many();
+            }
+            REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+            REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0);
+            while (pair.master.lower->NumWrites())
+            {
+                HexSequence request(pair.master.lower->PopWriteAsHex());
+                REQUIRE(request.ToRSeq()[1] == 0x20);
+                REQUIRE(request.ToRSeq()[3] != 2); // A stale generated G120V2 must never be sent.
+            }
+            return;
+        }
+        REQUIRE(pair.master.context->OnTxReady());
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        HexSequence reply(pair.master.lower->PopWriteAsHex());
+        REQUIRE(reply.ToRSeq().length() == 30);
+        REQUIRE(reply.ToRSeq()[1] == 0x20);
+        HexSequence replyPrefix("78 02 5B 01 16 00 64 00 00 00 01 00");
+        REQUIRE(reply.ToRSeq().skip(2).take(12).equals(replyPrefix.ToRSeq()));
+        standalone.insert(standalone.end(), static_cast<const uint8_t*>(confirm.ToRSeq()),
+                          static_cast<const uint8_t*>(confirm.ToRSeq()) + confirm.ToRSeq().length());
+        std::array<uint8_t, 16> expected{};
+        REQUIRE(crypto::ComputeHMACSHA256(controlKey, rseq_t(standalone.data(), standalone.size()),
+                                          wseq_t(expected.data(), expected.size())) == crypto::Result::OK);
+        REQUIRE(crypto::ConstantTimeEqual(rseq_t(expected.data(), expected.size()), reply.ToRSeq().skip(14)));
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0);
+        REQUIRE(pair.master.context->solSeq.Get() == processed);
+        REQUIRE(pair.master.context->confirmQueue.size() == (queueMode == 1 ? 2 : 0));
+        const auto epoch = ProductionAuthenticationTestAccess::Common(*pair.master.context).Sequence();
+        const auto operations = pair.outstation.cmdHandler->NumOperate();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.master.exe->run_many();
+        size_t exchanges = 0;
+        while (ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0)
+        {
+            REQUIRE(++exchanges <= 2);
+            REQUIRE(pair.master.lower->NumWrites() == 1);
+            const auto packet = pair.master.lower->PopWriteAsHex();
+            HexSequence request(packet);
+            REQUIRE(request.ToRSeq()[1] == 0x20); // No application request until renewed keys are valid.
+            REQUIRE(request.ToRSeq()[2] == 120);
+            REQUIRE(request.ToRSeq()[3] == (exchanges == 1 ? 4 : 6));
+            REQUIRE(pair.master.context->OnTxReady());
+            pair.outstation.SendToOutstation(packet);
+            REQUIRE(pair.outstation.lower->NumWrites() == 1);
+            const auto status = pair.outstation.lower->PopWriteAsHex();
+            pair.outstation.OnTxReady();
+            REQUIRE(pair.master.SendToMaster(status));
+            pair.master.exe->run_many();
+            REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+        }
+        REQUIRE(exchanges == 2);
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).Sequence() != epoch);
+        REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+        return;
+    }
     REQUIRE(confirm.ToRSeq().length() == 34);
     REQUIRE(confirm.ToRSeq()[0] == static_cast<uint8_t>(0xC0 | (unsolicited ? 0x10 : 0) | (incoming[0] & 0x0F)));
     REQUIRE(confirm.ToRSeq()[1] == 0);
@@ -689,6 +859,10 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
                                       wseq_t(expected.data(), expected.size())) == crypto::Result::OK);
     REQUIRE(crypto::ConstantTimeEqual(rseq_t(expected.data(), expected.size()), confirm.ToRSeq().skip(18)));
     REQUIRE(pair.master.context->isSending);
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+    if (budget)
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages()
+                == (budget <= 4 ? 0 : budget - 4)); // Challenge, Reply, embedded Challenge, Aggressive CONFIRM.
     const auto processed = pair.master.context->solSeq.Get();
     REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(incoming.data(), incoming.size()))));
     pair.master.exe->run_many();
@@ -703,5 +877,53 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
         REQUIRE(pair.master.context->confirmQueue.back().control.SEQ == 7);
     }
     REQUIRE(pair.master.context->solSeq.Get() == processed);
+    if (budget)
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages()
+                == (budget <= 4 ? 0 : budget - 4)); // Replay cannot finalize/count again.
     REQUIRE(pair.changes == 2);
+    if (budget && budget <= 3)
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.master.exe->run_many();
+        REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0);
+        REQUIRE(pair.changes == 2); // No renewed keys have been installed yet.
+        while (pair.master.lower->NumWrites())
+        {
+            HexSequence request(pair.master.lower->PopWriteAsHex());
+            REQUIRE(request.ToRSeq()[1] == 0x20); // Only key exchange, never a protected application request.
+        }
+    }
+}
+
+TEST_CASE("ProductionAuthentication - normal verified response completes before count renewal and cannot execute the next command", "[production-sa]")
+{
+    RuntimePair pair;
+    pair.Pump();
+    pair.SelectOperate();
+    const auto before = pair.master.context->solSeq.Get();
+    std::string reply;
+    for (size_t step = 0; step < 3; ++step)
+    {
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto request = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        reply = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        if (step == 2)
+            ProductionAuthenticationTestAccess::LeaveMessages(*pair.master.context, 2);
+        REQUIRE(pair.master.SendToMaster(reply));
+        pair.master.exe->run_many();
+    }
+    REQUIRE(pair.master.context->solSeq.Get() == ((before + 1) & 0x0F));
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+    const auto processed = pair.master.context->solSeq.Get();
+    REQUIRE(pair.master.SendToMaster(reply));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.context->solSeq.Get() == processed);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    REQUIRE(pair.changes == 2); // Subsequent operations cannot use the exhausted session.
 }
