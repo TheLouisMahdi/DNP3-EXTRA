@@ -114,6 +114,7 @@ void SessionKeys::ClearPending()
     crypto::Clear(ser4cpp::wseq_t(statusBytes.data(), statusBytes.size()));
     crypto::Clear(ser4cpp::wseq_t(pendingChange.data(), pendingChange.size()));
     statusSize = pendingChangeSize = 0;
+    changeQueued = false;
     awaitingChange = false;
     deadline = 0;
     phase = Phase::IDLE;
@@ -122,7 +123,7 @@ void SessionKeys::RetainRecovery()
 {
     // The outstation may have installed V6 although its confirmation was lost.
     // Retain exactly one proposed Monitoring key for V5 verification ONLY.
-    if (phase != Phase::CONFIRM || !pendingChangeSize)
+    if (phase != Phase::CONFIRM || !pendingChangeSize || changeQueued)
         return;
     crypto::Clear(ser4cpp::wseq_t(recoveryMonitoring.data(), recoveryMonitoring.size()));
     crypto::Clear(ser4cpp::wseq_t(recoveryChange.data(), recoveryChange.size()));
@@ -207,6 +208,20 @@ void SessionKeys::Disconnect()
     ClearPending();
     attempts = 0;
     nextAttempt = lastTime;
+}
+void SessionKeys::SetChangeQueued(ser4cpp::rseq_t change, bool queued)
+{
+    // Only the owner of the exact current V6 can report its transmission state.
+    // Queued candidates must not replace recovery from an earlier, sent V6.
+    if (phase == Phase::CONFIRM && pendingChangeSize && pendingChangeSize == change.length()
+        && crypto::ConstantTimeEqual(ser4cpp::rseq_t(pendingChange.data(), pendingChangeSize), change))
+        changeQueued = queued;
+}
+void SessionKeys::CancelQueuedChange(uint64_t now)
+{
+    Tick(now);
+    if (phase == Phase::CONFIRM && changeQueued)
+        Fail(Result::INVALID, now); // Preserve the existing retry delay and attempt budget.
 }
 void SessionKeys::Tick(uint64_t now)
 {

@@ -27,6 +27,15 @@ public:
     static bool ReplyPending(MContext& context) { return context.authentication->replyPending; }
     static bool MonitoringWaiting(MContext& context) { return context.authentication->monitorWaiting; }
     static size_t Pending(MContext& context) { return context.authentication->pendingWireSize; }
+    static rseq_t PendingBytes(MContext& context)
+    {
+        return rseq_t(context.authentication->pendingWire.data(), context.authentication->pendingWire.size());
+    }
+    static rseq_t WireBytes(MContext& context, size_t size)
+    {
+        REQUIRE(size <= context.authentication->wire.size());
+        return rseq_t(context.authentication->wire.data(), size);
+    }
     static rseq_t ReplyBytes(MContext& context)
     {
         return rseq_t(context.authentication->reply.data(), context.authentication->reply.size());
@@ -515,6 +524,10 @@ TEST_CASE("ProductionAuthentication - monitoring timeout preserves key exchange 
         REQUIRE(challenge.ToRSeq()[2] == 120);
         REQUIRE(challenge.ToRSeq()[3] == 1);
         REQUIRE(pair.master.context->isSending);
+        // Let the monitoring deadline precede the Key Change deadline.
+        pair.master.exe->advance_time(
+            std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs / 2));
+        pair.master.exe->run_many();
         pair.outstation.SendToOutstation(statusRequest);
         REQUIRE(pair.outstation.lower->NumWrites() == 1);
         const auto status = pair.outstation.lower->PopWriteAsHex();
@@ -523,7 +536,7 @@ TEST_CASE("ProductionAuthentication - monitoring timeout preserves key exchange 
         pair.master.exe->run_many();
         REQUIRE(pair.master.lower->NumWrites() == 0); // G120V6 is queued, not transmitted.
         pair.master.exe->advance_time(
-            std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+            std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs / 2));
         pair.master.exe->run_many();
         REQUIRE(pair.master.context->isSending);
         REQUIRE(pair.master.lower->NumWrites() == 0);
@@ -543,6 +556,214 @@ TEST_CASE("ProductionAuthentication - monitoring timeout preserves key exchange 
         REQUIRE(value.userNum == 2);
         REQUIRE(value.keyStatus == 1);
     }
+}
+
+TEST_CASE("ProductionAuthentication - queued master Key Change cannot outlive its exchange", "[production-sa]")
+{
+    // Successful TX, serviced expiry, expiry at TX completion, reset, credential
+    // expiry, disconnect, session cancellation, and Update Key replacement.
+    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5, 6, 7);
+    RuntimePair pair;
+    auto& session = ProductionAuthenticationTestAccess::Common(*pair.master.context);
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    HexSequence v4(request);
+    REQUIRE(v4.ToRSeq()[3] == 4);
+    const auto borrowed = ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, v4.ToRSeq().length());
+    REQUIRE(borrowed.equals(v4.ToRSeq()));
+    pair.outstation.SendToOutstation(request); // V4 is still in flight at the Master.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto status = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(status));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    const auto pending = ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context);
+    const auto pendingSize = ProductionAuthenticationTestAccess::Pending(*pair.master.context);
+    REQUIRE(pendingSize > 8);
+    const auto queued = HexConversions::to_hex(pending.take(pendingSize));
+    HexSequence oldChange(queued);
+    Group120Var6 oldValue;
+    REQUIRE(oldValue.Read(oldChange.ToRSeq().skip(8)));
+    REQUIRE(oldValue.userNum == 1);
+    REQUIRE(session.IsExchanging());
+    REQUIRE_FALSE(session.Ready(0));
+    if (scenario == 1 || scenario == 2 || scenario == 4)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(
+            scenario == 4 ? 10000000 : pair.master.context->params.authentication.replyTimeoutMs));
+        if (scenario != 2)
+            pair.master.exe->run_many(); // Otherwise OnTxReady must itself enforce expiry.
+    }
+    else if (scenario == 3)
+    {
+        REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(session.IsExchanging());
+    }
+    else if (scenario == 5)
+    {
+        REQUIRE(pair.master.context->OnLowerLayerDown());
+        REQUIRE_FALSE(pair.master.context->OnTxReady());
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+        for (size_t i = 0; i < pending.length(); ++i)
+            REQUIRE(pending[i] == 0);
+        REQUIRE(pair.master.context->OnLowerLayerUp());
+        pair.master.exe->run_many();
+    }
+    else if (scenario == 6)
+        session.Disconnect();
+    else if (scenario == 7)
+    {
+        REQUIRE(crypto::GenerateRandom(wseq_t(pair.source->keys[0].data(), 32)) == crypto::Result::OK);
+        const auto key = rseq_t(pair.source->keys[0].data(), 32);
+        REQUIRE(session.Configure(key, 10000000, 0) == SessionKeys::Result::OK);
+        REQUIRE(ProductionAuthenticationTestAccess::Common(pair.outstation.context).Configure(key, 10000000, 0)
+            == SessionKeys::Result::OK);
+    }
+    if (scenario != 5)
+    {
+        REQUIRE(pair.master.context->isSending);
+        REQUIRE(borrowed.equals(v4.ToRSeq())); // Cleanup never overwrites an active TX.
+        REQUIRE(pair.master.context->OnTxReady());
+    }
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    if (scenario == 4)
+    {
+        REQUIRE(pair.master.lower->NumWrites() == 0); // No credentials, no retry or protected work.
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+        for (size_t i = 0; i < pending.length(); ++i)
+            REQUIRE(pending[i] == 0);
+        return;
+    }
+    if (scenario != 0)
+    {
+        if (scenario == 3)
+        {
+            // User 1's backoff must not block user 2's independent negotiation.
+            REQUIRE(pair.master.lower->NumWrites() == 1);
+            const auto independent = ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, 8);
+            REQUIRE(independent[3] == 4);
+            REQUIRE(independent[6] == 2); // Little-endian G120V4 user number.
+            REQUIRE(independent[7] == 0);
+            pair.Pump();
+            REQUIRE_FALSE(session.IsExchanging());
+            REQUIRE_FALSE(session.Ready(0));
+        }
+        if (!pair.master.lower->NumWrites())
+        {
+            pair.master.exe->advance_time(
+                std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+            pair.master.exe->run_many();
+        }
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto retry = pair.master.lower->PopWriteAsHex();
+        HexSequence freshRequest(retry);
+        REQUIRE(freshRequest.ToRSeq()[1] == 0x20);
+        REQUIRE(freshRequest.ToRSeq()[3] == 4); // Restart with V4; never send the obsolete V6.
+        if (scenario != 5)
+            REQUIRE(freshRequest.ToRSeq()[0] != v4.ToRSeq()[0]);
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(retry);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto freshStatus = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(freshStatus));
+        pair.master.exe->run_many();
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto change = pair.master.lower->PopWriteAsHex();
+    HexSequence v6(change);
+    REQUIRE(v6.ToRSeq()[3] == 6);
+    if (scenario == 0)
+        REQUIRE(change == queued);
+    else
+    {
+        Group120Var6 freshValue;
+        REQUIRE(freshValue.Read(v6.ToRSeq().skip(8)));
+        REQUIRE_FALSE(freshValue.keyWrapData.equals(oldValue.keyWrapData));
+    }
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(change);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto confirmation = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(confirmation));
+    pair.master.exe->run_many();
+    REQUIRE(session.Ready(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        pair.master.exe->get_time().time_since_epoch()).count())));
+    pair.Pump();
+    pair.SelectOperate();
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+}
+
+TEST_CASE("ProductionAuthentication - transmitted Key Change retains TX bytes and recovery after timeout", "[production-sa]")
+{
+    RuntimePair pair;
+    const auto request = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto status = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(status));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto change = pair.master.lower->PopWriteAsHex();
+    HexSequence v6(change);
+    REQUIRE(v6.ToRSeq()[3] == 6);
+    const auto borrowed = ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, v6.ToRSeq().length());
+    REQUIRE(borrowed.equals(v6.ToRSeq()));
+    pair.outstation.SendToOutstation(change); // The peer installed keys, but its V5 is lost.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    pair.master.exe->advance_time(
+        std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.context->isSending);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(borrowed.equals(v6.ToRSeq()));
+    // Repeated authentication resets must not discard a transmitted change's
+    // recovery key or overwrite bytes still borrowed by the lower layer.
+    for (size_t n = 0; n < 2; ++n)
+    {
+        REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
+        REQUIRE(borrowed.equals(v6.ToRSeq()));
+    }
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto retry = pair.master.lower->PopWriteAsHex();
+    HexSequence retryV4(retry);
+    REQUIRE(retryV4.ToRSeq()[3] == 4);
+    pair.outstation.SendToOutstation(retry); // Keep this V4 in flight too.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto retryStatus = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(retryStatus));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) > 8);
+    REQUIRE(ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context)[3] == 6);
+    pair.master.exe->advance_time(
+        std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, retryV4.ToRSeq().length())
+        .equals(retryV4.ToRSeq()));
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    // Expiry of the second, unsent V6 must preserve recovery from the first,
+    // transmitted V6 so the next keyed V5 can still be verified.
+    pair.Pump();
+    REQUIRE_FALSE(pair.commonKeyChange.empty());
+    REQUIRE(pair.commonKeyChange != change);
+    REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).Ready(
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            pair.master.exe->get_time().time_since_epoch()).count())));
+    pair.SelectOperate();
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
 }
 
 TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Confirm with ordinary transmit disabled",

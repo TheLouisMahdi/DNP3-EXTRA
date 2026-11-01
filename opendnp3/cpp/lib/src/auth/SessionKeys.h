@@ -77,6 +77,9 @@ public:
     void RequestRenewal(uint64_t now);
     void PeerRestart(uint64_t now); // after a bounded, explicitly detected peer restart
     void Disconnect();              // invalidates authorization; keeps configured Update Key
+    // Runtime owner reports whether its exact V6 is still queued, not on transport.
+    void SetChangeQueued(ser4cpp::rseq_t change, bool queued);
+    void CancelQueuedChange(uint64_t now);
     void Reset();                   // wipes credentials and all owned secrets
     bool Ready(uint64_t now);
     ser4cpp::rseq_t ControlKey(uint64_t now);
@@ -129,6 +132,7 @@ private:
     size_t statusSize = 0;
     size_t lastChangeSize = 0;
     size_t pendingChangeSize = 0;
+    bool changeQueued = false;
     size_t keySize = 0;
     bool configured = false;
     bool valid = false;

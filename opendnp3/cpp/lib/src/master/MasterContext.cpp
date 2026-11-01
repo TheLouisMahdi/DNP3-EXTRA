@@ -123,6 +123,7 @@ bool MContext::OnLowerLayerDown()
         authentication->protectedTask = false;
         authentication->serviceTimer.cancel();
         authentication->wireInFlight = false;
+        crypto::Clear(ser4cpp::wseq_t(authentication->pendingWire.data(), authentication->pendingWire.size()));
         authentication->pendingWireSize = 0;
         authentication->exchangeIndex = 2;
         authentication->peerRestartAllowed = true;
@@ -989,6 +990,23 @@ void MContext::ResetAuthentication()
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return;
+    // Only an unsent Key Change belongs to the exchange being cancelled here.
+    // The separate wire buffer may still be borrowed by the lower layer.
+    if (authentication->pendingWireSize >= 8
+        && authentication->pendingWire[1] == FunctionCodeSpec::to_type(FunctionCode::AUTH_REQUEST)
+        && authentication->pendingWire[2] == 120 && authentication->pendingWire[3] == 6)
+    {
+        if (authentication->sessions && authentication->exchangeIndex < 2)
+        {
+            const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                executor->get_time().time_since_epoch()).count());
+            authentication->sessions->At(authentication->exchangeIndex)->CancelQueuedChange(now);
+        }
+        crypto::Clear(ser4cpp::wseq_t(authentication->pendingWire.data(), authentication->pendingWire.size()));
+        authentication->pendingWireSize = 0;
+        authentication->exchangeIndex = 2;
+        authentication->exchangeSequence = (authentication->exchangeSequence + 1) & 15;
+    }
     authentication->responder.Reset();
     DiscardEmbeddedConfirm();
     authentication->controlAggressive.Reset();
@@ -1134,6 +1152,16 @@ void MContext::ServiceAuthentication()
         CancelAuthenticationReply();
     if (auth.exchangeIndex < 2 && !auth.sessions->At(auth.exchangeIndex)->IsExchanging())
     {
+        // V4/V6 are generated only by this exchange. Tick may have expired or
+        // reset its session while TX still owned wire; never send its queued copy.
+        // A queued monitoring Challenge is independently owned and must survive.
+        if (auth.pendingWireSize >= 8
+            && auth.pendingWire[1] == FunctionCodeSpec::to_type(FunctionCode::AUTH_REQUEST)
+            && auth.pendingWire[2] == 120 && (auth.pendingWire[3] == 4 || auth.pendingWire[3] == 6))
+        {
+            crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+            auth.pendingWireSize = 0;
+        }
         auth.exchangeIndex = 2;
         auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
     }
@@ -1158,6 +1186,10 @@ void MContext::ServiceAuthentication()
     {
         std::memcpy(auth.wire.data(), auth.pendingWire.data(), auth.pendingWireSize);
         auth.wireSize = auth.pendingWireSize;
+        if (auth.exchangeIndex < 2)
+            auth.sessions->At(auth.exchangeIndex)->SetChangeQueued(
+                ser4cpp::rseq_t(auth.wire.data(), auth.wireSize), false);
+        crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
         auth.pendingWireSize = 0;
         auth.wireInFlight = true;
         this->Transmit(ser4cpp::rseq_t(auth.wire.data(), auth.wireSize));
@@ -1227,6 +1259,9 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                                     ->Process(auth.association, apdu, now,
                                               ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), size);
             auth.pendingWireSize = size;
+            if (size)
+                auth.sessions->At(auth.exchangeIndex)->SetChangeQueued(
+                    ser4cpp::rseq_t(auth.pendingWire.data(), size), true);
             if (result == SessionKeys::Result::INSTALLED)
             {
                 auth.established = true;
