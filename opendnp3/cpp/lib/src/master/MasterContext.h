@@ -221,12 +221,12 @@ private:
         {
         }
         explicit AuthenticationState(const AuthenticationConfig& config)
-            : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true),
-              controlAggressive(config.association, config.tagLength, false),
-              monitoringAggressive(config.association, config.tagLength, true),
+            : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true, config.macAlgorithm),
+              controlAggressive(config.association, config.tagLength, false, config.macAlgorithm),
+              monitoringAggressive(config.association, config.tagLength, true, config.macAlgorithm),
               sessions(new AuthenticationSession(SessionKeys::Role::MASTER, config)),
               association(config.association),
-              responder(association, config.tagLength, config.replyTimeoutMs)
+              responder(association, config.tagLength, config.replyTimeoutMs, false, config.macAlgorithm)
         {
         }
         ~AuthenticationState()

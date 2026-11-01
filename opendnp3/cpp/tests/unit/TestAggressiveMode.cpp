@@ -3,6 +3,7 @@
 #include "app/APDUResponse.h"
 #include "app/parsing/APDUParser.h"
 #include "auth/AggressiveMode.h"
+#include "auth/AuthenticationMAC.h"
 #include "crypto/CryptoProvider.h"
 #include "utils/BufferHelpers.h"
 
@@ -36,12 +37,13 @@ struct AggressiveKey
         return rseq_t(bytes.data(), bytes.size());
     }
 };
-std::vector<uint8_t> Seed(uint32_t sequence, bool monitoring, size_t tag = 16)
+std::vector<uint8_t> Seed(uint32_t sequence, bool monitoring, size_t tag = 16, uint8_t algorithm = 0)
 {
     std::array<uint8_t, 32> nonce{};
     nonce.fill(static_cast<uint8_t>(sequence));
     std::vector<uint8_t> bytes(monitoring ? 48 : 50);
-    Group120Var1 value(sequence, monitoring ? 1 : 0, tag == 8 ? 3 : 4, 1, rseq_t(nonce.data(), nonce.size()));
+    Group120Var1 value(sequence, monitoring ? 1 : 0, ResolveAuthenticationMAC(algorithm, tag), 1,
+                       rseq_t(nonce.data(), nonce.size()));
     if (monitoring)
     {
         APDURequest apdu(wseq_t(bytes.data(), bytes.size()));
@@ -200,9 +202,13 @@ TEST_CASE("AggressiveMode - independent challenge histories and CSQ rollover", "
 }
 TEST_CASE("AggressiveMode - bounds invalid algorithms and native authentication nesting", "[aggressive]")
 {
-    APDUWrapper invalidWrapper; REQUIRE_FALSE(invalidWrapper.AppendObjects(rseq_t()));
-    uint8_t header[2]={}; APDURequest empty(wseq_t(header,2));
-    REQUIRE(empty.AppendObjects(rseq_t())); REQUIRE_FALSE(empty.AppendObjects(rseq_t(header,1))); REQUIRE(empty.Size()==2);
+    APDUWrapper invalidWrapper;
+    REQUIRE_FALSE(invalidWrapper.AppendObjects(rseq_t()));
+    uint8_t header[2] = {};
+    APDURequest empty(wseq_t(header, 2));
+    REQUIRE(empty.AppendObjects(rseq_t()));
+    REQUIRE_FALSE(empty.AppendObjects(rseq_t(header, 1)));
+    REQUIRE(empty.Size() == 2);
 
     AggressiveKey key;
     AggressiveMode sender(7, 16, false);
@@ -264,4 +270,28 @@ TEST_CASE("AggressiveMode - unavailable cryptography never releases data or cons
     }
     REQUIRE(receiver.Verify(7, 2, key.Read(), rseq_t(wire.data(), size), wseq_t(decoded.data(), decoded.size()), n));
     REQUIRE(rseq_t(decoded.data(), n).equals(original.ToRSeq()));
+}
+
+TEST_CASE("AggressiveMode - explicit IEEE legacy MAC options", "[aggressive]")
+{
+    const auto algorithm = GENERATE(2, 5);
+    const size_t tag = algorithm == 2 ? 10 : 8;
+    const bool monitoring = GENERATE(false, true);
+    AggressiveKey key;
+    AggressiveMode sender(7, tag, monitoring, algorithm), receiver(7, tag, monitoring, algorithm);
+    auto challenge = Seed(1, monitoring, tag, algorithm);
+    REQUIRE(sender.RememberChallenge(Read(challenge), false));
+    REQUIRE(receiver.RememberChallenge(Read(challenge), false));
+    HexSequence original(monitoring ? "C0 81 80 00" : "C0 01 3C 01 06");
+    std::array<uint8_t, 2048> wire{}, out{};
+    size_t size = 0, n = 0;
+    const uint16_t user = monitoring ? 1 : 2;
+    REQUIRE(sender.Create(7, user, key.Read(), original.ToRSeq(), wseq_t(wire.data(), wire.size()), size));
+    wire[size - 1] ^= 1;
+    REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(wire.data(), size), wseq_t(out.data(), out.size()), n));
+    REQUIRE(n == 0);
+    wire[size - 1] ^= 1;
+    REQUIRE(receiver.Verify(7, user, key.Read(), rseq_t(wire.data(), size), wseq_t(out.data(), out.size()), n));
+    REQUIRE(rseq_t(out.data(), n).equals(original.ToRSeq()));
+    REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(wire.data(), size), wseq_t(out.data(), out.size()), n));
 }

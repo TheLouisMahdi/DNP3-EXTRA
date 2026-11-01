@@ -24,7 +24,7 @@ bool WindowsAuthenticationCredentials::ReadUpdateKey(
     validForMs = 0;
     if (output)
         crypto::Clear(ser4cpp::wseq_t(output, capacity));
-    if (!output || capacity != 32 || targetPrefix.empty() || !user)
+    if (!output || (capacity != 16 && capacity != 32) || targetPrefix.empty() || !user)
         return false;
     const auto target = targetPrefix + L"/" + std::to_wstring(association) + L"/" + std::to_wstring(user);
     PCREDENTIALW raw = nullptr;
@@ -42,7 +42,7 @@ bool WindowsAuthenticationCredentials::ReadUpdateKey(
         }
     };
     std::unique_ptr<CREDENTIALW, FreeCredential> credential(raw);
-    if (credential->CredentialBlobSize != 32 || !credential->CredentialBlob)
+    if (credential->CredentialBlobSize != capacity || !credential->CredentialBlob)
         return false;
     uint64_t expiry = 0;
     bool haveExpiry = false;
@@ -69,7 +69,7 @@ bool WindowsAuthenticationCredentials::ReadUpdateKey(
     const auto now = (ticks.QuadPart - unixEpoch) / 10000;
     if (expiry <= now)
         return false;
-    std::memcpy(output, credential->CredentialBlob, 32);
+    std::memcpy(output, credential->CredentialBlob, capacity);
     validForMs = expiry - now;
     return true;
 }

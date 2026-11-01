@@ -46,8 +46,8 @@ struct KeyPair
           outstation(SessionKeys::Role::OUTSTATION, assoc, user, c)
     {
         REQUIRE(crypto::GenerateRandom(wseq_t(update.data(), update.size())) == crypto::Result::OK);
-        REQUIRE(master.Configure(rseq_t(update.data(), 32), 10000000, now) == R::OK);
-        REQUIRE(outstation.Configure(rseq_t(update.data(), 32), 10000000, now) == R::OK);
+        REQUIRE(master.Configure(rseq_t(update.data(), c.keyWrapAlgorithm == 1 ? 16 : 32), 10000000, now) == R::OK);
+        REQUIRE(outstation.Configure(rseq_t(update.data(), c.keyWrapAlgorithm == 1 ? 16 : 32), 10000000, now) == R::OK);
     }
     ~KeyPair()
     {
@@ -420,4 +420,225 @@ TEST_CASE("SessionKeys - explicitly detected Outstation restart establishes fres
     REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
             == R::INSTALLED);
     REQUIRE(crypto::ConstantTimeEqual(pair.master.ControlKey(pair.now), rebooted.ControlKey(pair.now)));
+}
+
+TEST_CASE("SessionKeys - explicitly configured IEEE legacy algorithms exchange and renew", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.macAlgorithm = GENERATE(2, 5);
+    config.tagLength = config.macAlgorithm == 2 ? 10 : 8;
+    config.keyWrapAlgorithm = GENERATE(1, 2);
+    KeyPair pair(config);
+    pair.Exchange();
+    REQUIRE(pair.status.bytes[16] == config.keyWrapAlgorithm);
+    REQUIRE(pair.confirmation.bytes[18] == config.macAlgorithm);
+    pair.master.RequestRenewal(pair.now);
+    pair.Exchange();
+    REQUIRE(pair.master.Sequence() == 4);
+    // A corrupted confirmation must not publish the newly proposed keys.
+    pair.master.RequestRenewal(pair.now);
+    pair.ToChange();
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            == R::INSTALLED);
+    pair.confirmation.bytes[pair.confirmation.size - 1] ^= 1;
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+            != R::INSTALLED);
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+}
+TEST_CASE("SessionKeys - unsupported algorithm and inconsistent tag configuration fail closed", "[session-keys]")
+{
+    SessionKeys::Config config;
+    const auto fault = GENERATE(0, 1, 2, 3);
+    if (fault == 0)
+        config.macAlgorithm = 1;
+    if (fault == 1)
+        config.macAlgorithm = 6;
+    if (fault == 2)
+    {
+        config.macAlgorithm = 2;
+        config.tagLength = 8;
+    }
+    if (fault == 3)
+        config.keyWrapAlgorithm = 3;
+    SessionKeys session(SessionKeys::Role::MASTER, 7, 2, config);
+    std::array<uint8_t, 32> key{};
+    REQUIRE(session.Configure(rseq_t(key.data(), key.size()), 10000, 1000) == R::INVALID);
+    REQUIRE_FALSE(session.Ready(1000));
+}
+
+TEST_CASE("SessionKeys - default interval remains fifteen minutes", "[session-keys]")
+{
+    SessionKeys::Config config;
+    REQUIRE(config.intervalMs == 900000);
+    KeyPair pair(config);
+    pair.Exchange();
+    const auto expires = pair.now + 900000;
+    REQUIRE(pair.master.ValidUntil() == expires);
+    REQUIRE(pair.outstation.ValidUntil() == expires);
+    REQUIRE(pair.master.Ready(expires - 1));
+    REQUIRE(pair.outstation.Ready(expires - 1));
+    REQUIRE_FALSE(pair.master.Ready(expires));
+    REQUIRE_FALSE(pair.outstation.Ready(expires));
+    REQUIRE(pair.master.NeedsExchange(expires));
+}
+
+TEST_CASE("SessionKeys - core accepts one second and two hour interval boundaries", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = GENERATE(1000u, 7200000u);
+    KeyPair pair(config);
+    pair.Exchange();
+    const auto expires = pair.now + config.intervalMs;
+    REQUIRE(pair.master.ValidUntil() == expires);
+    REQUIRE(pair.outstation.ValidUntil() == expires);
+    REQUIRE(pair.master.Ready(expires - 1));
+    REQUIRE(pair.outstation.Ready(expires - 1));
+    REQUIRE_FALSE(pair.master.Ready(expires));
+    REQUIRE_FALSE(pair.outstation.Ready(expires));
+}
+
+TEST_CASE("SessionKeys - core rejects invalid interval precision and range", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = GENERATE(1u, 999u, 1001u, 1500u, 899999u, 7200001u, 7201000u);
+    const auto role = GENERATE(SessionKeys::Role::MASTER, SessionKeys::Role::OUTSTATION);
+    KeyPair material;
+    SessionKeys session(role, 7, 2, config);
+    REQUIRE(session.Configure(rseq_t(material.update.data(), material.update.size()), 10000000, material.now)
+            == R::INVALID);
+    REQUIRE_FALSE(session.Ready(material.now));
+}
+
+TEST_CASE("SessionKeys - count only mode retains keys until credential expiration", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = 0;
+    KeyPair pair(config);
+    pair.Exchange();
+    REQUIRE(pair.master.ValidUntil() == 10000000);
+    REQUIRE(pair.outstation.ValidUntil() == 10000000);
+    // Neither the normal renewal boundary nor the longest timed interval expires keys.
+    for (uint64_t time : {901000ULL, 7201000ULL, 9999999ULL})
+    {
+        REQUIRE(pair.master.Ready(time));
+        REQUIRE(pair.outstation.Ready(time));
+        REQUIRE_FALSE(pair.master.ControlKey(time).is_empty());
+        REQUIRE_FALSE(pair.outstation.MonitoringKey(time).is_empty());
+        REQUIRE_FALSE(pair.master.NeedsExchange(time));
+    }
+    pair.now = 10000000;
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+    REQUIRE_FALSE(pair.outstation.Ready(pair.now));
+    REQUIRE(pair.master.ControlKey(pair.now).is_empty());
+    REQUIRE(pair.outstation.MonitoringKey(pair.now).is_empty());
+    REQUIRE_FALSE(pair.master.NeedsExchange(pair.now));
+}
+
+TEST_CASE("SessionKeys - count only mode still renews at the message limit", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = 0;
+    config.messageLimit = 2;
+    KeyPair pair(config);
+    pair.Exchange();
+    pair.now += 7200000;
+    pair.master.CountAuthentication(pair.now);
+    pair.outstation.CountAuthentication(pair.now);
+    REQUIRE(pair.master.Ready(pair.now));
+    REQUIRE(pair.outstation.Ready(pair.now));
+    pair.master.CountAuthentication(pair.now);
+    pair.outstation.CountAuthentication(pair.now);
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+    REQUIRE_FALSE(pair.outstation.Ready(pair.now));
+    REQUIRE(pair.master.NeedsExchange(pair.now));
+    pair.Exchange();
+    REQUIRE(pair.master.RemainingMessages() == 2);
+    REQUIRE(pair.outstation.RemainingMessages() == 2);
+}
+
+TEST_CASE("SessionKeys - count only mode preserves explicit invalidation and failure", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = 0;
+    KeyPair pair(config);
+    pair.Exchange();
+    SECTION("explicit renewal")
+    {
+        pair.master.RequestRenewal(pair.now);
+        REQUIRE_FALSE(pair.master.Ready(pair.now));
+        REQUIRE(pair.outstation.Ready(pair.now));
+        REQUIRE(pair.master.NeedsExchange(pair.now));
+        pair.Exchange();
+    }
+    SECTION("peer restart")
+    {
+        pair.master.PeerRestart(pair.now);
+        REQUIRE_FALSE(pair.master.Ready(pair.now));
+        REQUIRE(pair.master.ControlKey(pair.now).is_empty());
+        REQUIRE(pair.master.NeedsExchange(pair.now));
+    }
+    SECTION("disconnect")
+    {
+        pair.master.Disconnect();
+        pair.outstation.Disconnect();
+        REQUIRE_FALSE(pair.master.Ready(pair.now));
+        REQUIRE_FALSE(pair.outstation.Ready(pair.now));
+        REQUIRE(pair.master.NeedsExchange(pair.now));
+        pair.Exchange();
+    }
+    SECTION("invalid confirmation MAC")
+    {
+        pair.master.RequestRenewal(pair.now);
+        pair.ToChange();
+        REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(),
+                                        pair.confirmation.size) == R::INSTALLED);
+        pair.confirmation.bytes[pair.confirmation.size - 1] ^= 1;
+        REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+                == R::INVALID);
+        REQUIRE_FALSE(pair.master.Ready(pair.now));
+        REQUIRE(pair.master.ControlKey(pair.now).is_empty());
+        REQUIRE_FALSE(pair.master.NeedsExchange(pair.now));
+    }
+}
+
+TEST_CASE("SessionKeys - count only capped timeouts retain a positive retry delay", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = 0;
+    KeyPair pair(config);
+    for (size_t batch = 0; batch < 2; ++batch)
+    {
+        for (size_t attempt = 0; attempt < 3; ++attempt)
+        {
+            REQUIRE(pair.master.NeedsExchange(pair.now));
+            REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+            pair.now += config.replyTimeoutMs;
+            pair.master.Tick(pair.now);
+        }
+        REQUIRE_FALSE(pair.master.NeedsExchange(pair.now));
+        REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::BUSY);
+        REQUIRE_FALSE(pair.master.NeedsExchange(pair.now + config.replyTimeoutMs - 1));
+        pair.now += config.replyTimeoutMs;
+        REQUIRE(pair.master.NeedsExchange(pair.now));
+    }
+}
+
+TEST_CASE("SessionKeys - count only repeated failures retain a positive retry delay", "[session-keys]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = 0;
+    KeyPair pair(config);
+    for (size_t attempt = 0; attempt < 6; ++attempt)
+    {
+        REQUIRE(pair.master.NeedsExchange(pair.now));
+        REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+        REQUIRE(pair.master.Process(7, rseq_t(), pair.now, pair.status.Write(), pair.status.size) == R::INVALID);
+        REQUIRE(pair.status.size == 0);
+        REQUIRE_FALSE(pair.master.Ready(pair.now));
+        REQUIRE_FALSE(pair.master.NeedsExchange(pair.now));
+        REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::BUSY);
+        REQUIRE_FALSE(pair.master.NeedsExchange(pair.now + config.replyTimeoutMs - 1));
+        pair.now += config.replyTimeoutMs;
+    }
+    REQUIRE(pair.master.NeedsExchange(pair.now));
 }

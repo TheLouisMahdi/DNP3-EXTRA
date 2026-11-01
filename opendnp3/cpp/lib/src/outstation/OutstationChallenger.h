@@ -56,7 +56,8 @@ public:
     explicit OutstationChallenger(uint16_t associationId,
                                   size_t tagLength = 16,
                                   uint32_t replyTimeoutMs = 2000,
-                                  bool monitoringDirection = false);
+                                  bool monitoringDirection = false,
+                                  uint8_t macAlgorithm = 0);
     ~OutstationChallenger();
     OutstationChallenger(const OutstationChallenger&) = delete;
     OutstationChallenger& operator=(const OutstationChallenger&) = delete;
@@ -122,6 +123,7 @@ private:
     size_t challengeSize = 0;
     const uint16_t associationId;
     const size_t tagLength;
+    const uint8_t macAlgorithm;
     const uint32_t replyTimeoutMs;
     std::array<User, MAX_USERS> users{};
     // Table A-3 (PDF p765): full Challenge fragment || full challenged fragment.

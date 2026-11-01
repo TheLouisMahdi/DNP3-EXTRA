@@ -5,6 +5,7 @@
 #include "app/APDUResponse.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
+#include "auth/AuthenticationMAC.h"
 #include "crypto/CryptoProvider.h"
 
 #include <algorithm>
@@ -86,7 +87,11 @@ namespace
 } // namespace
 
 SessionKeys::SessionKeys(Role role_, uint16_t association_, uint16_t user_, const Config& config_)
-    : role(role_), association(association_), user(user_), config(config_)
+    : role(role_),
+      association(association_),
+      user(user_),
+      config(config_),
+      macAlgorithm(ResolveAuthenticationMAC(config_.macAlgorithm, config_.tagLength))
 {
 }
 SessionKeys::~SessionKeys()
@@ -95,10 +100,13 @@ SessionKeys::~SessionKeys()
 }
 bool SessionKeys::ValidConfig() const
 {
-    return user != 0 && config.intervalMs >= 900000 && config.intervalMs <= 7200000 && config.intervalMs % 1000 == 0
+    return user != 0
+        && (config.intervalMs == 0
+            || (config.intervalMs >= 1000 && config.intervalMs <= 7200000 && config.intervalMs % 1000 == 0))
         && config.messageLimit >= 1 && config.messageLimit <= 0x7FFFFFFF && config.replyTimeoutMs >= 100
         && config.replyTimeoutMs <= 120000 && config.replyTimeoutMs % 100 == 0
-        && (config.tagLength == 8 || config.tagLength == 16);
+        && ValidAuthenticationMAC(macAlgorithm, config.tagLength)
+        && (config.keyWrapAlgorithm == 1 || config.keyWrapAlgorithm == 2);
 }
 void SessionKeys::ClearPending()
 {
@@ -141,6 +149,7 @@ void SessionKeys::Reset()
     crypto::Clear(ser4cpp::wseq_t(recoveryMonitoring.data(), recoveryMonitoring.size()));
     crypto::Clear(ser4cpp::wseq_t(recoveryChange.data(), recoveryChange.size()));
     recoverySize = 0;
+    updateSize = 0;
     configured = haveMonitoring = haveKSQ = false;
     keySize = lastChangeSize = 0;
     credentialExpiry = 0;
@@ -166,10 +175,11 @@ bool SessionKeys::Observe(uint64_t now)
 SessionKeys::Result SessionKeys::Configure(ser4cpp::rseq_t key, uint64_t expiry, uint64_t now)
 {
     Reset();
-    if (!Observe(now) || !ValidConfig() || key.length() != update.size() || !static_cast<const uint8_t*>(key)
-        || expiry <= now)
+    if (!Observe(now) || !ValidConfig() || key.length() != (config.keyWrapAlgorithm == 1 ? 16u : 32u)
+        || !static_cast<const uint8_t*>(key) || expiry <= now)
         return Result::INVALID;
-    std::memcpy(update.data(), key, update.size());
+    updateSize = key.length();
+    std::memcpy(update.data(), key, updateSize);
     configured = true;
     credentialExpiry = expiry;
     return Result::OK;
@@ -209,7 +219,7 @@ void SessionKeys::Tick(uint64_t now)
         RetainRecovery();
         ClearPending();
         Invalidate();
-        nextAttempt = now + (attempts >= 3 ? config.intervalMs : 0);
+        nextAttempt = now + (attempts >= 3 ? (config.intervalMs ? config.intervalMs : config.replyTimeoutMs) : 0);
         if (attempts >= 3)
             attempts = 0;
     }
@@ -253,7 +263,7 @@ SessionKeys::Result SessionKeys::Fail(Result result, uint64_t now)
     ClearPending();
     Invalidate();
     // Invalid traffic cannot accelerate the retry loop.
-    nextAttempt = now + (attempts >= 3 ? config.intervalMs : config.replyTimeoutMs);
+    nextAttempt = now + (attempts >= 3 && config.intervalMs ? config.intervalMs : config.replyTimeoutMs);
     if (attempts >= 3)
         attempts = 0;
     return result;
@@ -290,8 +300,9 @@ SessionKeys::Result SessionKeys::Begin(uint16_t assoc, uint8_t seq, uint64_t now
 }
 bool SessionKeys::CheckStatusMAC(const Group120Var5& value, ser4cpp::rseq_t key, ser4cpp::rseq_t transcript) const
 {
-    return value.macAlgorithm == (config.tagLength == 8 ? 3 : 4) && value.hmacValue.length() == config.tagLength
-        && transcript.length() != 0 && crypto::VerifyHMACSHA256(key, transcript, value.hmacValue) == crypto::Result::OK;
+    return value.macAlgorithm == macAlgorithm && value.hmacValue.length() == config.tagLength
+        && transcript.length() != 0
+        && VerifyAuthenticationMAC(macAlgorithm, key, transcript, value.hmacValue) == crypto::Result::OK;
 }
 bool SessionKeys::MakeStatus(
     uint8_t seq, uint8_t status, uint64_t now, ser4cpp::wseq_t output, size_t& size, IINField iin)
@@ -302,7 +313,8 @@ bool SessionKeys::MakeStatus(
     Secret<16> mac;
     if (crypto::GenerateRandom(ser4cpp::wseq_t(nonce.bytes.data(), 32)) != crypto::Result::OK)
         return false;
-    Group120Var5 value(++ksq, user, 2, status, 0, ser4cpp::rseq_t(nonce.bytes.data(), 32), ser4cpp::rseq_t());
+    Group120Var5 value(++ksq, user, config.keyWrapAlgorithm, status, 0, ser4cpp::rseq_t(nonce.bytes.data(), 32),
+                       ser4cpp::rseq_t());
     haveKSQ = true;
     auto raw = ser4cpp::wseq_t(statusBytes.data(), statusBytes.size());
     if (!value.Write(raw))
@@ -310,10 +322,10 @@ bool SessionKeys::MakeStatus(
     statusSize = value.Size();
     if (haveMonitoring)
     {
-        value.macAlgorithm = config.tagLength == 8 ? 3 : 4;
-        if (crypto::ComputeHMACSHA256(ser4cpp::rseq_t(monitoring.data(), keySize),
-                                      ser4cpp::rseq_t(lastChange.data(), lastChangeSize),
-                                      ser4cpp::wseq_t(mac.bytes.data(), config.tagLength))
+        value.macAlgorithm = macAlgorithm;
+        if (ComputeAuthenticationMAC(macAlgorithm, ser4cpp::rseq_t(monitoring.data(), keySize),
+                                     ser4cpp::rseq_t(lastChange.data(), lastChangeSize),
+                                     ser4cpp::wseq_t(mac.bytes.data(), config.tagLength))
             != crypto::Result::OK)
             return false;
         value.hmacValue = ser4cpp::rseq_t(mac.bytes.data(), config.tagLength);
@@ -385,8 +397,8 @@ SessionKeys::Result SessionKeys::Process(
         if (wrapped.length() < 24 || wrapped.length() > MAX_APDU || wrapped.length() % 8)
             return Fail(Result::INVALID, now);
         Secret<MAX_APDU> plaintext;
-        if (crypto::AES256KeyUnwrap(ser4cpp::rseq_t(update.data(), update.size()), wrapped,
-                                    ser4cpp::wseq_t(plaintext.bytes.data(), wrapped.length() - 8))
+        if (WrapAuthenticationKeys(config.keyWrapAlgorithm, true, ser4cpp::rseq_t(update.data(), updateSize), wrapped,
+                                   ser4cpp::wseq_t(plaintext.bytes.data(), wrapped.length() - 8))
             != crypto::Result::OK)
             return Fail(Result::CRYPTO_ERROR, now);
         auto input = ser4cpp::rseq_t(plaintext.bytes.data(), wrapped.length() - 8);
@@ -406,7 +418,7 @@ SessionKeys::Result SessionKeys::Process(
         keySize = length;
         haveMonitoring = true;
         valid = true;
-        validUntil = std::min(credentialExpiry, now + config.intervalMs);
+        validUntil = config.intervalMs ? std::min(credentialExpiry, now + config.intervalMs) : credentialExpiry;
         crypto::Clear(ser4cpp::wseq_t(lastChange.data(), lastChange.size()));
         std::memcpy(lastChange.data(), apdu, apdu.length());
         lastChangeSize = apdu.length();
@@ -422,7 +434,7 @@ SessionKeys::Result SessionKeys::Process(
     if (handler.variation != 5 || phase == Phase::IDLE || seq != appSequence || handler.status.userNum != user)
         return Fail(Result::INVALID, now);
     const auto& status = handler.status;
-    if (status.keyWrapAlgorithm != 2 || status.keyStatus < 1 || status.keyStatus > 4
+    if (status.keyWrapAlgorithm != config.keyWrapAlgorithm || status.keyStatus < 1 || status.keyStatus > 4
         || status.challengeData.length() > MAX_STATUS - 11)
         return Fail(Result::INVALID, now);
     if (phase == Phase::CONFIRM)
@@ -439,7 +451,7 @@ SessionKeys::Result SessionKeys::Process(
         haveMonitoring = valid = true;
         ksq = status.seqNum;
         haveKSQ = true;
-        validUntil = std::min(credentialExpiry, now + config.intervalMs);
+        validUntil = config.intervalMs ? std::min(credentialExpiry, now + config.intervalMs) : credentialExpiry;
         messages = 0;
         attempts = 0;
         nextAttempt = 0;
@@ -479,8 +491,9 @@ SessionKeys::Result SessionKeys::Process(
     dest.copy_from(ser4cpp::rseq_t(statusBytes.data(), statusSize));
     const size_t padded = (2 + 64 + statusSize + 7) / 8 * 8;
     Secret<MAX_APDU> wrapped;
-    if (crypto::AES256KeyWrap(ser4cpp::rseq_t(update.data(), 32), ser4cpp::rseq_t(plaintext.bytes.data(), padded),
-                              ser4cpp::wseq_t(wrapped.bytes.data(), padded + 8))
+    if (WrapAuthenticationKeys(config.keyWrapAlgorithm, false, ser4cpp::rseq_t(update.data(), updateSize),
+                               ser4cpp::rseq_t(plaintext.bytes.data(), padded),
+                               ser4cpp::wseq_t(wrapped.bytes.data(), padded + 8))
         != crypto::Result::OK)
         return Fail(Result::CRYPTO_ERROR, now);
     if (output.length() < 8)

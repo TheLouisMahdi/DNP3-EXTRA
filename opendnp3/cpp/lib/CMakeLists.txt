@@ -666,7 +666,7 @@ set(opendnp3_tls_src
 
 set(all_sources ${opendnp3_public_headers} ${opendnp3_private_headers} ${opendnp3_src})
 if(DNP3_SA_CRYPTO)
-    list(APPEND all_sources ./src/auth/AggressiveMode.h ./src/auth/AggressiveMode.cpp)
+    list(APPEND all_sources ./src/auth/AuthenticationMAC.h ./src/auth/AggressiveMode.h ./src/auth/AggressiveMode.cpp)
     list(APPEND all_sources ./src/auth/SessionKeys.h ./src/auth/SessionKeys.cpp
         ./src/auth/AuthenticationSession.h ./src/auth/AuthenticationSession.cpp)
     if(WIN32)

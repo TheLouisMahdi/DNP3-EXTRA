@@ -285,3 +285,95 @@ TEST_CASE("CryptoProvider - unavailable provider fails closed and recovers", "[c
     REQUIRE(ComputeHMACSHA256(Read(key), Read(input), Write(output)) == Result::OK);
     Clear(Write(output));
 }
+
+TEST_CASE("CryptoProvider - RFC2202 SHA1 full and IEEE truncated tags", "[crypto]")
+{
+    std::array<uint8_t, 20> first;
+    first.fill(0x0B);
+    HexSequence second("4A656665");
+    HexSequence message1("4869205468657265"), message2("7768617420646F2079612077616E7420666F72206E6F7468696E673F");
+    HexSequence expected1("B617318655057264E28BC0B6FB378C8EF146BE00"),
+        expected2("EFFCDF6AE5EB2FA2D27416D5F184DF9C259A7C79");
+    const auto vector = GENERATE(0, 1);
+    auto key = vector ? second.ToRSeq() : Read(first);
+    auto message = vector ? message2.ToRSeq() : message1.ToRSeq();
+    auto expected = vector ? expected2.ToRSeq() : expected1.ToRSeq();
+    std::array<uint8_t, 21> output;
+    for (size_t length : {8u, 10u, 20u})
+    {
+        output.fill(0xCC);
+        REQUIRE(ComputeHMACSHA1(key, message, Write(output).take(length)) == Result::OK);
+        REQUIRE(Read(output).take(length).equals(expected.take(length)));
+        REQUIRE(output[length] == 0xCC);
+        if (length == 20)
+        {
+            REQUIRE(VerifyHMACSHA1(key, message, Read(output).take(length)) == Result::INVALID_INPUT);
+            continue;
+        }
+        REQUIRE(VerifyHMACSHA1(key, message, Read(output).take(length)) == Result::OK);
+        for (size_t i = 0; i < length; ++i)
+        {
+            output[i] ^= 1;
+            REQUIRE(VerifyHMACSHA1(key, message, Read(output).take(length)) == Result::AUTHENTICATION_FAILED);
+            output[i] ^= 1;
+        }
+    }
+}
+TEST_CASE("CryptoProvider - SHA1 validation and AES128 RFC3394 integrity", "[crypto]")
+{
+    HexSequence kek("000102030405060708090A0B0C0D0E0F"), plain("00112233445566778899AABBCCDDEEFF");
+    HexSequence cipher("1FA68B0A8112B447AEF34BD8FB5A7B829D3E862371D2CFE5");
+    std::array<uint8_t, 32> key{}, output;
+    std::array<uint8_t, 24> wrapped;
+    REQUIRE(AES128KeyWrap(kek.ToRSeq(), plain.ToRSeq(), Write(wrapped)) == Result::OK);
+    REQUIRE(Read(wrapped).equals(cipher.ToRSeq()));
+    REQUIRE(AES128KeyUnwrap(kek.ToRSeq(), Read(wrapped), Write(output).take(16)) == Result::OK);
+    REQUIRE(Read(output).take(16).equals(plain.ToRSeq()));
+    for (size_t i = 0; i < wrapped.size(); ++i)
+    {
+        wrapped[i] ^= 1;
+        output.fill(0xCC);
+        REQUIRE(AES128KeyUnwrap(kek.ToRSeq(), Read(wrapped), Write(output).take(16)) == Result::CRYPTO_ERROR);
+        REQUIRE(Zero(Read(output).take(16)));
+        wrapped[i] ^= 1;
+    }
+    for (size_t length = 0; length <= 32; ++length)
+    {
+        output.fill(0xCC);
+        const auto result = ComputeHMACSHA1(Read(key), rseq_t(), Write(output).take(length));
+        if (length == 8 || length == 10 || length == 20)
+            REQUIRE(result == Result::OK);
+        else
+        {
+            REQUIRE(result == Result::INVALID_OUTPUT_SIZE);
+            REQUIRE(Zero(Read(output).take(length)));
+        }
+        output.fill(0xCC);
+        if (length != 16)
+        {
+            REQUIRE(AES128KeyWrap(Read(key).take(length), plain.ToRSeq(), Write(wrapped)) == Result::INVALID_INPUT);
+            REQUIRE(Zero(Read(wrapped)));
+        }
+    }
+    REQUIRE(ComputeHMACSHA1(rseq_t(), plain.ToRSeq(), Write(output).take(10)) == Result::INVALID_INPUT);
+    REQUIRE(ComputeHMACSHA1(Read(key), rseq_t(nullptr, 1), Write(output).take(10)) == Result::INVALID_INPUT);
+    REQUIRE(ComputeHMACSHA1(Read(key), rseq_t(), wseq_t(nullptr, 10)) == Result::INVALID_OUTPUT_SIZE);
+    REQUIRE(VerifyHMACSHA1(Read(key), rseq_t(), rseq_t(nullptr, 10)) == Result::INVALID_INPUT);
+    REQUIRE(ComputeHMACSHA1(Read(key), rseq_t(), Write(key).take(10)) == Result::INVALID_INPUT);
+    REQUIRE(Zero(Read(key).take(10)));
+    REQUIRE(AES128KeyWrap(kek.ToRSeq(), rseq_t(nullptr, 16), Write(wrapped)) == Result::INVALID_INPUT);
+    REQUIRE(AES128KeyWrap(kek.ToRSeq(), plain.ToRSeq(), Write(output).take(23)) == Result::INVALID_OUTPUT_SIZE);
+    REQUIRE(AES128KeyWrap(Read(key).take(16), plain.ToRSeq(), Write(key).take(24)) == Result::INVALID_INPUT);
+    REQUIRE(Zero(Read(key).take(24)));
+    {
+        NullProviderScope unavailable;
+        output.fill(0xCC);
+        REQUIRE(ComputeHMACSHA1(Read(key), plain.ToRSeq(), Write(output).take(10)) == Result::CRYPTO_ERROR);
+        REQUIRE(Zero(Read(output).take(10)));
+        REQUIRE(VerifyHMACSHA1(Read(key), plain.ToRSeq(), cipher.ToRSeq().take(10)) == Result::CRYPTO_ERROR);
+        REQUIRE(AES128KeyWrap(kek.ToRSeq(), plain.ToRSeq(), Write(wrapped)) == Result::CRYPTO_ERROR);
+        REQUIRE(Zero(Read(wrapped)));
+        REQUIRE(AES128KeyUnwrap(kek.ToRSeq(), cipher.ToRSeq(), Write(output).take(16)) == Result::CRYPTO_ERROR);
+        REQUIRE(Zero(Read(output).take(16)));
+    }
+}

@@ -13,7 +13,7 @@ class AggressiveMode final
 {
 public:
     static constexpr size_t MAX_APDU = 2048;
-    AggressiveMode(uint16_t association, size_t tagLength, bool monitoringDirection);
+    AggressiveMode(uint16_t association, size_t tagLength, bool monitoringDirection, uint8_t macAlgorithm = 0);
     ~AggressiveMode();
     AggressiveMode(const AggressiveMode&) = delete;
     AggressiveMode& operator=(const AggressiveMode&) = delete;
@@ -48,6 +48,7 @@ private:
     };
     const uint16_t association;
     const size_t tagLength;
+    const uint8_t macAlgorithm;
     const bool monitoringDirection;
     std::array<History, 2> history{};
     std::array<uint8_t, 2 * MAX_APDU> scratch{};

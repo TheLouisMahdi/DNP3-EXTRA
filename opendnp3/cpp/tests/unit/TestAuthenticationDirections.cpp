@@ -32,11 +32,12 @@ struct EphemeralKey
 TEST_CASE("AuthenticationDirections - Monitoring key authenticates complete solicited and unsolicited responses",
           "[auth-directions]")
 {
-    const auto tag = GENERATE(8, 16);
+    const auto algorithm = GENERATE(2, 3, 4, 5);
+    const auto tag = algorithm == 2 ? 10 : (algorithm == 4 ? 16 : 8);
     const auto unsolicited = GENERATE(false, true);
     EphemeralKey monitoring;
-    OutstationChallenger master(7, tag, 2000, true);
-    MasterResponder outstation(7, tag, 2000, true);
+    OutstationChallenger master(7, tag, 2000, true, algorithm);
+    MasterResponder outstation(7, tag, 2000, true, algorithm);
     REQUIRE(master.SetSessionKey(1, monitoring.Read(), 10000, 1000) == OutstationChallenger::Result::OK);
     REQUIRE(outstation.SetSessionKey(1, monitoring.Read(), 10000, 1000) == MasterResponder::Result::OK);
     HexSequence original(unsolicited ? "D5 82 80 00" : "C5 81 80 00");
@@ -52,7 +53,7 @@ TEST_CASE("AuthenticationDirections - Monitoring key authenticates complete soli
     Group120Var1 value;
     REQUIRE(value.Read(rseq_t(challenge.data() + 8, nc - 8)));
     REQUIRE(value.userNum == 1);
-    REQUIRE(value.macAlgorithm == (tag == 8 ? 3 : 4));
+    REQUIRE(value.macAlgorithm == algorithm);
     REQUIRE(outstation.Respond(7, rseq_t(challenge.data(), nc), 1000, wseq_t(reply.data(), reply.size()), nr,
                                IINField(0x80, 0))
             == MasterResponder::Result::OK);
@@ -104,10 +105,10 @@ TEST_CASE("AuthenticationDirections - IIN tampering user and direction confusion
 TEST_CASE("AuthenticationDirections - unsolicited confirm and fragmented response can be retained", "[auth-directions]")
 {
     EphemeralKey key;
-    MasterResponder master(7,16),outstation(7,16,2000,true);
-    REQUIRE(master.SetSessionKey(1,key.Read(),10000,1000)==MasterResponder::Result::OK);
-    REQUIRE(outstation.SetSessionKey(1,key.Read(),10000,1000)==MasterResponder::Result::OK);
-    HexSequence confirm("D5 00"),fragment("A5 81 80 00");
-    REQUIRE(master.RetainRequest(7,confirm.ToRSeq(),1000)==MasterResponder::Result::OK);
-    REQUIRE(outstation.RetainRequest(7,fragment.ToRSeq(),1000)==MasterResponder::Result::OK);
+    MasterResponder master(7, 16), outstation(7, 16, 2000, true);
+    REQUIRE(master.SetSessionKey(1, key.Read(), 10000, 1000) == MasterResponder::Result::OK);
+    REQUIRE(outstation.SetSessionKey(1, key.Read(), 10000, 1000) == MasterResponder::Result::OK);
+    HexSequence confirm("D5 00"), fragment("A5 81 80 00");
+    REQUIRE(master.RetainRequest(7, confirm.ToRSeq(), 1000) == MasterResponder::Result::OK);
+    REQUIRE(outstation.RetainRequest(7, fragment.ToRSeq(), 1000) == MasterResponder::Result::OK);
 }

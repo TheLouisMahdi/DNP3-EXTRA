@@ -15,6 +15,8 @@ AuthenticationSession::AuthenticationSession(SessionKeys::Role role, const Authe
     settings.messageLimit = config.renewalMessageCount;
     settings.replyTimeoutMs = config.replyTimeoutMs;
     settings.tagLength = config.tagLength;
+    settings.macAlgorithm = config.macAlgorithm;
+    settings.keyWrapAlgorithm = config.keyWrapAlgorithm;
     for (size_t n = 0; n < sessions.size(); ++n)
         sessions[n].reset(new SessionKeys(role, config.association, config.users[n], settings));
 }
@@ -42,13 +44,14 @@ bool AuthenticationSession::Load(uint64_t now)
         {
             Key key;
             uint64_t lifetime = 0;
-            if (!config.credentials->ReadUpdateKey(config.association, entry->User(), key.bytes.data(),
-                                                   key.bytes.size(), lifetime)
+            const size_t keyLength = config.keyWrapAlgorithm == 1 ? 16 : 32;
+            if (!config.credentials->ReadUpdateKey(config.association, entry->User(), key.bytes.data(), keyLength,
+                                                   lifetime)
                 || (havePrevious
-                    && crypto::ConstantTimeEqual(ser4cpp::rseq_t(previous.bytes.data(), 32),
-                                                 ser4cpp::rseq_t(key.bytes.data(), 32)))
+                    && crypto::ConstantTimeEqual(ser4cpp::rseq_t(previous.bytes.data(), keyLength),
+                                                 ser4cpp::rseq_t(key.bytes.data(), keyLength)))
                 || !lifetime || lifetime > std::numeric_limits<uint64_t>::max() - now
-                || entry->Configure(ser4cpp::rseq_t(key.bytes.data(), key.bytes.size()), now + lifetime, now)
+                || entry->Configure(ser4cpp::rseq_t(key.bytes.data(), keyLength), now + lifetime, now)
                     != SessionKeys::Result::OK)
             {
                 loaded = false;

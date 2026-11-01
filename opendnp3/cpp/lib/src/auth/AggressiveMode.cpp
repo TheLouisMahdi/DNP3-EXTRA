@@ -5,6 +5,7 @@
 #include "app/APDUResponse.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
+#include "auth/AuthenticationMAC.h"
 #include "crypto/CryptoProvider.h"
 
 #include <cstring>
@@ -108,8 +109,11 @@ namespace
             && FunctionCodeSpec::to_type(header.header.function) < 0x20;
     }
 } // namespace
-AggressiveMode::AggressiveMode(uint16_t association_, size_t tagLength_, bool monitoring_)
-    : association(association_), tagLength(tagLength_), monitoringDirection(monitoring_)
+AggressiveMode::AggressiveMode(uint16_t association_, size_t tagLength_, bool monitoring_, uint8_t macAlgorithm_)
+    : association(association_),
+      tagLength(tagLength_),
+      macAlgorithm(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
+      monitoringDirection(monitoring_)
 {
 }
 AggressiveMode::~AggressiveMode()
@@ -131,7 +135,7 @@ bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited)
 {
     const size_t headerSize = monitoringDirection ? 2 : 4;
     if (!static_cast<const uint8_t*>(apdu) || apdu.length() < headerSize || apdu.length() > MAX_APDU
-        || (tagLength != 8 && tagLength != 16))
+        || !ValidAuthenticationMAC(macAlgorithm, tagLength))
         return false;
     const auto header = APDUHeaderParser::ParseRequest(apdu);
     if (!header.success
@@ -141,7 +145,7 @@ bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited)
     Challenge challenge;
     if (APDUParser::Parse(apdu.skip(headerSize), challenge, nullptr) != ParseResult::OK || !challenge.valid
         || challenge.value.reason != 1 || challenge.value.userNum != (monitoringDirection ? 1 : 0)
-        || challenge.value.macAlgorithm != (tagLength == 8 ? 3 : 4))
+        || challenge.value.macAlgorithm != macAlgorithm)
         return false;
     auto& h = history[unsolicited ? 1 : 0];
     const uint32_t delta = challenge.value.seqNum - h.challengeSequence;
@@ -182,7 +186,7 @@ bool AggressiveMode::Create(
     if (assoc != association || !user || !ValidFragment(original, monitoringDirection)
         || !static_cast<const uint8_t*>(key) || (key.length() != 16 && key.length() != 32)
         || !static_cast<uint8_t*>(output) || Overlap(original, output) || Overlap(key, output)
-        || (tagLength != 8 && tagLength != 16))
+        || !ValidAuthenticationMAC(macAlgorithm, tagLength))
         return false;
     const AppControlField control(original[0]);
     const auto& h = history[control.UNS ? 1 : 0];
@@ -229,8 +233,8 @@ bool AggressiveMode::Create(
     const size_t authenticated = required - tagLength;
     std::memcpy(scratch.data(), h.apdu.data(), h.size);
     std::memcpy(scratch.data() + h.size, output, authenticated);
-    if (crypto::ComputeHMACSHA256(key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
-                                  output.skip(authenticated).take(tagLength))
+    if (ComputeAuthenticationMAC(macAlgorithm, key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
+                                 output.skip(authenticated).take(tagLength))
         != crypto::Result::OK)
         return false;
     history[control.UNS ? 1 : 0].sequence = prefix.seqNum;
@@ -246,7 +250,7 @@ bool AggressiveMode::Verify(
     Guard guard{output, ser4cpp::wseq_t(scratch.data(), scratch.size())};
     const size_t headerSize = monitoringDirection ? 4 : 2;
     if (assoc != association || !user || !ValidFragment(apdu, monitoringDirection)
-        || (tagLength != 8 && tagLength != 16) || apdu.length() < headerSize + 10 + 6 + tagLength
+        || !ValidAuthenticationMAC(macAlgorithm, tagLength) || apdu.length() < headerSize + 10 + 6 + tagLength
         || !static_cast<const uint8_t*>(key) || (key.length() != 16 && key.length() != 32)
         || !static_cast<uint8_t*>(output) || Overlap(apdu, output) || Overlap(key, output))
         return false;
@@ -272,7 +276,8 @@ bool AggressiveMode::Verify(
     const size_t authenticated = apdu.length() - tagLength;
     std::memcpy(scratch.data(), h.apdu.data(), h.size);
     std::memcpy(scratch.data() + h.size, apdu, authenticated);
-    if (crypto::VerifyHMACSHA256(key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated), suffix.value.hmacValue)
+    if (VerifyAuthenticationMAC(macAlgorithm, key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
+                                suffix.value.hmacValue)
         != crypto::Result::OK)
         return false;
     std::memcpy(output, apdu, headerSize);

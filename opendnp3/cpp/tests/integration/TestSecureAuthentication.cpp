@@ -47,6 +47,7 @@ class TcpCredentials final : public IAuthenticationCredentials
 {
 public:
     std::array<std::array<uint8_t, 32>, 2> keys{};
+    size_t keyLength = 32;
     TcpCredentials()
     {
         for (auto& key : keys)
@@ -60,9 +61,9 @@ public:
     bool ReadUpdateKey(
         uint16_t association, uint16_t user, uint8_t* output, size_t capacity, uint64_t& lifetime) override
     {
-        if (association != 7 || user < 1 || user > 2 || !output || capacity != 32)
+        if (association != 7 || user < 1 || user > 2 || !output || capacity != keyLength)
             return false;
-        std::copy(keys[user - 1].begin(), keys[user - 1].end(), output);
+        std::copy_n(keys[user - 1].begin(), capacity, output);
         lifetime = 3600000;
         return true;
     }
@@ -127,6 +128,14 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     oc.outstation.params.authentication.credentials = credentials;
     oc.outstation.params.authentication.authorization = policy;
     oc.outstation.params.authentication.renewalMessageCount = 12;
+    const bool legacy = GENERATE(false, true);
+    if (legacy)
+    {
+        credentials->keyLength = 16;
+        oc.outstation.params.authentication.macAlgorithm = 2;
+        oc.outstation.params.authentication.tagLength = 10;
+        oc.outstation.params.authentication.keyWrapAlgorithm = 1;
+    }
     const bool aggressive = GENERATE(false, true);
     oc.outstation.params.authentication.aggressiveTransmit = aggressive;
     oc.outstation.params.authentication.aggressiveReceive = aggressive;

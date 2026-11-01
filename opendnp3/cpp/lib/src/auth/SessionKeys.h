@@ -38,6 +38,8 @@ public:
         uint32_t messageLimit = 1000;
         uint32_t replyTimeoutMs = 2000;
         uint8_t tagLength = 16;
+        uint8_t macAlgorithm = 0;
+        uint8_t keyWrapAlgorithm = 2;
     };
     static constexpr size_t MAX_APDU = 2048;
     static constexpr size_t MAX_STATUS = 1024;
@@ -112,6 +114,8 @@ private:
     const uint16_t association;
     const uint16_t user;
     const Config config;
+    const uint8_t macAlgorithm;
+    size_t updateSize = 0;
     std::array<uint8_t, 32> update{};
     std::array<uint8_t, 32> control{};
     std::array<uint8_t, 32> monitoring{};

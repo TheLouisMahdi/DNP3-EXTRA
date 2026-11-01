@@ -5,6 +5,7 @@
 #include "app/APDUResponse.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
+#include "auth/AuthenticationMAC.h"
 #include "crypto/CryptoProvider.h"
 
 #include <cstring>
@@ -46,10 +47,12 @@ namespace
 MasterResponder::MasterResponder(uint16_t associationId_,
                                  size_t tagLength_,
                                  uint32_t pendingTimeoutMs_,
-                                 bool monitoringDirection_)
+                                 bool monitoringDirection_,
+                                 uint8_t macAlgorithm_)
     : monitoringDirection(monitoringDirection_),
       associationId(associationId_),
       tagLength(tagLength_),
+      macAlgorithm(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
       pendingTimeoutMs(pendingTimeoutMs_)
 {
 }
@@ -143,7 +146,7 @@ MasterResponder::Result MasterResponder::RetainRequest(uint16_t association, ser
         return Result::BUSY;
     if (!keySize)
         return Result::NO_SESSION_KEYS;
-    if ((tagLength != 8 && tagLength != 16) || pendingTimeoutMs < 100 || pendingTimeoutMs > 120000
+    if (!ValidAuthenticationMAC(macAlgorithm, tagLength) || pendingTimeoutMs < 100 || pendingTimeoutMs > 120000
         || pendingTimeoutMs % 100 != 0 || !static_cast<const uint8_t*>(request)
         || request.length() < APDUHeader::REQUEST_SIZE || request.length() > MAX_REQUEST_SIZE)
         return Fail(Result::INVALID_INPUT);
@@ -207,7 +210,7 @@ MasterResponder::Result MasterResponder::Respond(uint16_t association,
     // A.45.1.2.2 (PDF p762): Outstation-issued challenge has unknown USR=0.
     if (challenge.userNum != (monitoringDirection ? user : 0))
         return Fail(Result::INVALID_USER);
-    if (challenge.macAlgorithm != (tagLength == 8 ? 3 : 4))
+    if (challenge.macAlgorithm != (macAlgorithm))
         return Fail(Result::UNSUPPORTED_ALGORITHM);
 
     // Association-wide, independent of user (7.5.2.3.3, PDF p253). Engineering
@@ -225,9 +228,9 @@ MasterResponder::Result MasterResponder::Respond(uint16_t association,
     std::memmove(transcript.data() + fragment.length(), transcript.data() + MAX_CHALLENGE_SIZE, requestSize);
     std::memcpy(transcript.data(), fragment, fragment.length());
     std::array<uint8_t, 16> tag{};
-    const auto computed = crypto::ComputeHMACSHA256(ser4cpp::rseq_t(key.data(), keySize),
-                                                    ser4cpp::rseq_t(transcript.data(), fragment.length() + requestSize),
-                                                    ser4cpp::wseq_t(tag.data(), tagLength));
+    const auto computed = ComputeAuthenticationMAC(macAlgorithm, ser4cpp::rseq_t(key.data(), keySize),
+                                                   ser4cpp::rseq_t(transcript.data(), fragment.length() + requestSize),
+                                                   ser4cpp::wseq_t(tag.data(), tagLength));
     if (computed != crypto::Result::OK)
     {
         crypto::Clear(ser4cpp::wseq_t(tag.data(), tag.size()));

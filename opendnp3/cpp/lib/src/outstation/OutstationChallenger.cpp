@@ -3,6 +3,7 @@
 
 #include "app/APDURequest.h"
 #include "app/APDUResponse.h"
+#include "auth/AuthenticationMAC.h"
 #include "crypto/CryptoProvider.h"
 
 #include <cstring>
@@ -24,10 +25,12 @@ namespace
 OutstationChallenger::OutstationChallenger(uint16_t associationId_,
                                            size_t tagLength_,
                                            uint32_t replyTimeoutMs_,
-                                           bool monitoringDirection_)
+                                           bool monitoringDirection_,
+                                           uint8_t macAlgorithm_)
     : monitoringDirection(monitoringDirection_),
       associationId(associationId_),
       tagLength(tagLength_),
+      macAlgorithm(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
       replyTimeoutMs(replyTimeoutMs_)
 {
 }
@@ -159,7 +162,7 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         ClearPending();
     if (requestSize)
         return Result::BUSY; // Table 7-8, row 3: discard NEW request.
-    if ((tagLength != 8 && tagLength != 16) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
+    if (!ValidAuthenticationMAC(macAlgorithm, tagLength) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
         || replyTimeoutMs % 100 != 0 || overlapping || !static_cast<const uint8_t*>(request) || request.length() < 2
         || request.length() > MAX_REQUEST_SIZE)
         return Result::INVALID_INPUT;
@@ -173,7 +176,7 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         return Result::CRYPTO_ERROR;
 
     const auto nextSequence = static_cast<uint32_t>(sequence + 1u);
-    Group120Var1 challenge(nextSequence, monitoringDirection ? 1 : 0, tagLength == 8 ? 3 : 4, 1,
+    Group120Var1 challenge(nextSequence, monitoringDirection ? 1 : 0, macAlgorithm, 1,
                            ser4cpp::rseq_t(nonce.data(), nonce.size()));
     challengeSize = monitoringDirection ? CHALLENGE_SIZE - 2 : CHALLENGE_SIZE;
     const uint8_t* requestBytes = request;
@@ -234,8 +237,8 @@ OutstationChallenger::Result OutstationChallenger::Reply(
             // IEEE A.45.2.2.2 / Table A-3 (PDF p765, printed p723): the exact
             // Challenge APDU followed by the exact challenged APDU. The key is
             // the selected user's CONTROL Direction Session Key.
-            const auto verified = crypto::VerifyHMACSHA256(
-                ser4cpp::rseq_t(user->key.data(), user->keySize),
+            const auto verified = VerifyAuthenticationMAC(
+                macAlgorithm, ser4cpp::rseq_t(user->key.data(), user->keySize),
                 ser4cpp::rseq_t(transcript.data(), challengeSize + requestSize), reply.hmacValue);
             if (verified == crypto::Result::OK)
             {

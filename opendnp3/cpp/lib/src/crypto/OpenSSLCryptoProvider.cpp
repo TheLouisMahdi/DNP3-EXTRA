@@ -78,10 +78,10 @@ namespace crypto
             uint8_t* const data;
         };
 
-        Result KeyWrap(bool encrypt, ser4cpp::rseq_t key, ser4cpp::rseq_t input, ser4cpp::wseq_t output)
+        Result KeyWrap(bool encrypt, size_t keySize, ser4cpp::rseq_t key, ser4cpp::rseq_t input, ser4cpp::wseq_t output)
         {
             OutputGuard guard(output);
-            if (!Valid(key) || !Valid(input) || key.length() != 32 || input.length() < (encrypt ? 16u : 24u)
+            if (!Valid(key) || !Valid(input) || key.length() != keySize || input.length() < (encrypt ? 16u : 24u)
                 || input.length() % 8 != 0 || input.length() > static_cast<size_t>(INT_MAX - 16)
                 || Overlaps(key, output) || Overlaps(input, output))
                 return Result::INVALID_INPUT;
@@ -96,7 +96,9 @@ namespace crypto
             if (!temporary.data || !context)
                 return Result::CRYPTO_ERROR;
             EVP_CIPHER_CTX_set_flags(context.get(), EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
-            if (EVP_CipherInit_ex2(context.get(), EVP_aes_256_wrap(), key, nullptr, encrypt ? 1 : 0, nullptr) != 1)
+            if (EVP_CipherInit_ex2(context.get(), (keySize == 16 ? EVP_aes_128_wrap() : EVP_aes_256_wrap()), key,
+                                   nullptr, encrypt ? 1 : 0, nullptr)
+                != 1)
                 return Result::CRYPTO_ERROR;
             int written = 0;
             int final = 0;
@@ -121,8 +123,8 @@ namespace crypto
 
     bool ConstantTimeEqual(ser4cpp::rseq_t first, ser4cpp::rseq_t second)
     {
-        return Valid(first) && Valid(second) && first.length() == second.length() &&
-            (first.length() == 0 || CRYPTO_memcmp(first, second, first.length()) == 0);
+        return Valid(first) && Valid(second) && first.length() == second.length()
+            && (first.length() == 0 || CRYPTO_memcmp(first, second, first.length()) == 0);
     }
 
     Result GenerateRandom(ser4cpp::wseq_t output)
@@ -171,14 +173,50 @@ namespace crypto
         return CRYPTO_memcmp(digest.bytes.data(), tag, tag.length()) == 0 ? Result::OK : Result::AUTHENTICATION_FAILED;
     }
 
+    Result ComputeHMACSHA1(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::wseq_t output)
+    {
+        OutputGuard guard(output);
+        if (!Valid(key) || !key.length() || !Valid(message) || Overlaps(key, output) || Overlaps(message, output))
+            return Result::INVALID_INPUT;
+        if (!static_cast<uint8_t*>(output) || (output.length() != 8 && output.length() != 10 && output.length() != 20))
+            return Result::INVALID_OUTPUT_SIZE;
+        Digest digest;
+        size_t size = 0;
+        if (!EVP_Q_mac(nullptr, "HMAC", nullptr, "SHA1", nullptr, key, key.length(), message, message.length(),
+                       digest.bytes.data(), digest.bytes.size(), &size)
+            || size != 20)
+            return Result::CRYPTO_ERROR;
+        std::memcpy(output, digest.bytes.data(), output.length());
+        guard.Commit();
+        return Result::OK;
+    }
+    Result VerifyHMACSHA1(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::rseq_t tag)
+    {
+        if (!Valid(tag) || (tag.length() != 8 && tag.length() != 10))
+            return Result::INVALID_INPUT;
+        Digest digest;
+        const auto result = ComputeHMACSHA1(key, message, ser4cpp::wseq_t(digest.bytes.data(), 20));
+        if (result != Result::OK)
+            return result;
+        return CRYPTO_memcmp(digest.bytes.data(), tag, tag.length()) == 0 ? Result::OK : Result::AUTHENTICATION_FAILED;
+    }
+    Result AES128KeyWrap(ser4cpp::rseq_t key, ser4cpp::rseq_t plaintext, ser4cpp::wseq_t output)
+    {
+        return KeyWrap(true, 16, key, plaintext, output);
+    }
+    Result AES128KeyUnwrap(ser4cpp::rseq_t key, ser4cpp::rseq_t wrapped, ser4cpp::wseq_t output)
+    {
+        return KeyWrap(false, 16, key, wrapped, output);
+    }
+
     Result AES256KeyWrap(ser4cpp::rseq_t key, ser4cpp::rseq_t plaintext, ser4cpp::wseq_t output)
     {
-        return KeyWrap(true, key, plaintext, output);
+        return KeyWrap(true, 32, key, plaintext, output);
     }
 
     Result AES256KeyUnwrap(ser4cpp::rseq_t key, ser4cpp::rseq_t wrapped, ser4cpp::wseq_t output)
     {
-        return KeyWrap(false, key, wrapped, output);
+        return KeyWrap(false, 32, key, wrapped, output);
     }
 
 } // namespace crypto

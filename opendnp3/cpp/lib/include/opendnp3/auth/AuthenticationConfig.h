@@ -14,7 +14,8 @@ class IAuthenticationCredentials
 {
 public:
     virtual ~IAuthenticationCredentials() = default;
-    // Write a 32-byte AES-256 Update Key and its remaining credential lifetime.
+    // Write exactly capacity key bytes (16 for AES-128, 32 for AES-256) and
+    // the remaining credential lifetime. No default or generated Update Key.
     // The library clears its caller-owned buffer after copying into the session store.
     virtual bool ReadUpdateKey(
         uint16_t association, uint16_t user, uint8_t* output, size_t capacity, uint64_t& validForMs) = 0;
@@ -25,8 +26,11 @@ public:
     virtual ~IAuthenticationAuthorization() = default;
     // Called only AFTER authentication, before dispatch. A true authentication
     // verdict alone never grants a role or permission. No implicit allow policy.
-    virtual bool IsAuthorized(uint16_t association, uint16_t user, uint8_t function,
-                              const uint8_t* requestAPDU, size_t requestSize) const = 0;
+    virtual bool IsAuthorized(uint16_t association,
+                              uint16_t user,
+                              uint8_t function,
+                              const uint8_t* requestAPDU,
+                              size_t requestSize) const = 0;
 };
 struct AuthenticationConfig
 {
@@ -42,6 +46,9 @@ struct AuthenticationConfig
     uint32_t renewalMessageCount = 1000;
     uint32_t replyTimeoutMs = 2000;
     uint8_t tagLength = 16;
+    // Zero selects SHA-256 from tagLength. Explicit 2/5 enable legacy SHA-1.
+    uint8_t macAlgorithm = 0;
+    uint8_t keyWrapAlgorithm = 2;
     uint16_t maxRestartRekeys = 2;
     bool aggressiveTransmit = false;
     bool aggressiveReceive = false;

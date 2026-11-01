@@ -38,6 +38,13 @@ namespace crypto
     Result ComputeHMACSHA256(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::wseq_t output);
     Result VerifyHMACSHA256(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::rseq_t tag);
 
+    // Explicit IEEE 1815-2012 interoperability option. Output: 8/10-byte tag
+    // or full 20-byte digest. Protocol verification accepts only 8/10-byte tags.
+    Result ComputeHMACSHA1(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::wseq_t output);
+    Result VerifyHMACSHA1(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::rseq_t tag);
+    Result AES128KeyWrap(ser4cpp::rseq_t key, ser4cpp::rseq_t plaintext, ser4cpp::wseq_t output);
+    Result AES128KeyUnwrap(ser4cpp::rseq_t key, ser4cpp::rseq_t wrapped, ser4cpp::wseq_t output);
+
     // RFC 3394, default A6 IV, no padding. KEK must be exactly 32 bytes.
     // Plaintext: >=16 bytes, multiple of 8. Wrapped size = plaintext size + 8.
     // Input is limited to INT_MAX - 16 bytes by the OpenSSL EVP adapter.

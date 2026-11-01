@@ -51,7 +51,8 @@ public:
     explicit MasterResponder(uint16_t associationId,
                              size_t tagLength = 16,
                              uint32_t pendingTimeoutMs = 2000,
-                             bool monitoringDirection = false);
+                             bool monitoringDirection = false,
+                             uint8_t macAlgorithm = 0);
     ~MasterResponder();
     MasterResponder(const MasterResponder&) = delete;
     MasterResponder& operator=(const MasterResponder&) = delete;
@@ -97,6 +98,7 @@ private:
     const bool monitoringDirection;
     const uint16_t associationId;
     const size_t tagLength;
+    const uint8_t macAlgorithm;
     const uint32_t pendingTimeoutMs;
     std::array<uint8_t, 32> key{};
     size_t keySize = 0;
