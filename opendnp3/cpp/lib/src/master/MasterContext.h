@@ -22,10 +22,12 @@
 
 #include "LayerInterfaces.h"
 #include "app/AppSeqNum.h"
+#include "auth/AuthenticationSession.h"
 #include "master/HeaderBuilder.h"
 #include "master/IMasterScheduler.h"
-#include "master/MasterTasks.h"
 #include "master/MasterResponder.h"
+#include "master/MasterTasks.h"
+#include "outstation/OutstationChallenger.h"
 
 #include "opendnp3/app/MeasurementTypes.h"
 #include "opendnp3/gen/RestartType.h"
@@ -48,7 +50,10 @@ namespace opendnp3
 /*
     All of the mutable state and configuration for a master
 */
-class MContext final : public IUpperLayer, public std::enable_shared_from_this<MContext>, private IMasterTaskRunner, private Uncopyable
+class MContext final : public IUpperLayer,
+                       public std::enable_shared_from_this<MContext>,
+                       private IMasterTaskRunner,
+                       private Uncopyable
 {
 private:
     MContext(const Addresses& addresses,
@@ -68,16 +73,14 @@ public:
         WAIT_FOR_RESPONSE
     };
 
-    static std::shared_ptr<MContext> Create(
-        const Addresses& addresses,
-        const Logger& logger,
-        const std::shared_ptr<exe4cpp::IExecutor>& executor,
-        std::shared_ptr<ILowerLayer> lower,
-        const std::shared_ptr<ISOEHandler>& SOEHandler,
-        const std::shared_ptr<IMasterApplication>& application,
-        std::shared_ptr<IMasterScheduler> scheduler,
-        const MasterParams& params
-    );
+    static std::shared_ptr<MContext> Create(const Addresses& addresses,
+                                            const Logger& logger,
+                                            const std::shared_ptr<exe4cpp::IExecutor>& executor,
+                                            std::shared_ptr<ILowerLayer> lower,
+                                            const std::shared_ptr<ISOEHandler>& SOEHandler,
+                                            const std::shared_ptr<IMasterApplication>& application,
+                                            std::shared_ptr<IMasterScheduler> scheduler,
+                                            const MasterParams& params);
 
     Logger logger;
     const std::shared_ptr<exe4cpp::IExecutor> executor;
@@ -209,9 +212,40 @@ private:
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
-            : association(association), responder(association, tagLength)
+            : monitoring(association, tagLength, 2000, true),
+              association(association),
+              responder(association, tagLength)
         {
         }
+        explicit AuthenticationState(const AuthenticationConfig& config)
+            : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true),
+              sessions(new AuthenticationSession(SessionKeys::Role::MASTER, config)),
+              association(config.association),
+              responder(association, config.tagLength, config.replyTimeoutMs)
+        {
+        }
+        ~AuthenticationState()
+        {
+            serviceTimer.cancel();
+        }
+        OutstationChallenger monitoring;
+        std::unique_ptr<AuthenticationSession> sessions;
+        exe4cpp::Timer serviceTimer;
+        std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{}, verifiedResponse{};
+        std::array<uint32_t, 2> keyEpoch{{0, 0}};
+        size_t wireSize = 0, pendingWireSize = 0;
+        size_t exchangeIndex = 2;
+        uint8_t exchangeSequence = 0;
+        uint16_t responderUser = 0;
+        bool wireInFlight = false;
+        bool established = false;
+        bool peerRestartAllowed = true;
+        uint32_t restartRekeys = 0;
+        uint64_t restartWindow = 0;
+        bool protectedConfirm = false;
+        uint64_t confirmDeadline = 0;
+        bool monitorWaiting = false;
+        uint8_t monitorSequence = 0;
         const uint16_t association;
         MasterResponder responder;
         std::array<uint8_t, 30> reply{};
@@ -225,6 +259,7 @@ private:
     void ResetAuthentication();
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
     void TransmitAuthenticationReply();
+    void ServiceAuthentication();
 
     // --- implement  IMasterTaskRunner ------
 

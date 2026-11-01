@@ -1,6 +1,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "outstation/OutstationChallenger.h"
 
+#include "app/APDURequest.h"
 #include "app/APDUResponse.h"
 #include "crypto/CryptoProvider.h"
 
@@ -20,8 +21,14 @@ namespace
     }
 } // namespace
 
-OutstationChallenger::OutstationChallenger(uint16_t associationId_, size_t tagLength_, uint32_t replyTimeoutMs_)
-    : associationId(associationId_), tagLength(tagLength_), replyTimeoutMs(replyTimeoutMs_)
+OutstationChallenger::OutstationChallenger(uint16_t associationId_,
+                                           size_t tagLength_,
+                                           uint32_t replyTimeoutMs_,
+                                           bool monitoringDirection_)
+    : monitoringDirection(monitoringDirection_),
+      associationId(associationId_),
+      tagLength(tagLength_),
+      replyTimeoutMs(replyTimeoutMs_)
 {
 }
 
@@ -43,6 +50,7 @@ void OutstationChallenger::ClearPending()
     crypto::Clear(ser4cpp::wseq_t(transcript.data(), transcript.size()));
     requestSize = 0;
     challengeTime = 0;
+    challengeSize = 0;
 }
 
 void OutstationChallenger::Reset()
@@ -148,7 +156,7 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         return Result::INVALID_INPUT;
     if (!HasKeys())
         return Result::NO_SESSION_KEYS;
-    if (!static_cast<uint8_t*>(output) || output.length() < CHALLENGE_SIZE)
+    if (!static_cast<uint8_t*>(output) || output.length() < (monitoringDirection ? CHALLENGE_SIZE - 2 : CHALLENGE_SIZE))
         return Result::OUTPUT_TOO_SMALL;
 
     std::array<uint8_t, CHALLENGE_DATA_SIZE> nonce{};
@@ -156,26 +164,39 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         return Result::CRYPTO_ERROR;
 
     const auto nextSequence = static_cast<uint32_t>(sequence + 1u);
-    Group120Var1 challenge(nextSequence, 0, tagLength == 8 ? 3 : 4, 1, ser4cpp::rseq_t(nonce.data(), nonce.size()));
-    APDUResponse response(ser4cpp::wseq_t(transcript.data(), CHALLENGE_SIZE));
+    Group120Var1 challenge(nextSequence, monitoringDirection ? 1 : 0, tagLength == 8 ? 3 : 4, 1,
+                           ser4cpp::rseq_t(nonce.data(), nonce.size()));
+    challengeSize = monitoringDirection ? CHALLENGE_SIZE - 2 : CHALLENGE_SIZE;
     const uint8_t* requestBytes = request;
-    response.SetControl(AppControlField(true, true, false, false, requestBytes[0] & 0x0F));
-    response.SetFunction(FunctionCode::AUTH_RESPONSE);
-    response.SetIIN(iin);
-    auto writer = response.GetWriter();
-    const bool written = writer.WriteFreeFormat(&challenge, 1);
+    bool written = false;
+    if (monitoringDirection)
+    {
+        APDURequest message(ser4cpp::wseq_t(transcript.data(), challengeSize));
+        message.ConfigureHeader(FunctionCode::AUTH_REQUEST, requestBytes[0] & 0x0F);
+        auto writer = message.GetWriter();
+        written = writer.WriteFreeFormat(&challenge, 1) && message.Size() == challengeSize;
+    }
+    else
+    {
+        APDUResponse message(ser4cpp::wseq_t(transcript.data(), challengeSize));
+        message.SetControl(AppControlField(true, true, false, false, requestBytes[0] & 0x0F));
+        message.SetFunction(FunctionCode::AUTH_RESPONSE);
+        message.SetIIN(iin);
+        auto writer = message.GetWriter();
+        written = writer.WriteFreeFormat(&challenge, 1) && message.Size() == challengeSize;
+    }
     crypto::Clear(ser4cpp::wseq_t(nonce.data(), nonce.size()));
-    if (!written || response.Size() != CHALLENGE_SIZE)
+    if (!written)
     {
         ClearPending();
         return Result::CRYPTO_ERROR;
     }
-    std::memcpy(transcript.data() + CHALLENGE_SIZE, request, request.length());
-    std::memcpy(output, transcript.data(), CHALLENGE_SIZE);
+    std::memcpy(transcript.data() + challengeSize, request, request.length());
+    std::memcpy(output, transcript.data(), challengeSize);
     sequence = nextSequence;
     requestSize = request.length();
     challengeTime = nowMs;
-    outputSize = CHALLENGE_SIZE;
+    outputSize = challengeSize;
     return Result::OK; // challenge produced, NEVER an authorization verdict.
 }
 
@@ -205,14 +226,14 @@ OutstationChallenger::Result OutstationChallenger::Reply(
             // the selected user's CONTROL Direction Session Key.
             const auto verified = crypto::VerifyHMACSHA256(
                 ser4cpp::rseq_t(user->key.data(), user->keySize),
-                ser4cpp::rseq_t(transcript.data(), CHALLENGE_SIZE + requestSize), reply.hmacValue);
+                ser4cpp::rseq_t(transcript.data(), challengeSize + requestSize), reply.hmacValue);
             if (verified == crypto::Result::OK)
             {
                 if (!static_cast<uint8_t*>(output) || output.length() < requestSize)
                     result = Result::OUTPUT_TOO_SMALL;
                 else
                 {
-                    std::memcpy(output, transcript.data() + CHALLENGE_SIZE, requestSize);
+                    std::memcpy(output, transcript.data() + challengeSize, requestSize);
                     outputSize = requestSize;
                     result = Result::AUTHENTICATED;
                 }

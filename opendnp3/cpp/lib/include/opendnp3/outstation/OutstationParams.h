@@ -21,6 +21,7 @@
 #define OPENDNP3_OUTSTATIONPARAMS_H
 
 #include "opendnp3/app/AppConstants.h"
+#include "opendnp3/auth/AuthenticationConfig.h"
 #include "opendnp3/app/ClassField.h"
 #include "opendnp3/outstation/NumRetries.h"
 #include "opendnp3/outstation/StaticTypeBitfield.h"
@@ -34,6 +35,9 @@ namespace opendnp3
  */
 struct OutstationParams
 {
+    /// Required by default; compatibility operation must be explicitly selected.
+    AuthenticationConfig authentication;
+
     /// The maximum number of controls the outstation will attempt to process from a single APDU
     uint32_t maxControlsPerRequest = 4'294'967'295;
 

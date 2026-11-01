@@ -21,10 +21,13 @@
 #define OPENDNP3_OUTSTATIONCONTEXT_H
 
 #include "LayerInterfaces.h"
+#include "auth/AuthenticationSession.h"
 #include "link/LinkLayerConstants.h"
+#include "master/MasterResponder.h"
 #include "outstation/ControlState.h"
 #include "outstation/Database.h"
 #include "outstation/DeferredRequest.h"
+#include "outstation/OutstationChallenger.h"
 #include "outstation/OutstationChannelStates.h"
 #include "outstation/OutstationSeqNum.h"
 #include "outstation/OutstationStates.h"
@@ -32,7 +35,6 @@
 #include "outstation/RequestHistory.h"
 #include "outstation/ResponseContext.h"
 #include "outstation/TimeSyncState.h"
-#include "outstation/OutstationChallenger.h"
 #include "outstation/event/EventBuffer.h"
 
 #include "opendnp3/link/Addresses.h"
@@ -94,13 +96,30 @@ private:
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
-            : association(association), challenger(association, tagLength)
+            : monitoring(association, tagLength, 2000, true),
+              association(association),
+              challenger(association, tagLength)
         {
         }
         ~AuthenticationState()
         {
             replyTimer.cancel();
+            monitoringTimer.cancel();
         }
+        explicit AuthenticationState(const AuthenticationConfig& config)
+            : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true),
+              sessions(new AuthenticationSession(SessionKeys::Role::OUTSTATION, config)),
+              association(config.association),
+              challenger(association, config.tagLength, config.replyTimeoutMs)
+        {
+        }
+        MasterResponder monitoring;
+        std::unique_ptr<AuthenticationSession> sessions;
+        std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
+        size_t pendingWireSize = 0;
+        uint16_t selectUser = 0;
+        bool monitoringPending = false;
+        exe4cpp::Timer monitoringTimer;
         const uint16_t association;
         OutstationChallenger challenger;
         std::array<uint8_t, OutstationChallenger::CHALLENGE_SIZE> challenge{};
@@ -110,6 +129,7 @@ private:
     };
     std::shared_ptr<AuthenticationState> authentication; // null in production
     void ResetAuthentication();
+    void TransmitPendingAuthentication();
     bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);
 
     /// ---- Helper functions that operate on the current state, and may return a new state ----

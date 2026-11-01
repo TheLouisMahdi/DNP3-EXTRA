@@ -1,0 +1,103 @@
+// Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
+#include "auth/AuthenticationSession.h"
+
+#include "crypto/CryptoProvider.h"
+
+#include <limits>
+
+namespace opendnp3
+{
+AuthenticationSession::AuthenticationSession(SessionKeys::Role role, const AuthenticationConfig& config_)
+    : config(config_)
+{
+    SessionKeys::Config settings;
+    settings.intervalMs = config.renewalIntervalMs;
+    settings.messageLimit = config.renewalMessageCount;
+    settings.replyTimeoutMs = config.replyTimeoutMs;
+    settings.tagLength = config.tagLength;
+    for (size_t n = 0; n < sessions.size(); ++n)
+        sessions[n].reset(new SessionKeys(role, config.association, config.users[n], settings));
+}
+bool AuthenticationSession::Load(uint64_t now)
+{
+    for (auto& entry : sessions)
+        entry->Reset();
+    if (config.mode != AuthenticationConfig::Mode::REQUIRED || !config.credentials || !config.authorization
+        || config.aggressiveTransmit || config.aggressiveReceive
+        || config.users[0] != 1 || !config.users[1] || config.users[0] == config.users[1])
+        return false;
+    struct Key
+    {
+        std::array<uint8_t, 32> bytes{};
+        ~Key()
+        {
+            crypto::Clear(ser4cpp::wseq_t(bytes.data(), bytes.size()));
+        }
+    };
+    Key previous;
+    bool havePrevious = false;
+    bool loaded = true;
+    try
+    {
+        for (auto& entry : sessions)
+        {
+            Key key;
+            uint64_t lifetime = 0;
+            if (!config.credentials->ReadUpdateKey(config.association, entry->User(), key.bytes.data(),
+                                                   key.bytes.size(), lifetime)
+                || (havePrevious
+                    && crypto::ConstantTimeEqual(ser4cpp::rseq_t(previous.bytes.data(), 32),
+                                                 ser4cpp::rseq_t(key.bytes.data(), 32)))
+                || !lifetime || lifetime > std::numeric_limits<uint64_t>::max() - now
+                || entry->Configure(ser4cpp::rseq_t(key.bytes.data(), key.bytes.size()), now + lifetime, now)
+                    != SessionKeys::Result::OK)
+            {
+                loaded = false;
+                break;
+            }
+            previous.bytes = key.bytes;
+            havePrevious = true;
+        }
+    }
+    catch (...)
+    {
+        loaded = false;
+    }
+    if (!loaded)
+        for (auto& entry : sessions)
+            entry->Reset();
+    return loaded;
+}
+SessionKeys* AuthenticationSession::Find(uint16_t user)
+{
+    for (auto& entry : sessions)
+        if (entry->User() == user)
+            return entry.get();
+    return nullptr;
+}
+SessionKeys* AuthenticationSession::At(size_t index)
+{
+    return index < sessions.size() ? sessions[index].get() : nullptr;
+}
+bool AuthenticationSession::Authorize(uint16_t user, uint8_t function, uint64_t now, ser4cpp::rseq_t request) const
+{
+    if (!config.authorization)
+        return false;
+    try
+    {
+        for (const auto& entry : sessions)
+            if (entry->User() == user && entry->Ready(now))
+                return config.authorization->IsAuthorized(config.association, user, function, request,
+                                                          request.length());
+    }
+    catch (...)
+    {
+    }
+    return false;
+}
+void AuthenticationSession::Disconnect()
+{
+    for (auto& entry : sessions)
+        entry->Disconnect();
+}
+} // namespace opendnp3

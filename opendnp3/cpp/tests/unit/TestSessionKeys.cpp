@@ -404,3 +404,20 @@ TEST_CASE("SessionKeys - constant time comparison boundary", "[crypto][session-k
     REQUIRE_FALSE(crypto::ConstantTimeEqual(rseq_t(nullptr, 3), rseq_t(second, 3)));
     REQUIRE(crypto::ConstantTimeEqual(rseq_t(), rseq_t()));
 }
+
+TEST_CASE("SessionKeys - explicitly detected Outstation restart establishes fresh keys", "[session-keys]")
+{
+    KeyPair pair;
+    pair.Exchange();
+    SessionKeys rebooted(SessionKeys::Role::OUTSTATION, 7, 2, pair.config);
+    REQUIRE(rebooted.Configure(rseq_t(pair.update.data(), 32), 10000000, pair.now) == R::OK);
+    pair.master.PeerRestart(pair.now);
+    REQUIRE(pair.master.Begin(7, 4, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+    REQUIRE(rebooted.Process(7, pair.request.Read(), pair.now, pair.status.Write(), pair.status.size) == R::OK);
+    REQUIRE(pair.master.Process(7, pair.status.Read(), pair.now, pair.change.Write(), pair.change.size) == R::OK);
+    REQUIRE(rebooted.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            == R::INSTALLED);
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+            == R::INSTALLED);
+    REQUIRE(crypto::ConstantTimeEqual(pair.master.ControlKey(pair.now), rebooted.ControlKey(pair.now)));
+}

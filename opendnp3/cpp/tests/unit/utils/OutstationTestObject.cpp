@@ -23,12 +23,21 @@
 
 using namespace opendnp3;
 
+namespace
+{
+OutstationConfig LegacyFixtureConfig(OutstationConfig config)
+{
+    if (!config.params.authentication.credentials)
+        config.params.authentication.mode=AuthenticationConfig::Mode::COMPATIBILITY;
+    return config;
+}
+}
 OutstationTestObject::OutstationTestObject(const OutstationConfig& config, const opendnp3::DatabaseConfig& db_config)
     : exe(std::make_shared<exe4cpp::MockExecutor>()),
       lower(std::make_shared<MockLowerLayer>()),
       cmdHandler(std::make_shared<MockCommandHandler>(CommandStatus::SUCCESS)),
       application(std::make_shared<MockOutstationApplication>()),
-      context(Addresses(), config, db_config, log.logger, exe, lower, cmdHandler, application)
+      context(Addresses(), LegacyFixtureConfig(config), db_config, log.logger, exe, lower, cmdHandler, application)
 {
     lower->SetUpperLayer(context);
 }

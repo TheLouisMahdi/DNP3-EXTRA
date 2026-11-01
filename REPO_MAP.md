@@ -22,6 +22,9 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `app/parsing/APDUParser.cpp` → object/qualifier parsing and handler dispatch.
 - `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
+- `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
+- `auth/WindowsAuthenticationCredentials.cpp` → read-only Windows Credential Manager adapter.
+- `master/MasterResponder.*`, `outstation/OutstationChallenger.*` → Control/Monitoring challenge-response cores.
 - `transport/` → fragment segmentation/reassembly.
 - `link/` → frames, CRC, link state; start at `LinkContext.cpp`.
 - `decoder/`, `logging/`, `util/` → diagnostics and shared helpers.
@@ -34,6 +37,8 @@ Prefix: `opendnp3/cpp/lib/include/opendnp3/`
 - `outstation/ICommandHandler.h`, `outstation/IOutstationApplication.h` → control/application integration hooks.
 - `outstation/UpdateBuilder.h` → measurement update API.
 - `channel/`, `link/LinkConfig.h` → endpoint, serial, TLS, retry and addressing settings.
+- `auth/AuthenticationConfig.h` → explicit secure/compatibility modes, users, credential retrieval and APDU authorization.
+- `auth/WindowsAuthenticationCredentials.h` → Windows credential format and expiry contract.
 - `app/` → public measurement and command types.
 
 Runtime endpoints and stack settings live in the two app entry points.
@@ -52,8 +57,12 @@ Prefix: `opendnp3/cpp/tests/`
 - `integration/` → stack integration tests.
 - `fuzz/` → parser fuzz targets.
 Enable C++ tests with `DNP3_TESTS`; fuzz targets use `DNP3_FUZZING`.
-`DNP3_SA_CRYPTO` optionally enables OpenSSL Crypto primitives and `unit/TestCryptoProvider.cpp`;
-it is independent of TLS and does not activate SA in either role.
+`DNP3_SA_CRYPTO` enables SA cryptographic and runtime components independently of TLS.
+Stacks require credentials and an authorization policy by default; legacy operation must explicitly
+select `AuthenticationConfig::Mode::COMPATIBILITY`. Required SA fails closed when crypto or credentials
+are unavailable. Challenge-response and session-key exchange are integrated; full SA v5 capabilities
+remain in progress and are not advertised. `integration/TestSecureAuthentication.cpp` (`[sa-tcp]`)
+verifies real local TCP READ/CONTROL, count renewal, reconnect and Outstation restart with ephemeral keys.
 
 ## Build and Optional Components
 - `CMakeLists.txt` → builds local library, `master`, `outstation`.

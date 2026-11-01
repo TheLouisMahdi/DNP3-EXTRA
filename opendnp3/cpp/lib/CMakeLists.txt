@@ -1,4 +1,6 @@
 set(opendnp3_public_headers
+    ./include/opendnp3/auth/AuthenticationConfig.h
+    ./include/opendnp3/auth/WindowsAuthenticationCredentials.h
     
     ./include/opendnp3/ConsoleLogger.h
     ./include/opendnp3/DNP3Manager.h
@@ -664,7 +666,11 @@ set(opendnp3_tls_src
 
 set(all_sources ${opendnp3_public_headers} ${opendnp3_private_headers} ${opendnp3_src})
 if(DNP3_SA_CRYPTO)
-    list(APPEND all_sources ./src/auth/SessionKeys.h ./src/auth/SessionKeys.cpp)
+    list(APPEND all_sources ./src/auth/SessionKeys.h ./src/auth/SessionKeys.cpp
+        ./src/auth/AuthenticationSession.h ./src/auth/AuthenticationSession.cpp)
+    if(WIN32)
+        list(APPEND all_sources ./src/auth/WindowsAuthenticationCredentials.cpp)
+    endif()
     list(APPEND all_sources ./src/crypto/CryptoProvider.h ./src/crypto/OpenSSLCryptoProvider.cpp)
     list(APPEND all_sources ./src/outstation/OutstationChallenger.h ./src/outstation/OutstationChallenger.cpp)
     list(APPEND all_sources ./src/master/MasterResponder.h ./src/master/MasterResponder.cpp)
@@ -683,6 +689,7 @@ target_link_libraries(opendnp3 PRIVATE
     $<BUILD_INTERFACE:asio>
     $<$<BOOL:${DNP3_TLS}>:OpenSSL::SSL>
     $<$<BOOL:${DNP3_SA_CRYPTO}>:OpenSSL::Crypto>
+    $<$<AND:$<BOOL:${DNP3_SA_CRYPTO}>,$<PLATFORM_ID:Windows>>:Advapi32>
 )
 target_include_directories(opendnp3
     PUBLIC

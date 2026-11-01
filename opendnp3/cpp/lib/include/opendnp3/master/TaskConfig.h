@@ -51,6 +51,8 @@ public:
     TaskConfig() = delete;
 
 public:
+    /// Configured SA user. User 1 is the common/default user (IEEE Table 7-11).
+    uint16_t authenticationUser = 1;
     TaskId taskId;
     std::shared_ptr<ITaskCallback> pCallback;
 };

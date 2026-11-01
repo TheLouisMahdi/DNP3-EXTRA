@@ -174,6 +174,22 @@ SessionKeys::Result SessionKeys::Configure(ser4cpp::rseq_t key, uint64_t expiry,
     credentialExpiry = expiry;
     return Result::OK;
 }
+void SessionKeys::PeerRestart(uint64_t now)
+{
+    if (!Observe(now) || !configured || role != Role::MASTER)
+        return;
+    Invalidate();
+    ClearPending();
+    crypto::Clear(ser4cpp::wseq_t(monitoring.data(), monitoring.size()));
+    crypto::Clear(ser4cpp::wseq_t(lastChange.data(), lastChange.size()));
+    crypto::Clear(ser4cpp::wseq_t(recoveryMonitoring.data(), recoveryMonitoring.size()));
+    crypto::Clear(ser4cpp::wseq_t(recoveryChange.data(), recoveryChange.size()));
+    haveMonitoring = haveKSQ = false;
+    ksq = 0;
+    keySize = lastChangeSize = recoverySize = 0;
+    attempts = 0;
+    nextAttempt = now;
+}
 void SessionKeys::Disconnect()
 {
     RetainRecovery();
@@ -216,6 +232,15 @@ void SessionKeys::CountAuthentication(uint64_t now)
     Tick(now);
     if (valid && ++messages >= config.messageLimit)
         Invalidate();
+}
+void SessionKeys::RequestRenewal(uint64_t now)
+{
+    Tick(now);
+    if (role == Role::MASTER && configured && phase == Phase::IDLE)
+    {
+        Invalidate();
+        nextAttempt = now;
+    }
 }
 bool SessionKeys::NeedsExchange(uint64_t now)
 {

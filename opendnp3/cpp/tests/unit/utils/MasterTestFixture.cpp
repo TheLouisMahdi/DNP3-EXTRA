@@ -25,6 +25,15 @@
 
 using namespace opendnp3;
 
+namespace
+{
+MasterParams LegacyFixtureParams(MasterParams params)
+{
+    if (!params.authentication.credentials)
+        params.authentication.mode=AuthenticationConfig::Mode::COMPATIBILITY;
+    return params;
+}
+}
 MasterParams NoStartupTasks()
 {
     MasterParams params;
@@ -54,7 +63,7 @@ MasterTestFixture::MasterTestFixture(const MasterParams& params,
                                meas,
                                application,
                                this->scheduler,
-                               params))
+                               LegacyFixtureParams(params)))
 {
 }
 

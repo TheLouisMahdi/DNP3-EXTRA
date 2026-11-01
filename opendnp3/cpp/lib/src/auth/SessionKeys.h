@@ -51,6 +51,14 @@ public:
     // session state. Expiry is an absolute monotonic deadline, never a default key.
     Result Configure(ser4cpp::rseq_t updateKey, uint64_t credentialExpiry, uint64_t now);
     bool NeedsExchange(uint64_t now);
+    bool HasMonitoringHistory() const
+    {
+        return haveMonitoring || recoverySize != 0;
+    }
+    bool IsExchanging() const
+    {
+        return phase != Phase::IDLE;
+    }
     Result Begin(uint16_t association, uint8_t appSequence, uint64_t now, ser4cpp::wseq_t output, size_t& size);
     Result Process(uint16_t association,
                    ser4cpp::rseq_t apdu,
@@ -60,8 +68,14 @@ public:
                    IINField iin = IINField::Empty());
     void Tick(uint64_t now);
     void CountAuthentication(uint64_t now);
-    void Disconnect(); // invalidates authorization; keeps configured Update Key
-    void Reset();      // wipes credentials and all owned secrets
+    uint32_t RemainingMessages() const
+    {
+        return valid ? config.messageLimit - messages : 0;
+    }
+    void RequestRenewal(uint64_t now);
+    void PeerRestart(uint64_t now); // after a bounded, explicitly detected peer restart
+    void Disconnect();              // invalidates authorization; keeps configured Update Key
+    void Reset();                   // wipes credentials and all owned secrets
     bool Ready(uint64_t now);
     ser4cpp::rseq_t ControlKey(uint64_t now);
     ser4cpp::rseq_t MonitoringKey(uint64_t now);

@@ -24,6 +24,7 @@
 #include "app/Functions.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
+#include "crypto/CryptoProvider.h"
 #include "logging/LogMacros.h"
 #include "outstation/AssignClassHandler.h"
 #include "outstation/ClassBasedRequestHandler.h"
@@ -36,8 +37,9 @@
 #include "outstation/WriteHandler.h"
 
 #include "opendnp3/logging/LogLevels.h"
-#include "crypto/CryptoProvider.h"
 
+#include <cstring>
+#include <stdexcept>
 #include <utility>
 
 namespace opendnp3
@@ -72,6 +74,18 @@ OContext::OContext(const Addresses& addresses,
       unsolRetries(config.params.numUnsolRetries),
       shouldCheckForUnsolicited(false)
 {
+    if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
+    {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        authentication = std::make_shared<AuthenticationState>(params.authentication);
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        if (!authentication->sessions->Load(now))
+            throw std::invalid_argument("SA credentials or policy unavailable");
+#else
+        throw std::invalid_argument("SA required but cryptography was disabled at build time");
+#endif
+    }
 }
 
 bool OContext::OnLowerLayerUp()
@@ -101,7 +115,14 @@ bool OContext::OnLowerLayerDown()
     isOnline = false;
     isTransmitting = false;
     this->ResetAuthentication();
-
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+    {
+        authentication->sessions->Disconnect();
+        authentication->pendingWireSize = 0;
+        authentication->selectUser = 0;
+    }
+#endif
     sol.Reset();
     unsol.Reset();
     history.Reset();
@@ -125,7 +146,9 @@ bool OContext::OnTxReady()
     if (authentication)
         crypto::Clear(ser4cpp::wseq_t(authentication->challenge.data(), authentication->challenge.size()));
 #endif
-    this->CheckForTaskStart();
+    this->TransmitPendingAuthentication();
+    if (!isTransmitting)
+        this->CheckForTaskStart();
     return true;
 }
 
@@ -277,6 +300,33 @@ void OContext::BeginUnsolTx(APDUResponse& response)
 
 void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
 {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions && message.length() >= 4
+        && (message[1] == 0x81 || message[1] == 0x82))
+    {
+        auto& auth = *authentication;
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        auto* session = auth.sessions->Find(1);
+        if (!session || !session->Ready(now))
+            return;
+        if (auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now)
+                != MasterResponder::Result::OK
+            || auth.monitoring.RetainRequest(auth.association, message, now) != MasterResponder::Result::OK)
+            return;
+        auth.monitoringPending = true;
+        auth.monitoringTimer.cancel();
+        auth.monitoringTimer
+            = executor->start(std::chrono::milliseconds(auth.sessions->config.replyTimeoutMs), [this]() {
+                  const auto time = static_cast<uint64_t>(
+                      std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch())
+                          .count());
+                  authentication->monitoring.Tick(time);
+                  authentication->monitoringPending = false;
+                  this->CheckForTaskStart();
+              });
+    }
+#endif
     logging::ParseAndLogResponseTx(this->logger, message);
     this->isTransmitting = true;
     this->lower->BeginTransmit(Message(Addresses(this->addresses.source, destination), message));
@@ -284,6 +334,11 @@ void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
 
 void OContext::CheckForTaskStart()
 {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions
+        && (authentication->monitoringPending || authentication->pendingWireSize))
+        return;
+#endif
     // do these checks in order of priority
     this->CheckForDeferredRequest();
     this->CheckForUnsolicitedNull();
@@ -546,7 +601,8 @@ bool OContext::ProcessMessage(const Message& message)
         return false;
     }
 
-    if (this->RouteAuthentication(message, result.header, result.objects)) return true;
+    if (this->RouteAuthentication(message, result.header, result.objects))
+        return true;
     return this->ProcessObjects(ParsedRequest(message.addresses, result.header, result.objects));
 }
 
@@ -584,8 +640,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
     case (FunctionCode::FREEZE_CLEAR_NR):
         this->HandleFreezeAndClear(request.objects);
         return true;
-    case (FunctionCode::ASSIGN_CLASS):
-    {
+    case (FunctionCode::ASSIGN_CLASS): {
         if (this->application->SupportsAssignClass())
         {
             this->HandleAssignClass(request.objects);
@@ -596,8 +651,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
             return false;
         }
     }
-    case (FunctionCode::RECORD_CURRENT_TIME):
-    {
+    case (FunctionCode::RECORD_CURRENT_TIME): {
         if (request.objects.is_not_empty())
         {
             this->HandleRecordCurrentTime();
@@ -608,8 +662,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
             return false;
         }
     }
-    case (FunctionCode::DISABLE_UNSOLICITED):
-    {
+    case (FunctionCode::DISABLE_UNSOLICITED): {
         if (this->params.allowUnsolicited)
         {
             this->HandleDisableUnsolicited(request.objects, nullptr);
@@ -620,8 +673,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
             return false;
         }
     }
-    case (FunctionCode::ENABLE_UNSOLICITED):
-    {
+    case (FunctionCode::ENABLE_UNSOLICITED): {
         if (this->params.allowUnsolicited)
         {
             this->HandleEnableUnsolicited(request.objects, nullptr);
@@ -830,8 +882,7 @@ IINField OContext::HandleRestart(const ser4cpp::rseq_t& objects, bool isWarmRest
     {
     case (RestartMode::UNSUPPORTED):
         return IINField(IINBit::FUNC_NOT_SUPPORTED);
-    case (RestartMode::SUPPORTED_DELAY_COARSE):
-    {
+    case (RestartMode::SUPPORTED_DELAY_COARSE): {
         auto delay = isWarmRestart ? this->application->WarmRestart() : this->application->ColdRestart();
         if (pWriter)
         {
@@ -841,8 +892,7 @@ IINField OContext::HandleRestart(const ser4cpp::rseq_t& objects, bool isWarmRest
         }
         return IINField::Empty();
     }
-    default:
-    {
+    default: {
         auto delay = isWarmRestart ? this->application->WarmRestart() : this->application->ColdRestart();
         if (pWriter)
         {
@@ -923,9 +973,25 @@ void OContext::ResetAuthentication()
         return;
     authentication->replyTimer.cancel();
     authentication->challenger.Reset();
+    authentication->monitoring.Reset();
+    authentication->monitoringPending = false;
+    authentication->monitoringTimer.cancel();
     crypto::Clear(ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()));
     if (!isTransmitting)
         crypto::Clear(ser4cpp::wseq_t(authentication->challenge.data(), authentication->challenge.size()));
+#endif
+}
+
+void OContext::TransmitPendingAuthentication()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions || !authentication->pendingWireSize || !CanTransmit())
+        return;
+    auto& auth = *authentication;
+    const auto size = auth.pendingWireSize;
+    std::memcpy(auth.wire.data(), auth.pendingWire.data(), size);
+    auth.pendingWireSize = 0;
+    BeginTx(addresses.destination, ser4cpp::rseq_t(auth.wire.data(), size));
 #endif
 }
 
@@ -941,6 +1007,91 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     {
         this->ResetAuthentication();
         return true;
+    }
+    if (authentication->sessions && header.function == FunctionCode::AUTH_REQUEST && objects.length() >= 2
+        && objects[0] == 120)
+    {
+        auto& auth = *authentication;
+        if (objects[1] == 4 || objects[1] == 6)
+        {
+            class UserHandler final : public IAPDUHandler
+            {
+            public:
+                uint16_t user = 0;
+                bool valid = false;
+                bool IsAllowed(uint32_t n, GroupVariation gv, QualifierCode qc) override
+                {
+                    return n == 0
+                        && ((gv == GroupVariation::Group120Var4 && qc == QualifierCode::UINT8_CNT)
+                            || (gv == GroupVariation::Group120Var6 && qc == QualifierCode::FREE_FORMAT));
+                }
+                IINField ProcessHeader(const CountHeader&, const ICollection<Group120Var4>& values) override
+                {
+                    valid = values.Count() == 1;
+                    if (valid)
+                        values.ForeachItem([this](const Group120Var4& v) { user = v.userNum; });
+                    return IINField::Empty();
+                }
+                IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var6>& values) override
+                {
+                    valid = values.Count() == 1;
+                    if (valid)
+                        values.ForeachItem([this](const Group120Var6& v) { user = v.userNum; });
+                    return IINField::Empty();
+                }
+            } value;
+            if (!CanTransmit() || auth.pendingWireSize
+                || (objects[1] == 4 && auth.challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
+                || APDUParser::Parse(objects, value, nullptr) != ParseResult::OK || !value.valid)
+                return true;
+            auto* session = auth.sessions->Find(value.user);
+            if (!session)
+                return true;
+            size_t size = 0;
+            const auto result = session->Process(auth.association, message.payload, now,
+                                                 ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
+                                                 size, GetResponseIIN());
+            if (result == SessionKeys::Result::INSTALLED)
+            {
+                auth.challenger.SetSessionKey(session->User(), session->ControlKey(now), session->ValidUntil(), now);
+                if (session->User() == 1)
+                    auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now, true);
+                auth.monitoringPending = false;
+                auth.monitoringTimer.cancel();
+                auth.replyTimer.cancel();
+                auth.selectUser = 0;
+            }
+            auth.pendingWireSize = size;
+            TransmitPendingAuthentication();
+            return true;
+        }
+        if (objects[1] == 1)
+        {
+            if (!auth.monitoringPending || auth.pendingWireSize)
+                return true;
+            auto* session = auth.sessions->Find(1);
+            if (!session || !session->Ready(now))
+            {
+                ResetAuthentication();
+                return true;
+            }
+            size_t size = 0;
+            if (auth.monitoring.Respond(auth.association, message.payload, now,
+                                        ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), size,
+                                        GetResponseIIN())
+                == MasterResponder::Result::OK)
+            {
+                auth.monitoringPending = false;
+                auth.monitoringTimer.cancel();
+                auth.pendingWireSize = size;
+                session->CountAuthentication(now);
+                session->CountAuthentication(now);
+                TransmitPendingAuthentication();
+            }
+            else
+                ResetAuthentication();
+            return true;
+        }
     }
     if (header.function == FunctionCode::AUTH_REQUEST)
     {
@@ -970,6 +1121,15 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             return true;
         }
         size_t size = 0;
+        if (authentication->sessions)
+        {
+            auto* session = authentication->sessions->Find(handler.reply.userNum);
+            if (!session || !session->Ready(now))
+            {
+                ResetAuthentication();
+                return true;
+            }
+        }
         const auto result = authentication->challenger.Reply(
             authentication->association, handler.reply, now,
             ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()), size);
@@ -978,11 +1138,32 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         {
             const auto original
                 = APDUHeaderParser::ParseRequest(ser4cpp::rseq_t(authentication->authorized.data(), size));
-            if (original.success)
+            bool permitted = original.success;
+            if (permitted && authentication->sessions)
+            {
+                auto& auth = *authentication;
+                permitted = auth.sessions->Authorize(handler.reply.userNum,
+                                                     FunctionCodeSpec::to_type(original.header.function), now,
+                                                     ser4cpp::rseq_t(auth.authorized.data(), size));
+                if (original.header.function == FunctionCode::OPERATE)
+                {
+                    permitted = permitted && auth.selectUser == handler.reply.userNum;
+                    auth.selectUser = 0;
+                }
+                else if (original.header.function == FunctionCode::SELECT && permitted)
+                    auth.selectUser = handler.reply.userNum;
+            }
+            if (permitted)
             {
                 // One-shot release directly into the original dispatcher. No
                 // reusable "authenticated" flag and no recursive OnReceive.
                 this->ProcessObjects(ParsedRequest(message.addresses, original.header, original.objects));
+            }
+            if (authentication->sessions)
+            {
+                auto* session = authentication->sessions->Find(handler.reply.userNum);
+                session->CountAuthentication(now);
+                session->CountAuthentication(now);
             }
         }
         crypto::Clear(ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()));
@@ -998,13 +1179,27 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     // waiting. Authentication never uses the normal deferred-request bypass.
     if (authentication->challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
         return true;
-    if (header.function == FunctionCode::READ || header.function == FunctionCode::CONFIRM)
+    if (!authentication->sessions
+        && (header.function == FunctionCode::READ || header.function == FunctionCode::CONFIRM))
         return false;
+    if (authentication->sessions)
+    {
+        if (authentication->monitoringPending)
+            return true;
+        if (authentication->challenger.GetState() == OutstationChallenger::State::NO_SESSION_KEYS)
+            for (size_t n = 0; n < 2; ++n)
+            {
+                auto* session = authentication->sessions->At(n);
+                if (session->Ready(now))
+                    authentication->challenger.SetSessionKey(session->User(), session->ControlKey(now),
+                                                             session->ValidUntil(), now);
+            }
+    }
 
     // Test policy additionally protects optional ordinary requests. If the normal
     // response state is busy, discard rather than admitting an unauthenticated
     // operation to the broadcast/no-ack/deferred execution paths.
-    if (!this->CanTransmit() || !this->state->IsIdle())
+    if (!this->CanTransmit() || (!this->state->IsIdle() && header.function != FunctionCode::CONFIRM))
         return true;
     size_t size = 0;
     authentication->replyTimer.cancel();
@@ -1014,11 +1209,15 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         == OutstationChallenger::Result::OK)
     {
         authentication->sequence = header.control.SEQ;
-        authentication->replyTimer = executor->start(std::chrono::milliseconds(2000), [this]() {
-            const auto time = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
-            authentication->challenger.Tick(time);
-        });
+        authentication->replyTimer = executor->start(
+            std::chrono::milliseconds(authentication->sessions ? authentication->sessions->config.replyTimeoutMs
+                                                               : 2000),
+            [this]() {
+                const auto time = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch())
+                        .count());
+                authentication->challenger.Tick(time);
+            });
         this->BeginTx(message.addresses.source, ser4cpp::rseq_t(authentication->challenge.data(), size));
     }
     return true;

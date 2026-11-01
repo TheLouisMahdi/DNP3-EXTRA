@@ -17,6 +17,7 @@ namespace opendnp3
 // IEEE 1815-2012 7.5.2.1/Table 7-5: at most one authentication is pending.
 // A.45.1.2.2: an Outstation challenges USR=0; the Reply selects the user's key.
 // User-specific key validity is separate from association-wide pending/CSQ state.
+// monitoringDirection reuses the same core for Master-issued challenges (USR=1).
 class OutstationChallenger final
 {
 public:
@@ -52,7 +53,10 @@ public:
 
     // Tag length 8/16 maps to MAL 3/4 (A.45.1.2.2). Reply timeout is in ms,
     // 100..120000 in steps of 100; default 2000 (7.6.1.4.1, PDF p284).
-    explicit OutstationChallenger(uint16_t associationId, size_t tagLength = 16, uint32_t replyTimeoutMs = 2000);
+    explicit OutstationChallenger(uint16_t associationId,
+                                  size_t tagLength = 16,
+                                  uint32_t replyTimeoutMs = 2000,
+                                  bool monitoringDirection = false);
     ~OutstationChallenger();
     OutstationChallenger(const OutstationChallenger&) = delete;
     OutstationChallenger& operator=(const OutstationChallenger&) = delete;
@@ -100,6 +104,8 @@ private:
     bool HasKeys() const;
     User* FindUser(uint16_t user);
 
+    const bool monitoringDirection;
+    size_t challengeSize = 0;
     const uint16_t associationId;
     const size_t tagLength;
     const uint32_t replyTimeoutMs;

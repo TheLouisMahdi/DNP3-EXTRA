@@ -21,6 +21,7 @@
 #define OPENDNP3_MASTERPARAMS_H
 
 #include "opendnp3/app/AppConstants.h"
+#include "opendnp3/auth/AuthenticationConfig.h"
 #include "opendnp3/app/ClassField.h"
 #include "opendnp3/gen/IndexQualifierMode.h"
 #include "opendnp3/gen/TimeSyncMode.h"
@@ -36,6 +37,9 @@ struct MasterParams
 {
     /// Default constructor
     MasterParams() {}
+
+    /// Required by default; compatibility operation must be explicitly selected.
+    AuthenticationConfig authentication;
 
     /// Application layer response timeout
     TimeDuration responseTimeout = TimeDuration::Seconds(5);

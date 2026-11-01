@@ -22,6 +22,8 @@
 #include "app/APDUBuilders.h"
 #include "app/APDULogging.h"
 #include "app/parsing/APDUHeaderParser.h"
+#include "app/parsing/APDUParser.h"
+#include "crypto/CryptoProvider.h"
 #include "gen/objects/Group12.h"
 #include "gen/objects/Group41.h"
 #include "logging/LogMacros.h"
@@ -32,8 +34,9 @@
 #include "master/UserPollTask.h"
 
 #include "opendnp3/logging/LogLevels.h"
-#include "crypto/CryptoProvider.h"
 
+#include <cstring>
+#include <stdexcept>
 #include <utility>
 
 namespace opendnp3
@@ -58,19 +61,31 @@ MContext::MContext(const Addresses& addresses,
       txBuffer(params.maxTxFragSize),
       tstate(TaskState::IDLE)
 {
+    if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
+    {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        authentication = std::make_shared<AuthenticationState>(params.authentication);
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        if (!authentication->sessions->Load(now))
+            throw std::invalid_argument("SA credentials or policy unavailable");
+#else
+        throw std::invalid_argument("SA required but cryptography was disabled at build time");
+#endif
+    }
 }
 
-std::shared_ptr<MContext> MContext::Create(
-    const Addresses& addresses,
-    const Logger& logger,
-    const std::shared_ptr<exe4cpp::IExecutor>& executor,
-    std::shared_ptr<ILowerLayer> lower,
-    const std::shared_ptr<ISOEHandler>& SOEHandler,
-    const std::shared_ptr<IMasterApplication>& application,
-    std::shared_ptr<IMasterScheduler> scheduler,
-    const MasterParams& params)
+std::shared_ptr<MContext> MContext::Create(const Addresses& addresses,
+                                           const Logger& logger,
+                                           const std::shared_ptr<exe4cpp::IExecutor>& executor,
+                                           std::shared_ptr<ILowerLayer> lower,
+                                           const std::shared_ptr<ISOEHandler>& SOEHandler,
+                                           const std::shared_ptr<IMasterApplication>& application,
+                                           std::shared_ptr<IMasterScheduler> scheduler,
+                                           const MasterParams& params)
 {
-    return std::shared_ptr<MContext>(new MContext(addresses, logger, executor, lower, SOEHandler, application, scheduler, params));
+    return std::shared_ptr<MContext>(
+        new MContext(addresses, logger, executor, lower, SOEHandler, application, scheduler, params));
 }
 
 bool MContext::OnLowerLayerUp()
@@ -85,7 +100,7 @@ bool MContext::OnLowerLayerUp()
     tasks.Initialize(*this->scheduler, *this);
 
     this->application->OnOpen();
-
+    this->ServiceAuthentication();
     return true;
 }
 
@@ -105,6 +120,15 @@ bool MContext::OnLowerLayerDown()
     {
         authentication->replyInFlight = false;
         authentication->protectedTask = false;
+        authentication->serviceTimer.cancel();
+        authentication->wireInFlight = false;
+        authentication->pendingWireSize = 0;
+        authentication->exchangeIndex = 2;
+        authentication->peerRestartAllowed = true;
+        authentication->monitorWaiting = false;
+        authentication->monitoring.Reset();
+        if (authentication->sessions)
+            authentication->sessions->Disconnect();
     }
 #endif
     this->ResetAuthentication();
@@ -163,6 +187,7 @@ bool MContext::OnTxReady()
         if (authentication->replyInFlight)
         {
             authentication->replyInFlight = false;
+            authentication->protectedConfirm = false;
             crypto::Clear(ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()));
         }
         if (authentication->replyPending)
@@ -170,6 +195,10 @@ bool MContext::OnTxReady()
             this->TransmitAuthenticationReply();
             return true;
         }
+        authentication->wireInFlight = false;
+        this->ServiceAuthentication();
+        if (isSending)
+            return true;
     }
 #endif
 
@@ -208,7 +237,8 @@ void MContext::OnParsedHeader(const ser4cpp::rseq_t& apdu,
                               const APDUResponseHeader& header,
                               const ser4cpp::rseq_t& objects)
 {
-    if (this->RouteAuthentication(apdu, header)) return;
+    if (this->RouteAuthentication(apdu, header))
+        return;
     // Note: this looks silly, but OnParsedHeader() is virtual and can be overriden to do SA
     this->ProcessAPDU(header, objects);
 }
@@ -320,6 +350,25 @@ bool MContext::CheckConfirmTransmit()
     APDUWrapper wrapper(this->txBuffer.as_wslice());
     wrapper.SetFunction(confirm.function);
     wrapper.SetControl(confirm.control);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+    {
+        auto& auth = *authentication;
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        auto* session = auth.sessions->Find(1);
+        if (auth.protectedConfirm || auth.exchangeIndex < 2 || auth.pendingWireSize || !session || !session->Ready(now)
+            || auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE)
+            return false;
+        if (auth.responder.SetSessionKey(1, session->ControlKey(now), session->ValidUntil(), now)
+                != MasterResponder::Result::OK
+            || auth.responder.RetainRequest(auth.association, wrapper.ToRSeq(), now) != MasterResponder::Result::OK)
+            return false;
+        auth.responderUser = 1;
+        auth.protectedConfirm = true;
+        auth.confirmDeadline = now + auth.sessions->config.replyTimeoutMs;
+    }
+#endif
     this->Transmit(wrapper.ToRSeq());
     this->confirmQueue.pop_front();
     return true;
@@ -493,6 +542,53 @@ void MContext::ScheduleAdhocTask(const std::shared_ptr<IMasterTask>& task)
 
 MContext::TaskState MContext::ResumeActiveTask()
 {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+    {
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        auto* session = authentication->sessions->Find(activeTask->AuthenticationUser());
+        if (!session)
+        {
+            activeTask->OnMessageFormatError(Timestamp(executor->get_time()));
+            CompleteActiveTask();
+            return TaskState::IDLE;
+        }
+        auto* common = authentication->sessions->Find(1);
+        if (common && common->Ready(now) && common->RemainingMessages() < (session->User() == 1 ? 4u : 2u))
+            common->RequestRenewal(now);
+        if (session->Ready(now) && session->RemainingMessages() < 2)
+            session->RequestRenewal(now);
+        const bool allReady
+            = authentication->sessions->At(0)->Ready(now) && authentication->sessions->At(1)->Ready(now);
+        if (!allReady || authentication->exchangeIndex < 2 || !session->Ready(now) || authentication->protectedConfirm)
+        {
+            if (Timestamp(executor->get_time()) >= activeTask->StartExpirationTime())
+            {
+                activeTask->OnStartTimeout(Timestamp(executor->get_time()));
+                CompleteActiveTask();
+                return TaskState::IDLE;
+            }
+            return TaskState::TASK_READY;
+        }
+        const auto index = session->User() == authentication->sessions->config.users[0] ? 0u : 1u;
+        const bool fresh = authentication->keyEpoch[index] != session->Sequence();
+        if (fresh || authentication->responderUser != session->User()
+            || authentication->responder.GetState() == MasterResponder::State::NO_SESSION_KEYS)
+        {
+            if (authentication->responder.SetSessionKey(session->User(), session->ControlKey(now),
+                                                        session->ValidUntil(), now, fresh)
+                != MasterResponder::Result::OK)
+            {
+                activeTask->OnMessageFormatError(Timestamp(executor->get_time()));
+                CompleteActiveTask();
+                return TaskState::IDLE;
+            }
+            authentication->keyEpoch[index] = session->Sequence();
+            authentication->responderUser = session->User();
+        }
+    }
+#endif
     APDURequest request(this->txBuffer.as_wslice());
 
     /// try to build a requst for the task
@@ -510,8 +606,8 @@ MContext::TaskState MContext::ResumeActiveTask()
     {
         // Test-mode policy protects all ordinary functions except READ/CONFIRM,
         // including every mandatory critical function in IEEE Table 7-7 (p252).
-        authentication->protectedTask
-            = request.GetFunction() != FunctionCode::READ && request.GetFunction() != FunctionCode::CONFIRM;
+        authentication->protectedTask = request.GetFunction() != FunctionCode::CONFIRM
+            && (authentication->sessions || request.GetFunction() != FunctionCode::READ);
         authentication->replyIssued = false;
         if (authentication->protectedTask
             && authentication->responder.RetainRequest(
@@ -636,6 +732,11 @@ void MContext::ResetAuthentication()
     if (!authentication)
         return;
     authentication->responder.Reset();
+    authentication->protectedConfirm = false;
+    if (authentication->monitorWaiting)
+        authentication->pendingWireSize = 0;
+    authentication->monitoring.Reset();
+    authentication->monitorWaiting = false;
     authentication->replyPending = false;
     authentication->replySize = 0;
     authentication->replyIssued = false;
@@ -651,6 +752,72 @@ void MContext::TransmitAuthenticationReply()
     authentication->replyInFlight = true;
     authentication->replyIssued = true;
     this->Transmit(ser4cpp::rseq_t(authentication->reply.data(), authentication->replySize));
+    if (authentication->sessions)
+    {
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        auto* session = authentication->sessions->Find(authentication->responderUser);
+        if (session)
+            session->CountAuthentication(now);
+    }
+#endif
+}
+
+void MContext::ServiceAuthentication()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions || !isOnline)
+        return;
+    auto& auth = *authentication;
+    auth.serviceTimer.cancel();
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    if (auth.restartRekeys && now - auth.restartWindow >= auth.sessions->config.renewalIntervalMs)
+        auth.restartRekeys = 0;
+    for (size_t n = 0; n < 2; ++n)
+        auth.sessions->At(n)->Tick(now);
+    auth.monitoring.Tick(now);
+    if (auth.protectedConfirm && now >= auth.confirmDeadline && !auth.replyInFlight)
+    {
+        auth.protectedConfirm = false;
+        auth.responder.Reset();
+    }
+    if (auth.exchangeIndex < 2 && !auth.sessions->At(auth.exchangeIndex)->IsExchanging())
+    {
+        auth.exchangeIndex = 2;
+        auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
+    }
+    if (!auth.pendingWireSize && auth.exchangeIndex == 2 && !auth.monitorWaiting && !auth.protectedConfirm
+        && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE))
+    {
+        for (size_t n = 0; n < 2; ++n)
+        {
+            auto* session = auth.sessions->At(n);
+            if (session->NeedsExchange(now))
+            {
+                if (session->Begin(auth.association, auth.exchangeSequence, now,
+                                   ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
+                                   auth.pendingWireSize)
+                    == SessionKeys::Result::OK)
+                    auth.exchangeIndex = n;
+                break;
+            }
+        }
+    }
+    if (!isSending && auth.pendingWireSize)
+    {
+        std::memcpy(auth.wire.data(), auth.pendingWire.data(), auth.pendingWireSize);
+        auth.wireSize = auth.pendingWireSize;
+        auth.pendingWireSize = 0;
+        auth.wireInFlight = true;
+        this->Transmit(ser4cpp::rseq_t(auth.wire.data(), auth.wireSize));
+    }
+    else if (!isSending && !auth.monitorWaiting && auth.exchangeIndex == 2 && activeTask
+             && tstate == TaskState::TASK_READY)
+        tstate = this->ResumeActiveTask();
+    if (!isSending && !auth.protectedConfirm)
+        this->CheckConfirmTransmit();
+    auth.serviceTimer = executor->start(std::chrono::milliseconds(100), [this]() { this->ServiceAuthentication(); });
 #endif
 }
 
@@ -659,10 +826,140 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return false;
+    if (authentication->sessions)
+    {
+        auto& auth = *authentication;
+        const auto now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+        if (header.function == FunctionCode::AUTH_RESPONSE && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 5)
+        {
+            if (auth.exchangeIndex >= 2 || auth.pendingWireSize)
+                return true;
+            class StatusHandler final : public IAPDUHandler
+            {
+            public:
+                Group120Var5 value;
+                bool valid = false;
+                bool IsAllowed(uint32_t n, GroupVariation gv, QualifierCode qc) override
+                {
+                    return n == 0 && gv == GroupVariation::Group120Var5 && qc == QualifierCode::FREE_FORMAT;
+                }
+                IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var5>& values) override
+                {
+                    valid = values.Count() == 1;
+                    if (valid)
+                        values.ForeachItem([this](const Group120Var5& v) { value = v; });
+                    return IINField::Empty();
+                }
+            } status;
+            if (auth.established && auth.peerRestartAllowed
+                && auth.sessions->At(auth.exchangeIndex)->HasMonitoringHistory()
+                && header.IIN.IsSet(IINBit::DEVICE_RESTART) && header.control.IsFirAndFin() && !header.control.CON
+                && !header.control.UNS && APDUParser::Parse(apdu.skip(4), status, nullptr) == ParseResult::OK
+                && status.valid && status.value.userNum == auth.sessions->At(auth.exchangeIndex)->User()
+                && status.value.macAlgorithm == 0 && status.value.keyStatus == 2)
+            {
+                auth.peerRestartAllowed = false;
+                if (auth.restartRekeys >= auth.sessions->config.maxRestartRekeys)
+                    return true;
+                ++auth.restartRekeys;
+                auth.restartWindow = now;
+                for (size_t n = 0; n < 2; ++n)
+                    auth.sessions->At(n)->PeerRestart(now);
+                ResetAuthentication();
+                auth.exchangeIndex = 2;
+                auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
+                ServiceAuthentication();
+                return true;
+            }
+            size_t size = 0;
+            const auto result = auth.sessions->At(auth.exchangeIndex)
+                                    ->Process(auth.association, apdu, now,
+                                              ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), size);
+            auth.pendingWireSize = size;
+            if (result == SessionKeys::Result::INSTALLED)
+            {
+                auth.established = true;
+                auto* session = auth.sessions->At(auth.exchangeIndex);
+                if (session->User() == 1)
+                    auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now);
+                auth.exchangeIndex = 2;
+                auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
+            }
+            this->ServiceAuthentication();
+            return true;
+        }
+        if (header.function == FunctionCode::AUTH_RESPONSE && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 2)
+        {
+            class Reply final : public IAPDUHandler
+            {
+            public:
+                Group120Var2 value;
+                bool valid = false;
+                bool IsAllowed(uint32_t n, GroupVariation gv, QualifierCode qc) override
+                {
+                    return n == 0 && gv == GroupVariation::Group120Var2 && qc == QualifierCode::FREE_FORMAT;
+                }
+                IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var2>& values) override
+                {
+                    valid = values.Count() == 1;
+                    if (valid)
+                        values.ForeachItem([this](const Group120Var2& v) { value = v; });
+                    return IINField::Empty();
+                }
+            } reply;
+            size_t size = 0;
+            if (auth.monitorWaiting && header.control.IsFirAndFin() && !header.control.CON && !header.control.UNS
+                && header.control.SEQ == auth.monitorSequence
+                && APDUParser::Parse(apdu.skip(4), reply, nullptr) == ParseResult::OK && reply.valid
+                && auth.sessions->Find(1)->Ready(now)
+                && auth.monitoring.Reply(auth.association, reply.value, now,
+                                         ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()),
+                                         size)
+                    == OutstationChallenger::Result::AUTHENTICATED)
+            {
+                auth.monitorWaiting = false;
+                const auto original
+                    = APDUHeaderParser::ParseResponse(ser4cpp::rseq_t(auth.verifiedResponse.data(), size));
+                auth.sessions->Find(1)->CountAuthentication(now);
+                auth.sessions->Find(1)->CountAuthentication(now);
+                if (original.success)
+                    this->ProcessAPDU(original.header, original.objects);
+            }
+            else
+                this->ResetAuthentication();
+            crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
+            return true;
+        }
+        if (header.function == FunctionCode::RESPONSE || header.function == FunctionCode::UNSOLICITED_RESPONSE)
+        {
+            if (auth.protectedTask && !auth.replyIssued && header.function == FunctionCode::RESPONSE)
+                return true;
+            if (auth.monitorWaiting || auth.pendingWireSize)
+                return true;
+            auto* session = auth.sessions->Find(1);
+            if (!session || !session->Ready(now))
+                return true;
+            if (auth.monitoring.GetState() == OutstationChallenger::State::NO_SESSION_KEYS)
+                auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now);
+            size_t size = 0;
+            if (auth.monitoring.Challenge(auth.association, apdu, IINField::Empty(), now,
+                                          ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), size)
+                == OutstationChallenger::Result::OK)
+            {
+                auth.pendingWireSize = size;
+                auth.monitorWaiting = true;
+                auth.monitorSequence = header.control.SEQ;
+                this->ServiceAuthentication();
+            }
+            return true;
+        }
+    }
     if (header.function == FunctionCode::AUTH_RESPONSE)
     {
-        if (!authentication->protectedTask || tstate != TaskState::WAIT_FOR_RESPONSE || authentication->replyPending
-            || authentication->replyInFlight)
+        if ((!authentication->protectedConfirm
+             && (!authentication->protectedTask || tstate != TaskState::WAIT_FOR_RESPONSE))
+            || authentication->replyPending || authentication->replyInFlight)
         {
             this->ResetAuthentication();
             return true;
@@ -678,8 +975,23 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             return true;
         }
         authentication->replyPending = true;
-        responseTimer.cancel();
-        this->StartResponseTimer();
+        if (authentication->sessions)
+        {
+            auto* session = authentication->sessions->Find(authentication->responderUser);
+            const auto now = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+            if (!session || !session->Ready(now))
+            {
+                ResetAuthentication();
+                return true;
+            }
+            session->CountAuthentication(now);
+        }
+        if (!authentication->protectedConfirm)
+        {
+            responseTimer.cancel();
+            this->StartResponseTimer();
+        }
         if (!isSending)
             this->TransmitAuthenticationReply();
         return true;

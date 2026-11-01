@@ -27,12 +27,19 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}
     FILES ${integrationtests_headers} ${integrationtests_src}
 )
 
+if(DNP3_SA_CRYPTO)
+    list(APPEND integrationtests_src ./TestSecureAuthentication.cpp)
+endif()
+
 add_executable(integrationtests
     ${integrationtests_headers} ${integrationtests_src}
 )
 target_compile_features(integrationtests PRIVATE cxx_std_14)
 target_link_libraries(integrationtests PRIVATE catch opendnp3 dnp3mocks)
 target_include_directories(integrationtests PRIVATE ./)
+if(DNP3_SA_CRYPTO)
+    target_include_directories(integrationtests PRIVATE ../../lib/src)
+endif()
 set_target_properties(integrationtests PROPERTIES FOLDER cpp/tests)
 add_test(NAME integrationtests COMMAND integrationtests)
 

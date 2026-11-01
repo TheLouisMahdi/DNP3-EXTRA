@@ -2,6 +2,7 @@
 #include "master/MasterResponder.h"
 
 #include "app/APDURequest.h"
+#include "app/APDUResponse.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
 #include "crypto/CryptoProvider.h"
@@ -42,8 +43,14 @@ namespace
     }
 } // namespace
 
-MasterResponder::MasterResponder(uint16_t associationId_, size_t tagLength_, uint32_t pendingTimeoutMs_)
-    : associationId(associationId_), tagLength(tagLength_), pendingTimeoutMs(pendingTimeoutMs_)
+MasterResponder::MasterResponder(uint16_t associationId_,
+                                 size_t tagLength_,
+                                 uint32_t pendingTimeoutMs_,
+                                 bool monitoringDirection_)
+    : monitoringDirection(monitoringDirection_),
+      associationId(associationId_),
+      tagLength(tagLength_),
+      pendingTimeoutMs(pendingTimeoutMs_)
 {
 }
 
@@ -103,12 +110,15 @@ MasterResponder::State MasterResponder::GetState() const
     return requestSize ? State::WAITING_FOR_CHALLENGE : State::IDLE;
 }
 
-MasterResponder::Result MasterResponder::SetSessionKey(uint16_t number,
-                                                       ser4cpp::rseq_t material,
-                                                       uint64_t validUntilMs,
-                                                       uint64_t nowMs)
+MasterResponder::Result MasterResponder::SetSessionKey(
+    uint16_t number, ser4cpp::rseq_t material, uint64_t validUntilMs, uint64_t nowMs, bool newSession)
 {
     Reset();
+    if (newSession)
+    {
+        haveSequence = false;
+        lastSequence = 0;
+    }
     if (!ObserveTime(nowMs) || !number || !static_cast<const uint8_t*>(material)
         || (material.length() != 16 && material.length() != 32) || validUntilMs <= nowMs)
         return Result::INVALID_INPUT;
@@ -136,9 +146,13 @@ MasterResponder::Result MasterResponder::RetainRequest(uint16_t association, ser
         || request.length() < APDUHeader::REQUEST_SIZE || request.length() > MAX_REQUEST_SIZE)
         return Fail(Result::INVALID_INPUT);
     const auto parsed = APDUHeaderParser::ParseRequest(request);
-    if (!parsed.success || !parsed.header.control.IsFirAndFin() || parsed.header.control.CON
-        || parsed.header.control.UNS || parsed.header.function == FunctionCode::UNKNOWN
-        || FunctionCodeSpec::to_type(parsed.header.function) >= 0x20)
+    const bool normalResponse = parsed.header.function == FunctionCode::RESPONSE
+        || parsed.header.function == FunctionCode::UNSOLICITED_RESPONSE;
+    if (!parsed.success || (!monitoringDirection && !parsed.header.control.IsFirAndFin())
+        || (monitoringDirection ? (!normalResponse || request.length() < 4)
+                                : (parsed.header.control.CON || (parsed.header.control.UNS && parsed.header.function != FunctionCode::CONFIRM)
+                                   || parsed.header.function == FunctionCode::UNKNOWN
+                                   || FunctionCodeSpec::to_type(parsed.header.function) >= 0x20)))
         return Fail(Result::INVALID_INPUT);
     std::memcpy(transcript.data() + MAX_CHALLENGE_SIZE, request, request.length());
     requestSize = request.length();
@@ -146,8 +160,12 @@ MasterResponder::Result MasterResponder::RetainRequest(uint16_t association, ser
     return Result::OK;
 }
 
-MasterResponder::Result MasterResponder::Respond(
-    uint16_t association, ser4cpp::rseq_t fragment, uint64_t nowMs, ser4cpp::wseq_t output, size_t& outputSize)
+MasterResponder::Result MasterResponder::Respond(uint16_t association,
+                                                 ser4cpp::rseq_t fragment,
+                                                 uint64_t nowMs,
+                                                 ser4cpp::wseq_t output,
+                                                 size_t& outputSize,
+                                                 IINField iin)
 {
     outputSize = 0;
     const bool overlapping = Overlaps(fragment, output);
@@ -162,26 +180,29 @@ MasterResponder::Result MasterResponder::Respond(
         return Result::NO_SESSION_KEYS;
     if (!requestSize)
         return Fail(Result::UNEXPECTED_CHALLENGE);
-    if (overlapping || !static_cast<const uint8_t*>(fragment) || fragment.length() < APDUHeader::RESPONSE_SIZE
+    if (overlapping || !static_cast<const uint8_t*>(fragment)
+        || fragment.length() < (monitoringDirection ? APDUHeader::REQUEST_SIZE : APDUHeader::RESPONSE_SIZE)
         || fragment.length() > MAX_CHALLENGE_SIZE)
         return Fail(Result::INVALID_CHALLENGE);
 
-    const auto parsed = APDUHeaderParser::ParseResponse(fragment);
-    if (!parsed.success || parsed.header.function != FunctionCode::AUTH_RESPONSE || !parsed.header.control.IsFirAndFin()
-        || parsed.header.control.CON || parsed.header.control.UNS)
+    const auto parsed = APDUHeaderParser::ParseRequest(fragment);
+    if (!parsed.success
+        || parsed.header.function != (monitoringDirection ? FunctionCode::AUTH_REQUEST : FunctionCode::AUTH_RESPONSE)
+        || !parsed.header.control.IsFirAndFin() || parsed.header.control.CON || parsed.header.control.UNS)
         return Fail(Result::INVALID_CHALLENGE);
     const AppControlField original(transcript[MAX_CHALLENGE_SIZE]);
     // IEEE 7.5.1.3 (PDF p234): Challenge and Reply echo the critical ASDU's SEQ.
     if (parsed.header.control.SEQ != original.SEQ)
         return Fail(Result::INVALID_SEQUENCE);
     ChallengeHandler handler;
-    if (APDUParser::Parse(parsed.objects, handler, nullptr) != ParseResult::OK || !handler.valid)
+    if (APDUParser::Parse(fragment.skip(monitoringDirection ? 2 : 4), handler, nullptr) != ParseResult::OK
+        || !handler.valid)
         return Fail(Result::INVALID_CHALLENGE);
     const auto& challenge = handler.challenge;
     if (challenge.reason != 1)
         return Fail(Result::INVALID_CHALLENGE);
     // A.45.1.2.2 (PDF p762): Outstation-issued challenge has unknown USR=0.
-    if (challenge.userNum != 0)
+    if (challenge.userNum != (monitoringDirection ? user : 0))
         return Fail(Result::INVALID_USER);
     if (challenge.macAlgorithm != (tagLength == 8 ? 3 : 4))
         return Fail(Result::UNSUPPORTED_ALGORITHM);
@@ -192,7 +213,7 @@ MasterResponder::Result MasterResponder::Respond(
     const uint32_t delta = challenge.seqNum - lastSequence;
     if (haveSequence && (delta == 0 || delta >= 0x80000000u))
         return Fail(Result::INVALID_SEQUENCE);
-    const size_t required = 2 + 6 + 6 + tagLength;
+    const size_t required = (monitoringDirection ? 4 : 2) + 6 + 6 + tagLength;
     if (!static_cast<uint8_t*>(output) || output.length() < required)
         return Fail(Result::OUTPUT_TOO_SMALL);
 
@@ -210,12 +231,25 @@ MasterResponder::Result MasterResponder::Respond(
         return Fail(Result::CRYPTO_ERROR);
     }
     Group120Var2 reply(challenge.seqNum, user, ser4cpp::rseq_t(tag.data(), tagLength));
-    APDURequest response(output);
-    response.ConfigureHeader(FunctionCode::AUTH_REQUEST, original.SEQ);
-    auto writer = response.GetWriter();
-    const bool written = writer.WriteFreeFormat(&reply, 1);
+    bool written = false;
+    if (monitoringDirection)
+    {
+        APDUResponse response(output);
+        response.SetControl(AppControlField::Request(original.SEQ));
+        response.SetFunction(FunctionCode::AUTH_RESPONSE);
+        response.SetIIN(iin);
+        auto writer = response.GetWriter();
+        written = writer.WriteFreeFormat(&reply, 1) && response.Size() == required;
+    }
+    else
+    {
+        APDURequest response(output);
+        response.ConfigureHeader(FunctionCode::AUTH_REQUEST, original.SEQ);
+        auto writer = response.GetWriter();
+        written = writer.WriteFreeFormat(&reply, 1) && response.Size() == required;
+    }
     crypto::Clear(ser4cpp::wseq_t(tag.data(), tag.size()));
-    if (!written || response.Size() != required)
+    if (!written)
     {
         crypto::Clear(output);
         return Fail(Result::CRYPTO_ERROR);
