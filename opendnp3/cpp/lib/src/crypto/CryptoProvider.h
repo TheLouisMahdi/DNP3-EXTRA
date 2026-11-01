@@ -27,6 +27,9 @@ namespace crypto
     // Views are passed by value and are never advanced. Output sizes must be exact.
     void Clear(ser4cpp::wseq_t output);
 
+    // Equal-length byte comparison in constant time; invalid views fail closed.
+    bool ConstantTimeEqual(ser4cpp::rseq_t first, ser4cpp::rseq_t second);
+
     // Empty output is a successful no-op. Nonempty output uses a CSPRNG, without fallback.
     Result GenerateRandom(ser4cpp::wseq_t output);
 

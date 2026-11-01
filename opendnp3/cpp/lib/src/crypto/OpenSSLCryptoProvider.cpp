@@ -119,6 +119,12 @@ namespace crypto
             OPENSSL_cleanse(output, output.length());
     }
 
+    bool ConstantTimeEqual(ser4cpp::rseq_t first, ser4cpp::rseq_t second)
+    {
+        return Valid(first) && Valid(second) && first.length() == second.length() &&
+            (first.length() == 0 || CRYPTO_memcmp(first, second, first.length()) == 0);
+    }
+
     Result GenerateRandom(ser4cpp::wseq_t output)
     {
         OutputGuard guard(output);
