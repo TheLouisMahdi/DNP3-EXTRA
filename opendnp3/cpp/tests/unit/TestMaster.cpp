@@ -55,6 +55,47 @@ TEST_CASE(SUITE("notifies application of state changes"))
     t.application->stateChanges.pop_front();
 }
 
+TEST_CASE(SUITE("disconnect discards queued confirms before sequence reuse"), "[master-confirm-reset]")
+{
+    const bool unsolicited = GENERATE(false, true);
+    const bool confirmInFlight = GENERATE(false, true);
+    auto params = NoStartupTasks();
+    params.startupIntegrityClassMask = ClassField::AllClasses();
+    MasterTestFixture t(params);
+    REQUIRE(t.context->OnLowerLayerUp());
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    // Receive CON=1 before the poll TX completes, so its CONFIRM must queue.
+    REQUIRE(t.SendToMaster(unsolicited ? "F0 82 00 00" : "E0 81 00 00"));
+    REQUIRE(t.context->confirmQueue.size() == 1);
+    REQUIRE(t.context->confirmQueue.front().control.UNS == unsolicited);
+    REQUIRE(t.lower->NumWrites() == 0);
+    if (confirmInFlight)
+    {
+        REQUIRE(t.context->OnTxReady());
+        REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, unsolicited));
+        REQUIRE(t.SendToMaster("F1 82 00 00"));
+        REQUIRE(t.context->confirmQueue.size() == 1);
+        REQUIRE(t.lower->NumWrites() == 0);
+    }
+    REQUIRE(t.context->isSending);
+    REQUIRE(t.context->OnLowerLayerDown());
+    REQUIRE(t.context->confirmQueue.empty());
+    REQUIRE_FALSE(t.context->OnTxReady()); // A cancelled TX cannot advance offline state.
+    REQUIRE(t.lower->NumWrites() == 0);
+
+    REQUIRE(t.context->OnLowerLayerUp());
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0)); // Sequence reused by the new association.
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.lower->NumWrites() == 0); // No old CONFIRM may acknowledge this new response.
+    REQUIRE(t.SendToMaster(unsolicited ? "F0 82 00 00" : "E0 81 00 00"));
+    REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, unsolicited));
+    REQUIRE(t.context->confirmQueue.empty());
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.lower->NumWrites() == 0);
+}
+
 TEST_CASE(SUITE("IntegrityOnStartup"))
 {
     MasterParams params;

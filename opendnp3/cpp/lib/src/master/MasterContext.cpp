@@ -135,6 +135,7 @@ bool MContext::OnLowerLayerDown()
     }
 #endif
     this->ResetAuthentication();
+    this->confirmQueue.clear();
     activeTask.reset();
 
     this->scheduler->SetRunnerOffline(*this);
