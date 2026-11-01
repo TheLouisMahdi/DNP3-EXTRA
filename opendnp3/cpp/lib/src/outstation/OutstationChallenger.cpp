@@ -166,7 +166,8 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         || replyTimeoutMs % 100 != 0 || overlapping || !static_cast<const uint8_t*>(request) || request.length() < 2
         || request.length() > MAX_REQUEST_SIZE)
         return Result::INVALID_INPUT;
-    if (!HasKeys())
+    // Table 7-8, row 3: an Outstation challenges even when its Session Keys are invalid.
+    if (monitoringDirection && !HasKeys())
         return Result::NO_SESSION_KEYS;
     if (!static_cast<uint8_t*>(output) || output.length() < (monitoringDirection ? CHALLENGE_SIZE - 2 : CHALLENGE_SIZE))
         return Result::OUTPUT_TOO_SMALL;

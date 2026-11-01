@@ -323,10 +323,10 @@ TEST_CASE("OutstationChallenger - missing keys and buffer bounds fail closed", "
     {
         f.engine.Reset();
         f.challenge.fill(0xCC);
-        REQUIRE(f.engine.Challenge(7, Read(f.request), IINField::Empty(), 1001, Write(f.challenge), f.size)
-                == Result::NO_SESSION_KEYS);
-        REQUIRE(f.size == 0);
-        REQUIRE(IsZero(f.challenge));
+        f.Start(1001);
+        REQUIRE(f.Reply(f.Tag(Read(f.key1)), 1, 1002) == Result::INVALID_USER);
+        f.Denied();
+        REQUIRE(f.engine.GetState() == State::NO_SESSION_KEYS);
     }
     SECTION("invalid key lengths user and expired material")
     {
@@ -409,4 +409,73 @@ TEST_CASE("OutstationChallenger - CryptoProvider failures never authorize", "[sa
     REQUIRE(f.size == 0);
     REQUIRE(IsZero(f.challenge));
     REQUIRE(f.engine.GetState() == State::IDLE);
+}
+
+TEST_CASE("OutstationChallenger - unprovisioned Outstation emits Challenge without authorizing", "[sa3a]")
+{
+    Fixture f(GENERATE(8u, 16u));
+    Challenger unprovisioned(f.association, f.tagSize);
+    REQUIRE(unprovisioned.GetState() == State::NO_SESSION_KEYS);
+    REQUIRE(unprovisioned.Challenge(f.association, Read(f.request), IINField(2, 0), 1000,
+                                    Write(f.challenge), f.size) == Result::OK);
+    REQUIRE(f.size == f.challenge.size());
+    REQUIRE(unprovisioned.GetState() == State::WAITING_FOR_REPLY);
+    HexSequence prefix(f.tagSize == 8 ? "C5 83 02 00 78 01 5B 01 28 00 01 00 00 00 00 00 03 01"
+                                     : "C5 83 02 00 78 01 5B 01 28 00 01 00 00 00 00 00 04 01");
+    REQUIRE(Read(f.challenge).take(18).equals(prefix.ToRSeq()));
+    Group120Var1 challenge;
+    REQUIRE(challenge.Read(Read(f.challenge).skip(10)));
+    REQUIRE(challenge.challengeData.length() == Challenger::CHALLENGE_DATA_SIZE);
+    REQUIRE(IsZero(f.authorized));
+    // Even a correctly calculated tag cannot authenticate an uninstalled user key.
+    const auto tag = f.Tag(Read(f.key1));
+    f.authorized.fill(0xCC);
+    f.size = 123;
+    REQUIRE(unprovisioned.Reply(f.association, Group120Var2(f.Sequence(), 1, Read(tag).take(f.tagSize)),
+                                1001, Write(f.authorized), f.size) == Result::INVALID_USER);
+    f.Denied();
+    REQUIRE(unprovisioned.GetState() == State::NO_SESSION_KEYS);
+}
+
+TEST_CASE("OutstationChallenger - expired keys permit a fresh Challenge but cannot authenticate", "[sa3a]")
+{
+    Fixture f(GENERATE(8u, 16u));
+    f.Start();
+    const auto previous = f.challenge;
+    const auto previousSequence = f.Sequence();
+    f.engine.Tick(100000);
+    REQUIRE(f.engine.GetState() == State::NO_SESSION_KEYS);
+    f.Start(100000);
+    REQUIRE(f.Sequence() == previousSequence + 1);
+    REQUIRE_FALSE(Read(previous).skip(18).equals(Read(f.challenge).skip(18)));
+    REQUIRE(f.Reply(f.Tag(Read(f.key1)), 1, 100001) == Result::INVALID_USER);
+    f.Denied();
+    REQUIRE(f.engine.GetState() == State::NO_SESSION_KEYS);
+}
+
+TEST_CASE("OutstationChallenger - keyless pending timeout and replay require a new valid handshake", "[sa3a]")
+{
+    Fixture f(GENERATE(8u, 16u));
+    f.engine.Reset();
+    f.Start();
+    const auto expiredSequence = f.Sequence();
+    const auto expiredTag = f.Tag(Read(f.key1));
+    f.engine.Tick(3000);
+    REQUIRE(f.engine.GetState() == State::NO_SESSION_KEYS);
+    REQUIRE(f.Reply(expiredTag, 1, 3000) == Result::UNEXPECTED_REPLY);
+    f.Denied();
+    f.Start(3001);
+    REQUIRE(f.Sequence() == expiredSequence + 1);
+    REQUIRE(f.engine.Reply(f.association, Group120Var2(expiredSequence, 1, Read(expiredTag).take(f.tagSize)),
+                           3002, Write(f.authorized), f.size) == Result::INVALID_SEQUENCE);
+    f.Denied();
+    REQUIRE(f.engine.GetState() == State::NO_SESSION_KEYS);
+    REQUIRE(f.engine.SetSessionKey(1, Read(f.key1), 100000, 3003) == Result::OK);
+    f.Start(3003);
+    const auto validTag = f.Tag(Read(f.key1));
+    REQUIRE(f.Reply(validTag, 1, 3004) == Result::AUTHENTICATED);
+    REQUIRE(f.size == f.request.size());
+    REQUIRE(Read(f.authorized).take(f.size).equals(Read(f.request)));
+    REQUIRE(f.Reply(validTag, 1, 3005) == Result::UNEXPECTED_REPLY);
+    f.Denied();
 }
