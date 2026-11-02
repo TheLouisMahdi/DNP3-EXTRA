@@ -53,6 +53,7 @@ MasterResponder::MasterResponder(uint16_t associationId_,
       associationId(associationId_),
       tagLength(tagLength_),
       macAlgorithm(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
+      macPolicy(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
       pendingTimeoutMs(pendingTimeoutMs_)
 {
 }
@@ -170,7 +171,7 @@ bool MasterResponder::ObserveEmbeddedChallenge(
     uint16_t association, const Group120Var1& challenge, bool, uint64_t nowMs)
 {
     if (monitoringDirection || association != associationId || !ObserveTime(nowMs)
-        || challenge.userNum != 0 || challenge.reason != 1 || challenge.macAlgorithm != macAlgorithm)
+        || challenge.userNum != 0 || challenge.reason != 1 || !macPolicy.Allows(challenge.macAlgorithm))
         return false;
     const uint32_t delta = challenge.seqNum - lastSequence;
     if (haveSequence && (!delta || delta >= 0x80000000u))
@@ -224,7 +225,7 @@ MasterResponder::Result MasterResponder::Respond(uint16_t association,
     // A.45.1.2.2 (PDF p762): Outstation-issued challenge has unknown USR=0.
     if (challenge.userNum != (monitoringDirection ? user : 0))
         return Fail(Result::INVALID_USER);
-    if (challenge.macAlgorithm != (macAlgorithm))
+    if (!macPolicy.Allows(challenge.macAlgorithm))
         return Fail(Result::UNSUPPORTED_ALGORITHM);
 
     // Association-wide, independent of user (7.5.2.3.3, PDF p253). Engineering
@@ -233,7 +234,9 @@ MasterResponder::Result MasterResponder::Respond(uint16_t association,
     const uint32_t delta = challenge.seqNum - lastSequence;
     if (haveSequence && (delta == 0 || delta >= 0x80000000u))
         return Fail(Result::INVALID_SEQUENCE);
-    const size_t required = (monitoringDirection ? 4 : 2) + 6 + 6 + tagLength;
+    const auto selectedAlgorithm = challenge.macAlgorithm;
+    const auto selectedTagLength = AuthenticationTagLength(selectedAlgorithm);
+    const size_t required = (monitoringDirection ? 4 : 2) + 6 + 6 + selectedTagLength;
     if (!static_cast<uint8_t*>(output) || output.length() < required)
         return Fail(Result::OUTPUT_TOO_SMALL);
 
@@ -242,15 +245,15 @@ MasterResponder::Result MasterResponder::Respond(uint16_t association,
     std::memmove(transcript.data() + fragment.length(), transcript.data() + MAX_CHALLENGE_SIZE, requestSize);
     std::memcpy(transcript.data(), fragment, fragment.length());
     std::array<uint8_t, 16> tag{};
-    const auto computed = ComputeAuthenticationMAC(macAlgorithm, ser4cpp::rseq_t(key.data(), keySize),
+    const auto computed = ComputeAuthenticationMAC(selectedAlgorithm, ser4cpp::rseq_t(key.data(), keySize),
                                                    ser4cpp::rseq_t(transcript.data(), fragment.length() + requestSize),
-                                                   ser4cpp::wseq_t(tag.data(), tagLength));
+                                                   ser4cpp::wseq_t(tag.data(), selectedTagLength));
     if (computed != crypto::Result::OK)
     {
         crypto::Clear(ser4cpp::wseq_t(tag.data(), tag.size()));
         return Fail(Result::CRYPTO_ERROR);
     }
-    Group120Var2 reply(challenge.seqNum, user, ser4cpp::rseq_t(tag.data(), tagLength));
+    Group120Var2 reply(challenge.seqNum, user, ser4cpp::rseq_t(tag.data(), selectedTagLength));
     bool written = false;
     if (monitoringDirection)
     {

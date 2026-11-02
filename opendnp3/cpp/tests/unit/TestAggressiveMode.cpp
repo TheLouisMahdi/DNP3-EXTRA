@@ -506,3 +506,33 @@ TEST_CASE("AggressiveMode - association Challenge watermark spans UNS categories
     accept(0x20000000u, false);
     reject(0xC0000000u, true);
 }
+
+TEST_CASE("AggressiveMode - each transcript retains its selected MAC after Code 5", "[aggressive][auth-error]")
+{
+    const bool monitoring = GENERATE(false, true);
+    AuthenticationConfig config;
+    config.permittedMACAlgorithms = {{4, 2, 0, 0}};
+    AggressiveKey key;
+    AggressiveMode sender(7, 16, monitoring), receiver(7, 16, monitoring);
+    REQUIRE(sender.ConfigureMACs(config));
+    REQUIRE(receiver.ConfigureMACs(config));
+    const auto first = Seed(1, monitoring);
+    REQUIRE(sender.RememberChallenge(Read(first), false));
+    REQUIRE(receiver.RememberChallenge(Read(first), false));
+    const auto next = Seed(2, monitoring, 10, 2);
+    REQUIRE(sender.RememberChallenge(Read(next), true));
+    REQUIRE(receiver.RememberChallenge(Read(next), true));
+    HexSequence solicited(monitoring ? "C0 81 00 00" : "C0 02");
+    HexSequence unsolicited(monitoring ? "D0 82 00 00" : "D0 00");
+    std::array<uint8_t, 2048> wire{}, output{};
+    size_t size = 0, nativeSize = 0;
+    for (const auto& original : {solicited.ToRSeq(), unsolicited.ToRSeq()})
+    {
+        REQUIRE(sender.Create(7, 1, key.Read(), original, wseq_t(wire.data(), wire.size()), size));
+        const auto expectedTag = (original[0] & 0x10) ? 10u : 16u;
+        REQUIRE(size == original.length() + 16 + expectedTag);
+        REQUIRE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), size), wseq_t(output.data(), output.size()), nativeSize));
+        REQUIRE(rseq_t(output.data(), nativeSize).equals(original));
+        REQUIRE_FALSE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), size), wseq_t(output.data(), output.size()), nativeSize));
+    }
+}

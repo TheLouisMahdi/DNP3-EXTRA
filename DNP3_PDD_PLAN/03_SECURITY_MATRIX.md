@@ -70,3 +70,16 @@ This table distinguishes *acceptable minimum* from *recommendation*: do not recl
 - **Platform:** key storage, RNG, time and TLS configuration require Windows vs STM32 adapters later; no new platform interface is prescribed in this planning phase.
 
 **Completion rule:** no security requirement is marked fulfilled until the actual implementation and its configured behavior have been inspected and a user-authorized verification step has completed. This ledger contains no implementation and no test code.
+
+## P4-OPEN-01 - IEEE Authentication Error Code Ambiguity
+
+**Status: OPEN - deferred independent verification in P10.**
+
+- IEEE 1815-2012 §7.5.5.7 refers to Code 5 for Authorization Failed.
+- Annex A.45.7.2.2 defines Code 7 for Authorization Failed and Code 5 for MAC Algorithm Not Supported.
+- Current implementation deliberately follows the Annex wire-format assignment: authenticated authorization denial uses G120V7 Code 7; Code 5 remains MAC Algorithm Not Supported.
+- This is a provisional interoperability decision, not a confirmed official IEEE erratum.
+- Verify against official IEEE corrections and Triangle MicroWorks SA v5 Test Harness during P10.
+- Do not close this issue without independent interoperability evidence.
+
+Implementation verification remains static only (NOT BUILT / NOT TESTED). Error suppression follows §7.5.2.4 and Table 7-6: explicit suppression and unavailable/busy transmission paths may suppress an Error; the send threshold is reopened only after successful Session Key change. No UTC timestamp is fabricated when the application time source is invalid.

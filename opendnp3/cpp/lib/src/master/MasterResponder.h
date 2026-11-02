@@ -2,6 +2,8 @@
 #ifndef OPENDNP3_MASTERRESPONDER_H
 #define OPENDNP3_MASTERRESPONDER_H
 
+#include "auth/AuthenticationMAC.h"
+
 #include "opendnp3/app/AppConstants.h"
 #include "opendnp3/app/IINField.h"
 
@@ -82,6 +84,7 @@ public:
     // this Challenge. Preserve any separate pending critical request and its key.
     bool ObserveEmbeddedChallenge(uint16_t associationId, const Group120Var1& challenge,
                                   bool unsolicited, uint64_t nowMs);
+    bool ConfigureMACs(const AuthenticationConfig& config) { return macPolicy.Configure(config); }
     void Tick(uint64_t nowMs);
     void Reset(); // wipes sensitive state; preserves association CSQ replay history.
     State GetState() const;
@@ -104,6 +107,7 @@ private:
     const uint16_t associationId;
     const size_t tagLength;
     const uint8_t macAlgorithm;
+    AuthenticationMACPolicy macPolicy;
     const uint32_t pendingTimeoutMs;
     std::array<uint8_t, 32> key{};
     size_t keySize = 0;

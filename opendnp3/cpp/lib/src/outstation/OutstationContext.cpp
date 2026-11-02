@@ -24,6 +24,7 @@
 #include "app/Functions.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
+#include "auth/AuthenticationError.h"
 #include "crypto/CryptoProvider.h"
 #include "logging/LogMacros.h"
 #include "outstation/AssignClassHandler.h"
@@ -1072,6 +1073,52 @@ void OContext::ResetAuthentication()
 #endif
 }
 
+void OContext::SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t appSequence)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto& auth = *authentication;
+    if (!auth.sessions)
+        return;
+    FORMAT_LOG_BLOCK(logger, flags::WARN, "Authorization failed: user=%u sequence=%u", user, sequence);
+    if (auth.sessions->config.errorObserver)
+    {
+        try { auth.sessions->config.errorObserver->OnAuthorizationFailure(auth.association, user, sequence); }
+        catch (...) {} // Diagnostics cannot authorize the denied operation.
+    }
+    // 7.5.2.4 permits suppressing Errors. Never evict an independent queued
+    // authentication message, interrupt a responder, or overwrite borrowed TX bytes.
+    if (auth.sessions->config.suppressAuthenticationErrors
+        || auth.errorsSinceKeyChange > auth.sessions->config.maxErrorMessagesSent
+        || !CanTransmit() || auth.pendingWireSize || auth.monitoringPending)
+        return;
+    DNPTime time;
+    IINField iin;
+    try { time = application->Now(); iin = GetResponseIIN(); }
+    catch (...) { return; }
+    if (time.quality == TimestampQuality::INVALID || time.value > 0xFFFFFFFFFFFFULL)
+    {
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Authorization Error suppressed: valid DNP time unavailable");
+        return;
+    }
+    // Provisional Annex A.45.7 assignment; P4-OPEN-01 records the conflicting
+    // code in 7.5.5.7. Code 5 remains exclusively MAC Algorithm Not Supported.
+    Group120Var7 error(sequence, user, auth.association, 7, time, ser4cpp::rseq_t());
+    APDUResponse response(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+    response.SetFunction(FunctionCode::AUTH_RESPONSE);
+    response.SetControl(AppControlField::Request(appSequence));
+    response.SetIIN(iin);
+    auto writer = response.GetWriter();
+    if (!writer.WriteFreeFormat(&error, 1))
+        return;
+    auth.pendingWireSize = response.Size();
+    TransmitPendingAuthentication();
+#else
+    (void)sequence;
+    (void)user;
+    (void)appSequence;
+#endif
+}
+
 void OContext::TransmitPendingAuthentication()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -1096,10 +1143,24 @@ void OContext::TransmitPendingAuthentication()
             return;
         }
     }
+    const bool error = auth.pendingWireSize >= 10 && auth.pendingWire[1] == 0x83
+        && auth.pendingWire[4] == 120 && auth.pendingWire[5] == 7;
     const auto size = auth.pendingWireSize;
     std::memcpy(auth.wire.data(), auth.pendingWire.data(), size);
     auth.pendingWireSize = 0;
+    // Reserve the budget at the actual TX boundary, before calling the lower layer.
+    if (error)
+        ++auth.errorsSinceKeyChange;
     BeginTx(addresses.destination, ser4cpp::rseq_t(auth.wire.data(), size));
+    if (error && auth.sessions->config.errorObserver)
+    {
+        Group120Var7 value;
+        if (value.Read(ser4cpp::rseq_t(auth.wire.data(), size).skip(10)))
+        {
+            try { auth.sessions->config.errorObserver->OnErrorSent(auth.association, value.userNum, value.seqNum, value.errorCode); }
+            catch (...) {}
+        }
+    }
     if (reply)
     {
         auth.monitoringTimer.cancel();
@@ -1142,17 +1203,29 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         if (!header.control.IsFirAndFin() || header.control.CON || header.control.UNS
             || APDUParser::Parse(objects, error, nullptr) != ParseResult::OK || !error.valid
             || error.value.associationId != auth.association
-            || error.value.errorCode == 0 || error.value.errorCode == 2 || error.value.errorCode == 3
-            || (error.value.errorCode >= 13 && error.value.errorCode < 128))
+            || !ValidAuthenticationError(error.value))
             return true;
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication error received: code=%u user=%u sequence=%u",
                          error.value.errorCode, error.value.userNum, error.value.seqNum);
-        // Valid unknown-user Errors remain useful diagnostics, but an unconfigured
-        // nonzero user cannot own an active authentication exchange.
-        if (error.value.userNum && auth.sessions && !auth.sessions->Find(error.value.userNum))
-            return true;
-        if (auth.challenger.CancelOnError(error.value, header.control.SEQ, now))
+        // CancelOnError itself enforces the exact Challenge owner. Unknown
+        // nonzero users cannot cancel it, but still reach logging/accounting.
+        const bool discarded = auth.challenger.CancelOnError(error.value, header.control.SEQ, now);
+        if (discarded)
             auth.replyTimer.cancel();
+        if (!discarded)
+            SIMPLE_LOG_BLOCK(logger, flags::WARN, "Challenger has no matching authentication Error exchange");
+        if (discarded && error.value.errorCode == 5)
+            FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication MAC rejected; next Challenge algorithm=%u (0=no permitted alternative)",
+                             auth.challenger.MACAlgorithm());
+        if (auth.sessions && auth.sessions->config.errorObserver)
+        {
+            try
+            {
+                auth.sessions->config.errorObserver->OnErrorReceived(auth.association, error.value.userNum,
+                    error.value.seqNum, error.value.errorCode, discarded);
+            }
+            catch (...) {}
+        }
         // No retry or broad ResetAuthentication: monitoring, key exchange and
         // transmitted buffers have independent owners.
         return true;
@@ -1210,6 +1283,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                                                  size, GetResponseIIN());
             if (result == SessionKeys::Result::INSTALLED)
             {
+                auth.errorsSinceKeyChange = 0; // Table 7-6: only successful key change reopens Error transmission.
                 const auto index = session->User() == auth.sessions->config.users[0] ? 0u : 1u;
                 auth.controlEligible[index] = false;
                 if (session->User() == 1)
@@ -1314,6 +1388,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             const auto original
                 = APDUHeaderParser::ParseRequest(ser4cpp::rseq_t(authentication->authorized.data(), size));
             bool permitted = original.success;
+            bool authorizationDenied = false;
             if (authentication->sessions)
             {
                 auto& auth = *authentication;
@@ -1328,6 +1403,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 permitted = auth.sessions->Authorize(handler.reply.userNum,
                                                      FunctionCodeSpec::to_type(original.header.function), now,
                                                      ser4cpp::rseq_t(auth.authorized.data(), size));
+                authorizationDenied = !permitted; // Keep policy denial separate from SELECT/OPERATE binding.
                 if (original.header.function == FunctionCode::OPERATE)
                 {
                     permitted = permitted && auth.selectUser == handler.reply.userNum;
@@ -1342,6 +1418,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 // reusable "authenticated" flag and no recursive OnReceive.
                 this->ProcessObjects(ParsedRequest(message.addresses, original.header, original.objects));
             }
+            else if (authorizationDenied)
+                SendAuthorizationError(handler.reply.seqNum, handler.reply.userNum, original.header.control.SEQ);
             if (authentication->sessions)
             {
                 // Two distinct ASDUs: outgoing control Challenge and incoming verified Reply.
@@ -1376,6 +1454,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         bool allowed = original.success
             && auth.sessions->Authorize(user, FunctionCodeSpec::to_type(original.header.function), now,
                                         ser4cpp::rseq_t(auth.authorized.data(), size));
+        const bool authorizationDenied = original.success && !allowed;
         if (original.header.function == FunctionCode::OPERATE)
         {
             allowed = allowed && auth.selectUser == user;
@@ -1385,6 +1464,14 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             auth.selectUser = user;
         if (allowed)
             ProcessObjects(ParsedRequest(message.addresses, original.header, original.objects));
+        else if (authorizationDenied)
+        {
+            // Use this verified ASDU's CSQ, not the helper's cross-category high-water mark.
+            Group120Var3 authenticated;
+            auto prefix = objects.skip(4);
+            if (Group120Var3::Read(prefix, authenticated))
+                SendAuthorizationError(authenticated.seqNum, user, original.header.control.SEQ);
+        }
         CountControlAuthentication(user, 1, now); // One incoming authenticated V3/native/V9 ASDU, after dispatch.
         crypto::Clear(ser4cpp::wseq_t(auth.authorized.data(), auth.authorized.size()));
         return true;

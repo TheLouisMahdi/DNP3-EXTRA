@@ -118,6 +118,10 @@ private:
               association(config.association),
               challenger(association, config.tagLength, config.replyTimeoutMs, false, config.macAlgorithm)
         {
+            monitoring.ConfigureMACs(config);
+            controlAggressive.ConfigureMACs(config);
+            monitoringAggressive.ConfigureMACs(config);
+            challenger.ConfigureMACs(config);
         }
         MasterResponder monitoring;
         AggressiveMode controlAggressive, monitoringAggressive;
@@ -127,6 +131,7 @@ private:
         std::unique_ptr<AuthenticationSession> sessions;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
         size_t pendingWireSize = 0;
+        uint32_t errorsSinceKeyChange = 0; // Suppression budget, not a duplicate G121 statistic.
         uint8_t deferredControlCount = 0;
         uint32_t deferredControlKSQ = 0;
         uint32_t pendingReplyKSQ = 0;
@@ -147,6 +152,7 @@ private:
     void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();
     void TransmitPendingAuthentication();
+    void SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t appSequence);
     bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);
 
     /// ---- Helper functions that operate on the current state, and may return a new state ----

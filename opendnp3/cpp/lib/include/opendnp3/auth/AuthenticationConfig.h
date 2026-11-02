@@ -32,6 +32,20 @@ public:
                               const uint8_t* requestAPDU,
                               size_t requestSize) const = 0;
 };
+// The owner may map this notification to Table 7-8 row 13 accounting:
+// Error Messages Received; and, when discardedPending is true, Discarded
+// Messages and Reset Max Reply Timeouts. No key material is exposed.
+class IAuthenticationErrorObserver
+{
+public:
+    virtual ~IAuthenticationErrorObserver() = default;
+    virtual void OnErrorReceived(uint16_t association, uint16_t user, uint32_t sequence,
+                                 uint8_t code, bool discardedPending) = 0;
+    // Table 7-6: authorization denial (indexes 1/9), actual Error TX (index 10).
+    // Default methods preserve existing observers.
+    virtual void OnAuthorizationFailure(uint16_t, uint16_t, uint32_t) {}
+    virtual void OnErrorSent(uint16_t, uint16_t, uint32_t, uint8_t) {}
+};
 struct AuthenticationConfig
 {
     enum class Mode
@@ -48,10 +62,21 @@ struct AuthenticationConfig
     uint8_t tagLength = 16;
     // Zero selects SHA-256 from tagLength. Explicit 2/5 enable legacy SHA-1.
     uint8_t macAlgorithm = 0;
+    // Ordered permitted MACs, including the initial macAlgorithm first. Empty
+    // preserves the single configured algorithm. SHA-1 requires explicit opt-in.
+    // Alternatives may reduce tag strength: configure only an approved policy.
+    std::array<uint8_t, 4> permittedMACAlgorithms{{0, 0, 0, 0}};
+    enum class Transport { NETWORK, SERIAL };
+    Transport transport = Transport::NETWORK;
     uint8_t keyWrapAlgorithm = 2;
     uint16_t maxRestartRekeys = 2;
+    // Table 7-6/7-15: stop after Error Messages Sent EXCEEDS this threshold;
+    // successful session-key change reopens the budget. Zero permits one Error.
+    uint16_t maxErrorMessagesSent = 2;
+    bool suppressAuthenticationErrors = false;
     bool aggressiveTransmit = false;
     bool aggressiveReceive = false;
+    std::shared_ptr<IAuthenticationErrorObserver> errorObserver;
     std::shared_ptr<IAuthenticationCredentials> credentials;
     std::shared_ptr<IAuthenticationAuthorization> authorization;
 };

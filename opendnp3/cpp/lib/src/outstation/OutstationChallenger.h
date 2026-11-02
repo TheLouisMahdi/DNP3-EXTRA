@@ -2,6 +2,8 @@
 #ifndef OPENDNP3_OUTSTATIONCHALLENGER_H
 #define OPENDNP3_OUTSTATIONCHALLENGER_H
 
+#include "auth/AuthenticationMAC.h"
+
 #include "gen/objects/Group120.h"
 
 #include "opendnp3/app/AppConstants.h"
@@ -68,10 +70,20 @@ public:
     // across a key change. validUntilMs is an injected session-validity deadline.
     Result SetSessionKey(uint16_t user, ser4cpp::rseq_t key, uint64_t validUntilMs, uint64_t nowMs);
     void Reset(); // wipes keys and pending state, but preserves CSQ (7.5.2.3.3).
+    bool ConfigureMACs(const AuthenticationConfig& config)
+    {
+        if (requestSize) return false;
+        const bool valid = macPolicy.Configure(config);
+        macAlgorithm = valid ? ResolveAuthenticationMAC(config.macAlgorithm, config.tagLength) : 0;
+        tagLength = AuthenticationTagLength(macAlgorithm);
+        return valid;
+    }
     void Tick(uint64_t nowMs);
     // Table 7-8 row 13: cancel only the exact outstanding Challenge, retaining keys/CSQ.
+    bool MatchesError(const Group120Var7& error, uint8_t appSequence) const;
     bool CancelOnError(const Group120Var7& error, uint8_t appSequence, uint64_t nowMs);
     State GetState() const;
+    uint8_t MACAlgorithm() const { return macAlgorithm; }
     ser4cpp::rseq_t LastAcceptedChallenge() const
     {
         return ser4cpp::rseq_t(acceptedChallenge.data(), acceptedSize);
@@ -124,8 +136,9 @@ private:
     const bool monitoringDirection;
     size_t challengeSize = 0;
     const uint16_t associationId;
-    const size_t tagLength;
-    const uint8_t macAlgorithm;
+    size_t tagLength;
+    uint8_t macAlgorithm;
+    AuthenticationMACPolicy macPolicy;
     const uint32_t replyTimeoutMs;
     std::array<User, MAX_USERS> users{};
     // Table A-3 (PDF p765): full Challenge fragment || full challenged fragment.

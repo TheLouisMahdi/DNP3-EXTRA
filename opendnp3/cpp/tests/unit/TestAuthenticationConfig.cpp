@@ -153,3 +153,25 @@ TEST_CASE("AuthenticationConfig - Windows credential adapter has no fallback", "
     REQUIRE_FALSE(empty.ReadUpdateKey(7, 2, key.data(), key.size(), lifetime));
 }
 #endif
+
+TEST_CASE("AuthenticationConfig - MAC alternatives require explicit supported transport policy", "[auth-config][auth-error]")
+{
+    auto source = std::make_shared<Credentials>();
+    auto authorization = std::make_shared<Authorization>();
+    auto config = Config(source, authorization);
+    const auto condition = GENERATE(0, 1, 2, 3, 4, 5, 6, 7);
+    config.permittedMACAlgorithms = {{4, 2, 0, 0}};
+    if (condition == 1) config.permittedMACAlgorithms = {{4, 3, 0, 0}}; // Serial truncation on TCP is prohibited.
+    if (condition == 2) config.permittedMACAlgorithms = {{4, 6, 0, 0}}; // Optional GMAC is not implemented.
+    if (condition == 3) config.permittedMACAlgorithms = {{4, 4, 0, 0}};
+    if (condition == 4) config.permittedMACAlgorithms = {{4, 0, 2, 0}};
+    if (condition == 5) config.permittedMACAlgorithms = {{2, 4, 0, 0}}; // Must start at the configured MAC.
+    if (condition == 6) config.permittedMACAlgorithms = {{4, 1, 0, 0}}; // Obsolete SHA-1/4.
+    if (condition == 7)
+    {
+        config.transport = AuthenticationConfig::Transport::SERIAL;
+        config.permittedMACAlgorithms = {{4, 3, 2, 5}};
+    }
+    AuthenticationSession session(SessionKeys::Role::MASTER, config);
+    REQUIRE(session.Load(1000) == (condition == 0 || condition == 7));
+}

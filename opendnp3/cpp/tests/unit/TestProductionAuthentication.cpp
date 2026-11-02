@@ -10,8 +10,10 @@
 
 #include <catch.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <vector>
 
 using namespace opendnp3;
 using namespace ser4cpp;
@@ -26,6 +28,7 @@ public:
         return *context.authentication->sessions->Find(user);
     }
     static uint8_t Deferred(MContext& context) { return context.authentication->deferredAuthenticationCount; }
+    static AggressiveMode& ControlAggressive(MContext& context) { return context.authentication->controlAggressive; }
     static bool ControlEligible(MContext& context) { return context.authentication->controlEligible[1]; }
     static bool ReplyIssued(MContext& context) { return context.authentication->replyIssued; }
     static bool ReplyPending(MContext& context) { return context.authentication->replyPending; }
@@ -49,6 +52,11 @@ public:
     {
         REQUIRE(size <= context.authentication->aggressiveWire.size());
         return rseq_t(context.authentication->aggressiveWire.data(), size);
+    }
+    static void ReceiveOtherAssociation(OContext& context, rseq_t apdu)
+    {
+        const auto expected = context.addresses.Reverse();
+        context.OnReceive(Message(Addresses(static_cast<uint16_t>(expected.source ^ 1u), expected.destination), apdu));
     }
     static SessionKeys& Common(OContext& context) { return *context.authentication->sessions->Find(1); }
     static SessionKeys& Session(OContext& context, uint16_t user)
@@ -117,21 +125,42 @@ struct RuntimeCredentials final : IAuthenticationCredentials
         return true;
     }
 };
+struct RuntimeErrorObserver final : IAuthenticationErrorObserver
+{
+    size_t received = 0, discarded = 0, denied = 0, sent = 0;
+    void OnErrorReceived(uint16_t association, uint16_t, uint32_t, uint8_t, bool pending) override
+    {
+        REQUIRE(association == 7);
+        ++received;
+        if (pending) ++discarded;
+    }
+    void OnAuthorizationFailure(uint16_t, uint16_t, uint32_t) override { ++denied; }
+    void OnErrorSent(uint16_t, uint16_t, uint32_t, uint8_t code) override
+    {
+        REQUIRE(code == 7);
+        ++sent;
+    }
+};
 struct RuntimePolicy final : IAuthenticationAuthorization
 {
-    bool allowControl = true;
+    bool allowControl = true, allowCommonWrite = true, allowCommonSelect = false;
     bool IsAuthorized(uint16_t assoc, uint16_t user, uint8_t function, const uint8_t* apdu, size_t size) const override
     {
         return apdu && size >= 2 && apdu[1] == function && assoc == 7
-            && ((user == 1 && (function == 0 || function == 1 || function == 2)) || (user == 2 && allowControl));
+            && ((user == 1 && (function == 0 || function == 1 || (function == 2 && allowCommonWrite)
+                            || (function == 3 && allowCommonSelect)))
+                || (user == 2 && allowControl));
     }
 };
 MasterParams MasterSettings(const std::shared_ptr<RuntimeCredentials>& source,
                             const std::shared_ptr<RuntimePolicy>& policy,
                             bool aggressive = false,
-                            bool receiveAggressive = false)
+                            bool receiveAggressive = false, bool macAlternatives = false,
+                            const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr)
 {
     auto p = NoStartupTasks();
+    p.authentication.errorObserver = observer;
+    if (macAlternatives) p.authentication.permittedMACAlgorithms = {{4, 2, 0, 0}};
     p.authentication.aggressiveTransmit = aggressive;
     p.authentication.aggressiveReceive = aggressive || receiveAggressive;
     p.ignoreRestartIIN = true;
@@ -143,9 +172,15 @@ MasterParams MasterSettings(const std::shared_ptr<RuntimeCredentials>& source,
 OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
                              const std::shared_ptr<RuntimePolicy>& policy,
                              bool unsolicited = false,
-                             bool aggressive = false)
+                             bool aggressive = false, bool macAlternatives = false,
+                             const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
+                             uint16_t maxErrors = 2, bool suppressErrors = false)
 {
     OutstationConfig c;
+    c.params.authentication.maxErrorMessagesSent = maxErrors;
+    c.params.authentication.suppressAuthenticationErrors = suppressErrors;
+    c.params.authentication.errorObserver = observer;
+    if (macAlternatives) c.params.authentication.permittedMACAlgorithms = {{4, 2, 0, 0}};
     c.params.authentication.aggressiveTransmit = aggressive;
     c.params.authentication.aggressiveReceive = aggressive;
     c.params.allowUnsolicited = unsolicited;
@@ -168,9 +203,11 @@ struct RuntimePair
     size_t aggressiveRequests = 0, aggressiveResponses = 0;
     std::string savedAggressive;
     explicit RuntimePair(bool unsolicited = false, bool aggressive = false, bool receiveAggressive = false,
-                         const std::shared_ptr<ILogHandler>& masterLog = nullptr)
-        : master(MasterSettings(source, policy, aggressive, receiveAggressive), Addresses(), "test", masterLog),
-          outstation(OutSettings(source, policy, unsolicited, aggressive))
+                         const std::shared_ptr<ILogHandler>& masterLog = nullptr, bool macAlternatives = false,
+                         const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
+                         uint16_t maxErrors = 2, bool suppressErrors = false)
+        : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer), Addresses(), "test", masterLog),
+          outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors, suppressErrors))
     {
         outstation.LowerLayerUp();
         REQUIRE(master.context->OnLowerLayerUp());
@@ -274,11 +311,13 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
     const bool masterChallenger = GENERATE(false, true);
     // Match, association, user, CSQ, app SEQ, CON, UNS, qualifier, count,
     // obsolete code, another valid code, wrong function, extra object, unknown user.
-    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
     const auto code = fault == 0 ? GENERATE(uint8_t{5}, uint8_t{7}, uint8_t{128}) : uint8_t{5};
     const bool cancels = fault == 0 || fault == 10;
+    const bool alternatives = fault == 0 && code == 5 ? GENERATE(false, true) : false;
     auto masterLog = std::make_shared<MockLogHandlerImpl>();
-    RuntimePair pair(false, false, false, masterLog);
+    auto observer = std::make_shared<RuntimeErrorObserver>();
+    RuntimePair pair(false, false, false, masterLog, alternatives, observer);
     std::string pendingRequest, lateReply;
     Group120Var1 challenge;
     rseq_t borrowed;
@@ -328,6 +367,12 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
     Group120Var7 error(challenge.seqNum, user, 7, code, DNPTime(0), rseq_t());
     const uint8_t privateText = 'E';
     if (code >= 128) error.errorText = rseq_t(&privateText, 1);
+    const uint8_t invalidUTF8[] = {0xC0, 0xAF};
+    if (fault == 14 || fault == 15)
+    {
+        error.errorCode = 128;
+        error.errorText = fault == 14 ? rseq_t() : rseq_t(invalidUTF8, sizeof(invalidUTF8));
+    }
     if (fault == 1) error.associationId = 8;
     if (fault == 2) error.userNum = masterChallenger ? 2 : 1;
     if (fault == 3) --error.seqNum;
@@ -367,12 +412,15 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
     if (fault == 7) data[objectOffset + 2] = 0x07;
     if (fault == 8) data[objectOffset + 3] = 0;
     if (fault == 11) data[1] = 0x20;
+    const bool validError = fault == 0 || fault == 2 || fault == 3 || fault == 4 || fault == 10 || fault == 13;
     const auto errorWire = HexConversions::to_hex(rseq_t(data.data(), errorSize));
     masterLog->messages.clear();
     pair.outstation.log.ClearLog();
     if (masterChallenger)
     {
         REQUIRE(pair.master.SendToMaster(errorWire));
+        REQUIRE(observer->received == (validError ? 1 : 0));
+        REQUIRE(observer->discarded == (cancels ? 1 : 0));
         if (fault == 13)
         {
             bool logged = false;
@@ -423,6 +471,8 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
     else
     {
         pair.outstation.SendToOutstation(errorWire);
+        REQUIRE(observer->received == (validError ? 1 : 0));
+        REQUIRE(observer->discarded == (cancels ? 1 : 0));
         if (fault == 13)
         {
             bool logged = false;
@@ -441,6 +491,26 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
         if (cancels) pair.outstation.SendToOutstation(errorWire);
         pair.outstation.SendToOutstation(lateReply);
         REQUIRE(pair.outstation.cmdHandler->NumSelect() == (cancels ? 0 : 1));
+    }
+    if (fault == 0 && code == 5)
+    {
+        // No immediate retry occurred above. A subsequent real receive event
+        // either uses the approved alternative or fails closed with no Challenge.
+        if (masterChallenger)
+            REQUIRE(pair.master.SendToMaster("F4 82 00 00"));
+        else
+            pair.outstation.SendToOutstation("C1 03");
+        const auto writes = masterChallenger ? pair.master.lower->NumWrites() : pair.outstation.lower->NumWrites();
+        REQUIRE(writes == (alternatives ? 1 : 0));
+        if (alternatives)
+        {
+            HexSequence next(masterChallenger ? pair.master.lower->PopWriteAsHex() : pair.outstation.lower->PopWriteAsHex());
+            Group120Var1 value;
+            REQUIRE(value.Read(next.ToRSeq().skip(masterChallenger ? 8 : 10)));
+            REQUIRE(value.macAlgorithm == 2);
+            REQUIRE(value.seqNum == challenge.seqNum + 1);
+        }
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
     }
 }
 
@@ -631,6 +701,17 @@ TEST_CASE("ProductionAuthentication - user critical transmission during non OK k
     REQUIRE(critical.ToRSeq()[1] == 3); // Normal SELECT, with no G120V3/V9 envelope.
     REQUIRE(critical.ToRSeq()[2] != 120);
     REQUIRE(masterSession.ControlKey(now).is_empty());
+    std::array<uint8_t, 64> errorBytes{};
+    APDUResponse errorAPDU(wseq_t(errorBytes.data(), errorBytes.size()));
+    errorAPDU.SetFunction(FunctionCode::AUTH_RESPONSE);
+    errorAPDU.SetControl(AppControlField::Request(pair.master.context->solSeq.Get()));
+    errorAPDU.SetIIN(IINField::Empty());
+    Group120Var7 unrelated(0, 2, 7, 1, DNPTime(0), rseq_t());
+    auto errorWriter = errorAPDU.GetWriter();
+    REQUIRE(errorWriter.WriteFreeFormat(&unrelated, 1));
+    REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(errorAPDU.ToRSeq())));
+    REQUIRE_FALSE(masterSession.IsExchanging()); // App SEQ alone cannot initiate Code 1 recovery.
+    REQUIRE(pair.master.lower->NumWrites() == 0);
     REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
     const auto sequence = pair.master.context->solSeq.Get();
     REQUIRE(pair.master.SendToMaster("C0 81 00 00")); // Transmission did not authenticate a response.
@@ -2137,4 +2218,480 @@ TEST_CASE("ProductionAuthentication - expired task Reply preserves independent m
     REQUIRE(pair.master.lower->NumWrites() == 1);
     REQUIRE(pair.master.lower->PopWriteAsHex() == "C7 00"); // Older unrelated CONFIRM keeps its place.
     REQUIRE(pair.master.context->confirmQueue.size() == 1);
+}
+
+TEST_CASE("ProductionAuthentication - Code 1 recovers only a transmitted user critical authentication attempt",
+          "[production-sa][auth-error]")
+{
+    const bool aggressive = GENERATE(false, true);
+    // Match, CSQ, user, association, app SEQ, timeout, reconnect, lost KSQ, independent monitoring.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+    const bool poll = fault == 0 ? GENERATE(false, true) : false;
+    RuntimePair pair(false, aggressive);
+    pair.Pump();
+    if (aggressive)
+    {
+        pair.SelectOperate();
+        pair.Pump(); // Real handshake establishes eligibility, not a fabricated seed.
+    }
+    uint64_t now = 0;
+    if (fault == 9)
+    {
+        now = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).ValidUntil() - 1000;
+        pair.master.exe->advance_time(std::chrono::milliseconds(now));
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(now));
+        pair.master.exe->run_many();
+    }
+    const auto executions = pair.outstation.cmdHandler->NumInvocations();
+    const auto completions = pair.results.values.size();
+    if (poll)
+    {
+        auto config = TaskConfig::Default();
+        config.authenticationUser = 2;
+        pair.master.context->ScanClasses(ClassField::AllClasses(), pair.master.meas, config);
+        pair.master.exe->run_many();
+    }
+    else pair.SelectOperate();
+    const auto request = pair.master.lower->PopWriteAsHex();
+    std::string attemptWire;
+    uint32_t csq = 0;
+    uint16_t user = 0;
+    if (aggressive)
+    {
+        attemptWire = request;
+        HexSequence packet(attemptWire);
+        auto prefix = packet.ToRSeq().skip(6);
+        Group120Var3 value;
+        REQUIRE(Group120Var3::Read(prefix, value));
+        csq = value.seqNum;
+        user = value.userNum;
+    }
+    else
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        const auto challenge = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(challenge));
+        attemptWire = pair.master.lower->PopWriteAsHex();
+        HexSequence packet(attemptWire);
+        Group120Var2 value;
+        REQUIRE(value.Read(packet.ToRSeq().skip(8)));
+        csq = value.seqNum;
+        user = value.userNum;
+    }
+    HexSequence attempt(attemptWire);
+    const auto borrowed = aggressive
+        ? ProductionAuthenticationTestAccess::AggressiveBytes(*pair.master.context, attempt.ToRSeq().length())
+        : ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context).take(attempt.ToRSeq().length());
+    auto& session = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+    REQUIRE(session.LastKeyStatus() == 1);
+    // The peer really lost its keys. Its existing enforcement refuses this
+    // authenticating ASDU; optional Error emission is emulated below.
+    ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2).Disconnect();
+    pair.outstation.SendToOutstation(attemptWire);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == executions);
+    if (fault == 8)
+    {
+        REQUIRE(pair.master.SendToMaster("F3 82 00 00"));
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    }
+    if (fault == 10)
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.master.context->confirmQueue.push_back(APDUHeader::SolicitedConfirm(7));
+        REQUIRE(ProductionAuthenticationTestAccess::CheckConfirm(*pair.master.context));
+        REQUIRE(pair.master.lower->PopWriteAsHex() == "C7 00");
+    }
+    Group120Var7 error(csq, user, 7, 1, DNPTime(0), rseq_t());
+    if (fault == 1) --error.seqNum;
+    if (fault == 2) error.userNum = 1;
+    if (fault == 3) error.associationId = 8;
+    if (fault == 5)
+    {
+        pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
+        pair.master.exe->run_many();
+    }
+    if (fault == 6)
+    {
+        REQUIRE(pair.master.context->OnLowerLayerDown());
+        REQUIRE(pair.master.context->OnLowerLayerUp());
+        pair.master.exe->run_many();
+    }
+    if (fault == 7) session.PeerRestart(0);
+    if (fault == 9)
+    {
+        now += 1000; // Session expiry before the response deadline does not erase real attempt ownership.
+        pair.master.exe->advance_time(std::chrono::milliseconds(1000));
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(session.Ready(now));
+    }
+    std::array<uint8_t, 64> bytes{};
+    APDUResponse response(wseq_t(bytes.data(), bytes.size()));
+    response.SetFunction(FunctionCode::AUTH_RESPONSE);
+    response.SetControl(AppControlField::Request((attempt.ToRSeq()[0] + (fault == 4 ? 1 : 0)) & 0x0F));
+    response.SetIIN(IINField::Empty());
+    auto writer = response.GetWriter();
+    REQUIRE(writer.WriteFreeFormat(&error, 1));
+    const auto wire = HexConversions::to_hex(response.ToRSeq());
+    const auto previousWrites = pair.master.lower->NumWrites();
+    REQUIRE(pair.master.SendToMaster(wire));
+    REQUIRE(pair.master.lower->NumWrites() == previousWrites); // Active TX is never overwritten.
+    const bool recovers = fault == 0 || fault == 8 || fault == 9 || fault == 10;
+    if (!recovers)
+    {
+        if (fault != 5 && fault != 6) REQUIRE(borrowed.equals(attempt.ToRSeq()));
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == executions);
+        return;
+    }
+    if (!aggressive) REQUIRE_FALSE(session.IsExchanging()); // A Reply still owns its session until TX completion.
+    if (fault != 10) REQUIRE(borrowed.equals(attempt.ToRSeq()));
+    REQUIRE(pair.master.context->OnTxReady());
+    if (fault == 10)
+    {
+        REQUIRE(session.Ready(now)); // Do not invalidate a key while another CONFIRM owns its budget.
+        pair.outstation.SendToOutstation("C7 00");
+        const auto challenge = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(challenge)); // Recovery must still answer the independent CONFIRM's Challenge.
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto reply = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(reply);
+    }
+    REQUIRE(session.ControlKey(now).is_empty());
+    if (fault == 8)
+    {
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+        HexSequence monitoring(pair.master.lower->PopWriteAsHex());
+        REQUIRE(monitoring.ToRSeq()[3] == 1);
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+        pair.master.exe->run_many();
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto statusRequest = pair.master.lower->PopWriteAsHex();
+    HexSequence v4(statusRequest);
+    REQUIRE(v4.ToRSeq()[1] == 0x20);
+    REQUIRE(v4.ToRSeq()[3] == 4);
+    auto statusPayload = v4.ToRSeq().skip(6);
+    Group120Var4 statusUser;
+    REQUIRE(Group120Var4::Read(statusPayload, statusUser));
+    REQUIRE(statusUser.userNum == 2);
+    const auto pending = ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, v4.ToRSeq().length());
+    REQUIRE(pair.master.SendToMaster(wire)); // Duplicate cannot cancel or re-start V4.
+    REQUIRE(pending.equals(v4.ToRSeq()));
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(statusRequest);
+    pair.Pump();
+    REQUIRE(session.Ready(now + (fault == 8 ? 2000 : 0)));
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == executions); // No application-layer retransmission.
+    const auto seq = pair.master.context->solSeq.Get();
+    const std::string unauthenticated = std::string("C") + "0123456789ABCDEF"[seq] + " 81 00 00";
+    REQUIRE(pair.master.SendToMaster(unauthenticated));
+    REQUIRE(pair.results.values.size() == completions);
+    pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
+    pair.master.exe->run_many();
+    REQUIRE_FALSE(pair.master.context->activeTask);
+    REQUIRE(pair.results.values.size() == completions + (poll ? 0 : 1));
+    if (!poll) REQUIRE(pair.results.values.back().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+}
+
+TEST_CASE("ProductionAuthentication - Code 7 reports only authenticated authorization denial", "[production-sa][auth-error]")
+{
+    const bool aggressive = GENERATE(false, true);
+    // Allowed; denied; invalid MAC; wrong CSQ; unknown user; foreign association;
+    // replay; busy TX; explicit suppression; unavailable time; expired keys; time overflow.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+    auto observer = std::make_shared<RuntimeErrorObserver>();
+    RuntimePair pair(false, aggressive, false, nullptr, false, observer, 2, fault == 8);
+    pair.Pump();
+    if (aggressive)
+    {
+        pair.SelectOperate();
+        pair.Pump();
+    }
+    if (fault != 9) pair.outstation.application->SetTime(DNPTime(fault == 11 ? 0x1000000000000ULL : 123456789));
+    const auto executions = pair.outstation.cmdHandler->NumInvocations();
+    pair.policy->allowControl = fault == 0;
+    pair.SelectOperate();
+    const auto request = pair.master.lower->PopWriteAsHex();
+    std::string attempt;
+    std::string inFlight;
+    uint32_t csq = 0;
+    if (aggressive)
+    {
+        attempt = request;
+        HexSequence packet(attempt);
+        auto prefix = packet.ToRSeq().skip(6);
+        Group120Var3 value;
+        REQUIRE(Group120Var3::Read(prefix, value));
+        csq = value.seqNum;
+        REQUIRE(pair.master.context->OnTxReady());
+        if (fault == 7)
+        {
+            pair.outstation.SendToOutstation("C9 03"); // A genuine, still-transmitting Challenge owns its buffer.
+            inFlight = pair.outstation.lower->PopWriteAsHex();
+        }
+    }
+    else
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        const auto challenge = pair.outstation.lower->PopWriteAsHex();
+        if (fault == 7) inFlight = challenge;
+        else pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(challenge));
+        attempt = pair.master.lower->PopWriteAsHex();
+        HexSequence packet(attempt);
+        Group120Var2 value;
+        REQUIRE(value.Read(packet.ToRSeq().skip(8)));
+        csq = value.seqNum;
+        REQUIRE(pair.master.context->OnTxReady());
+    }
+    HexSequence originalAttempt(attempt);
+    std::vector<uint8_t> bytes(static_cast<const uint8_t*>(originalAttempt.ToRSeq()),
+        static_cast<const uint8_t*>(originalAttempt.ToRSeq()) + originalAttempt.ToRSeq().length());
+    if (fault == 2) bytes.back() ^= 1;
+    if (fault == 3) bytes[aggressive ? 6 : 8] ^= 1;
+    if (fault == 4) bytes[aggressive ? 10 : 12] = 3;
+    if (fault == 10) pair.outstation.AdvanceTime(TimeDuration::Milliseconds(900000));
+    if (fault == 5)
+        ProductionAuthenticationTestAccess::ReceiveOtherAssociation(pair.outstation.context, rseq_t(bytes.data(), bytes.size()));
+    else
+        pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(bytes.data(), bytes.size())));
+    if (fault == 0)
+    {
+        pair.Pump();
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == executions + 2);
+        REQUIRE(observer->denied == 0);
+        REQUIRE(observer->sent == 0);
+        return;
+    }
+    const bool authenticated = fault == 1 || fault == 6 || fault == 7 || fault == 8 || fault == 9 || fault == 11;
+    const bool emits = fault == 1 || fault == 6;
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == executions);
+    REQUIRE(observer->denied == (authenticated ? 1 : 0));
+    REQUIRE(observer->sent == (emits ? 1 : 0));
+    REQUIRE(pair.outstation.lower->NumWrites() == (emits ? 1 : 0));
+    if (emits)
+    {
+        const auto error = pair.outstation.lower->PopWriteAsHex();
+        HexSequence packet(error);
+        REQUIRE(packet.ToRSeq().length() == 25); // Header + existing free-format framing + 15-byte V7.
+        REQUIRE(packet.ToRSeq()[0] == static_cast<uint8_t>(0xC0 | (originalAttempt.ToRSeq()[0] & 0x0F)));
+        REQUIRE(packet.ToRSeq()[1] == 0x83);
+        REQUIRE(packet.ToRSeq()[4] == 120);
+        REQUIRE(packet.ToRSeq()[5] == 7);
+        REQUIRE(packet.ToRSeq()[6] == 0x5B);
+        REQUIRE(packet.ToRSeq()[7] == 1);
+        Group120Var7 value;
+        REQUIRE(value.Read(packet.ToRSeq().skip(10)));
+        REQUIRE(value.errorCode == 7);
+        REQUIRE(value.seqNum == csq);
+        REQUIRE(value.userNum == 2);
+        REQUIRE(value.associationId == 7);
+        REQUIRE(value.time.value == 123456789);
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(error));
+        REQUIRE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).Ready(0));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).IsExchanging());
+        if (fault == 6)
+        {
+            pair.outstation.SendToOutstation(attempt);
+            REQUIRE(pair.outstation.lower->NumWrites() == 0);
+            REQUIRE(observer->denied == 1);
+            REQUIRE(observer->sent == 1);
+        }
+    }
+    if (fault == 7)
+    {
+        HexSequence packet(inFlight);
+        REQUIRE(ProductionAuthenticationTestAccess::ChallengeBytes(pair.outstation.context)
+            .take(packet.ToRSeq().length()).equals(packet.ToRSeq()));
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.outstation.lower->NumWrites() == 0); // Busy suppression does not leave a stale queued Error.
+    }
+}
+
+TEST_CASE("ProductionAuthentication - authorization Error suppression reopens only on successful key change",
+          "[production-sa][auth-error]")
+{
+    const auto threshold = GENERATE(uint16_t{0}, uint16_t{2});
+    auto observer = std::make_shared<RuntimeErrorObserver>();
+    RuntimePair pair(false, false, false, nullptr, false, observer, threshold);
+    pair.Pump();
+    pair.policy->allowControl = false;
+    uint64_t now = 0;
+    for (uint32_t n = 0; n < static_cast<uint32_t>(threshold) + 2; ++n)
+    {
+        pair.outstation.application->SetTime(DNPTime(100000 + now));
+        pair.SelectOperate();
+        pair.Pump();
+        REQUIRE(observer->denied == n + 1);
+        REQUIRE(observer->sent == std::min<uint32_t>(n + 1, static_cast<uint32_t>(threshold) + 1));
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+        const auto delay = pair.master.context->params.responseTimeout.value;
+        pair.master.exe->advance_time(delay);
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(delay.count()));
+        now += static_cast<uint64_t>(delay.count());
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(pair.master.context->activeTask);
+    }
+    const auto sent = observer->sent;
+    auto& session = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+    session.RequestRenewal(now);
+    pair.master.exe->advance_time(std::chrono::milliseconds(100));
+    pair.outstation.AdvanceTime(TimeDuration::Milliseconds(100));
+    pair.master.exe->run_many();
+    pair.Pump(); // Actual V4/V5/V6/V5; an Error or task reset alone never resets the budget.
+    REQUIRE(session.Ready(now + 100));
+    REQUIRE(observer->sent == sent);
+    pair.SelectOperate();
+    pair.Pump();
+    REQUIRE(observer->sent == sent + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("ProductionAuthentication - Code 7 cannot cancel an indistinguishable independent Monitoring Challenge",
+          "[production-sa][auth-error]")
+{
+    RuntimePair pair;
+    pair.Pump();
+    pair.outstation.application->SetTime(DNPTime(123456789));
+    pair.policy->allowCommonWrite = false;
+    auto config = TaskConfig::Default();
+    config.authenticationUser = 1;
+    pair.master.context->PerformFunction("user WRITE", FunctionCode::WRITE, [](HeaderWriter&) { return true; }, config);
+    pair.master.exe->run_many();
+    const auto request = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(request);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(challenge));
+    const auto reply = pair.master.lower->PopWriteAsHex(); // Kept in flight while the independent Challenge queues.
+    REQUIRE(pair.master.SendToMaster("F0 82 00 00"));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    const auto pending = ProductionAuthenticationTestAccess::Pending(*pair.master.context);
+    const auto pendingBytes = ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context);
+    std::vector<uint8_t> saved(static_cast<const uint8_t*>(pendingBytes), static_cast<const uint8_t*>(pendingBytes) + pending);
+    pair.outstation.SendToOutstation(reply);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto error = pair.outstation.lower->PopWriteAsHex();
+    REQUIRE(pair.master.SendToMaster(error));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == pending);
+    REQUIRE(ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context).take(pending).equals(rseq_t(saved.data(), saved.size())));
+    REQUIRE(pair.master.context->OnTxReady());
+    HexSequence next(pair.master.lower->PopWriteAsHex());
+    Group120Var1 value;
+    REQUIRE(value.Read(next.ToRSeq().skip(8)));
+    REQUIRE(value.macAlgorithm == 4); // Code 7 must never select the Code 5 recovery path.
+}
+
+TEST_CASE("ProductionAuthentication - Code 7 distinguishes policy denial from OPERATE ownership failure",
+          "[production-sa][auth-error]")
+{
+    const bool aggressive = GENERATE(false, true);
+    const bool denyPolicy = GENERATE(false, true);
+    const auto selection = GENERATE(0, 1, 2); // Missing SELECT, other user, same user with wrong app sequence.
+    auto observer = std::make_shared<RuntimeErrorObserver>();
+    RuntimePair pair(false, aggressive, false, nullptr, false, observer);
+    pair.Pump();
+    pair.outstation.application->SetTime(DNPTime(123456789));
+    // Complete a real SELECT/OPERATE to establish both users' session material,
+    // the Aggressive seed/sequence, and an empty current SELECT ownership.
+    pair.SelectOperate();
+    const auto select = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(select);
+    pair.Pump();
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+    HexSequence selected(select);
+    std::vector<uint8_t> native(static_cast<const uint8_t*>(selected.ToRSeq()),
+        static_cast<const uint8_t*>(selected.ToRSeq()) + selected.ToRSeq().length());
+    uint8_t appSequence = pair.master.context->solSeq.Get();
+    MasterResponder responder(7, 16);
+    std::array<uint8_t, 2048> wire{};
+    size_t size = 0;
+    auto challengeReply = [&](uint16_t user) {
+        pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(native.data(), native.size())));
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto challenge = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        auto& session = ProductionAuthenticationTestAccess::Session(*pair.master.context, user);
+        REQUIRE(responder.SetSessionKey(user, session.ControlKey(0), session.ValidUntil(), 0) == MasterResponder::Result::OK);
+        REQUIRE(responder.RetainRequest(7, rseq_t(native.data(), native.size()), 0) == MasterResponder::Result::OK);
+        HexSequence packet(challenge);
+        REQUIRE(responder.Respond(7, packet.ToRSeq(), 0, wseq_t(wire.data(), wire.size()), size) == MasterResponder::Result::OK);
+        pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(wire.data(), size)));
+    };
+    if (selection != 0)
+    {
+        pair.policy->allowCommonSelect = true;
+        native[0] = static_cast<uint8_t>(0xC0 | appSequence);
+        challengeReply(selection == 1 ? 1 : 2); // Real, authorized SELECT; never mutate private ownership state.
+        pair.Pump(); // Complete its response authentication before the next request.
+        REQUIRE(pair.outstation.cmdHandler->NumSelect() == 2);
+        if (aggressive)
+            REQUIRE(ProductionAuthenticationTestAccess::ControlAggressive(*pair.master.context)
+                .RememberChallenge(responder.LastAcceptedChallenge(), false));
+        appSequence = static_cast<uint8_t>((appSequence + (selection == 2 ? 2 : 1)) & 15);
+    }
+    native[0] = static_cast<uint8_t>(0xC0 | appSequence);
+    native[1] = FunctionCodeSpec::to_type(FunctionCode::OPERATE);
+    pair.policy->allowControl = !denyPolicy;
+    REQUIRE(pair.policy->IsAuthorized(7, 2, native[1], native.data(), native.size()) == !denyPolicy);
+    uint32_t csq = 0;
+    if (aggressive)
+    {
+        auto& session = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+        REQUIRE(ProductionAuthenticationTestAccess::ControlAggressive(*pair.master.context)
+            .Create(7, 2, session.ControlKey(0), rseq_t(native.data(), native.size()), wseq_t(wire.data(), wire.size()), size));
+        Group120Var3 authenticated;
+        auto prefix = rseq_t(wire.data(), size).skip(6);
+        REQUIRE(Group120Var3::Read(prefix, authenticated));
+        csq = authenticated.seqNum;
+        pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(wire.data(), size)));
+    }
+    else
+    {
+        challengeReply(2);
+        Group120Var2 authenticated;
+        REQUIRE(authenticated.Read(rseq_t(wire.data(), size).skip(8)));
+        csq = authenticated.seqNum;
+    }
+    // Missing SELECT, another user's SELECT, and a native sequence mismatch
+    // must not execute OPERATE or masquerade as an authorization-policy denial.
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+    REQUIRE(observer->denied == (denyPolicy ? 1 : 0));
+    REQUIRE(observer->sent == (denyPolicy ? 1 : 0));
+    const bool nativeSequenceFailure = selection == 2 && !denyPolicy;
+    REQUIRE(pair.outstation.lower->NumWrites() == ((denyPolicy || nativeSequenceFailure) ? 1 : 0));
+    if (denyPolicy)
+    {
+        HexSequence error(pair.outstation.lower->PopWriteAsHex());
+        REQUIRE(error.ToRSeq()[1] == 0x83);
+        REQUIRE(error.ToRSeq()[5] == 7);
+        Group120Var7 value;
+        REQUIRE(value.Read(error.ToRSeq().skip(10)));
+        REQUIRE(value.errorCode == 7);
+        REQUIRE(value.userNum == 2);
+        REQUIRE(value.seqNum == csq);
+        REQUIRE(value.associationId == 7);
+    }
+    else if (nativeSequenceFailure)
+    {
+        const auto response = pair.outstation.lower->PopWriteAsHex();
+        HexSequence packet(response);
+        REQUIRE(packet.ToRSeq()[1] == 0x81); // Native command rejection, not an Authentication Error.
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(response));
+        pair.Pump(); // Also validate the ordinary response's Monitoring MAC.
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+        REQUIRE(observer->denied == 0);
+        REQUIRE(observer->sent == 0);
+    }
 }

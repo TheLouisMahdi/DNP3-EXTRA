@@ -133,6 +133,7 @@ AggressiveMode::AggressiveMode(uint16_t association_, size_t tagLength_, bool mo
     : association(association_),
       tagLength(tagLength_),
       macAlgorithm(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
+      macPolicy(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
       monitoringDirection(monitoring_)
 {
 }
@@ -146,6 +147,7 @@ void AggressiveMode::Reset()
     {
         crypto::Clear(ser4cpp::wseq_t(h.apdu.data(), h.apdu.size()));
         h.size = 0;
+        h.algorithm = 0;
         h.haveChallenge = h.confirmPending = false;
     }
     crypto::Clear(ser4cpp::wseq_t(scratch.data(), scratch.size()));
@@ -153,24 +155,25 @@ void AggressiveMode::Reset()
     haveSequence = false;
 }
 bool AggressiveMode::InspectEmbeddedChallenge(
-    ser4cpp::rseq_t apdu, Group120Var1& value, size_t& nativeSize) const
+    ser4cpp::rseq_t apdu, Group120Var1& value, size_t& nativeSize, uint8_t envelopeAlgorithm) const
 {
     nativeSize = apdu.length();
     if (monitoringDirection || !ValidFragment(apdu, true) || !ValidAuthenticationMAC(macAlgorithm, tagLength))
         return false;
+    const auto envelopeTagLength = AuthenticationTagLength(envelopeAlgorithm ? envelopeAlgorithm : macAlgorithm);
     size_t begin = 4, end = apdu.length();
     if (apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 3)
     {
-        if (apdu.length() < 4 + 10 + 6 + tagLength)
+        if (!envelopeTagLength || apdu.length() < 4 + 10 + 6 + envelopeTagLength)
             return false;
         Prefix prefix;
         Suffix suffix;
         begin += 10;
-        end -= 6 + tagLength;
+        end -= 6 + envelopeTagLength;
         if (APDUParser::Parse(apdu.skip(4).take(10), prefix, nullptr) != ParseResult::OK || !prefix.valid
             || prefix.value.userNum != 1
             || APDUParser::Parse(apdu.skip(end), suffix, nullptr) != ParseResult::OK || !suffix.valid
-            || suffix.value.hmacValue.length() != tagLength)
+            || suffix.value.hmacValue.length() != envelopeTagLength)
             return false;
     }
     Native native(true);
@@ -180,7 +183,7 @@ bool AggressiveMode::InspectEmbeddedChallenge(
         return true;
     const AppControlField control(apdu[0]);
     value = native.challenge;
-    if (!control.CON || value.userNum != 0 || value.reason != 1 || value.macAlgorithm != macAlgorithm)
+    if (!control.CON || value.userNum != 0 || value.reason != 1 || !macPolicy.Allows(value.macAlgorithm))
         return false;
     for (const auto& previous : history)
     {
@@ -193,7 +196,7 @@ bool AggressiveMode::InspectEmbeddedChallenge(
     nativeSize = static_cast<const uint8_t*>(value.challengeData) - static_cast<const uint8_t*>(apdu) - 14;
     return nativeSize >= begin && nativeSize < end;
 }
-bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited, bool embedded)
+bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited, bool embedded, uint8_t envelopeAlgorithm)
 {
     const size_t headerSize = monitoringDirection ? 2 : 4;
     if (!static_cast<const uint8_t*>(apdu) || apdu.length() < headerSize || apdu.length() > MAX_APDU
@@ -203,7 +206,7 @@ bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited, b
     if (embedded)
     {
         size_t nativeSize = 0;
-        if (!InspectEmbeddedChallenge(apdu, challenge.value, nativeSize) || nativeSize == apdu.length()
+        if (!InspectEmbeddedChallenge(apdu, challenge.value, nativeSize, envelopeAlgorithm) || nativeSize == apdu.length()
             || ((apdu[0] & 0x10) != 0) != unsolicited)
             return false;
     }
@@ -215,7 +218,7 @@ bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited, b
             || !header.header.control.IsFirAndFin() || header.header.control.UNS || header.header.control.CON
             || APDUParser::Parse(apdu.skip(headerSize), challenge, nullptr) != ParseResult::OK || !challenge.valid
             || challenge.value.reason != 1 || challenge.value.userNum != (monitoringDirection ? 1 : 0)
-            || challenge.value.macAlgorithm != macAlgorithm)
+            || !macPolicy.Allows(challenge.value.macAlgorithm))
             return false;
     }
     for (const auto& previous : history)
@@ -228,6 +231,7 @@ bool AggressiveMode::RememberChallenge(ser4cpp::rseq_t apdu, bool unsolicited, b
     crypto::Clear(ser4cpp::wseq_t(h.apdu.data(), h.apdu.size()));
     std::memcpy(h.apdu.data(), apdu, apdu.length());
     h.size = apdu.length();
+    h.algorithm = challenge.value.macAlgorithm;
     h.sequence = h.challengeSequence = challenge.value.seqNum;
     // Only the latest accepted Challenge owns the shared CSQ watermark. Retain
     // both cached transcripts and their per-category MAC/CONFIRM sequence state.
@@ -289,12 +293,14 @@ bool AggressiveMode::Create(
         return false;
     const AppControlField control(original[0]);
     const auto& h = history[control.UNS ? 1 : 0];
-    if (!h.size || (HasPendingConfirm() && !h.confirmPending)
+    const auto selectedAlgorithm = h.algorithm;
+    const auto selectedTagLength = AuthenticationTagLength(selectedAlgorithm);
+    if (!macPolicy.Allows(selectedAlgorithm) || !h.size || (HasPendingConfirm() && !h.confirmPending)
         || (h.confirmPending && (monitoringDirection || user != 1 || original.length() != 2 || original[1] != 0
                                 || !RequiresConfirm(control.SEQ, control.UNS))))
         return false;
     const size_t headerSize = monitoringDirection ? 4 : 2;
-    const size_t required = original.length() + 10 + 6 + tagLength;
+    const size_t required = original.length() + 10 + 6 + selectedTagLength;
     if (required > MAX_APDU || output.length() < required)
         return false;
     Native native(monitoringDirection && control.CON);
@@ -305,7 +311,7 @@ bool AggressiveMode::Create(
     prefix.seqNum = h.confirmPending ? h.challengeSequence : sequence + 1;
     prefix.userNum = user;
     uint8_t placeholder[16] = {};
-    Group120Var9 suffix(ser4cpp::rseq_t(placeholder, tagLength));
+    Group120Var9 suffix(ser4cpp::rseq_t(placeholder, selectedTagLength));
     auto write = [&](APDUWrapper& apdu) {
         auto writer = apdu.GetWriter();
         return writer.WriteSingleValue<ser4cpp::UInt8>(QualifierCode::UINT8_CNT, prefix)
@@ -331,11 +337,11 @@ bool AggressiveMode::Create(
         return false;
     // Table A-9: exact saved Challenge APDU, then the full current APDU through
     // the G120V9 header and length prefix, excluding ONLY the MAC value itself.
-    const size_t authenticated = required - tagLength;
+    const size_t authenticated = required - selectedTagLength;
     std::memcpy(scratch.data(), h.apdu.data(), h.size);
     std::memcpy(scratch.data() + h.size, output, authenticated);
-    if (ComputeAuthenticationMAC(macAlgorithm, key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
-                                 output.skip(authenticated).take(tagLength))
+    if (ComputeAuthenticationMAC(selectedAlgorithm, key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
+                                 output.skip(authenticated).take(selectedTagLength))
         != crypto::Result::OK)
         return false;
     history[control.UNS ? 1 : 0].sequence = prefix.seqNum;
@@ -353,37 +359,40 @@ bool AggressiveMode::Verify(
     size = 0;
     Guard guard{output, ser4cpp::wseq_t(scratch.data(), scratch.size())};
     const size_t headerSize = monitoringDirection ? 4 : 2;
-    if (assoc != association || !user || !ValidFragment(apdu, monitoringDirection)
-        || !ValidAuthenticationMAC(macAlgorithm, tagLength) || apdu.length() < headerSize + 10 + 6 + tagLength
+    if (!ValidFragment(apdu, monitoringDirection)) return false;
+    const auto& h = history[(apdu[0] & 0x10) ? 1 : 0];
+    const auto selectedAlgorithm = h.algorithm;
+    const auto selectedTagLength = AuthenticationTagLength(selectedAlgorithm);
+    if (assoc != association || !user
+        || !macPolicy.Allows(selectedAlgorithm) || apdu.length() < headerSize + 10 + 6 + selectedTagLength
         || !static_cast<const uint8_t*>(key) || (key.length() != 16 && key.length() != 32)
         || !static_cast<uint8_t*>(output) || Overlap(apdu, output) || Overlap(key, output))
         return false;
-    const auto& h = history[(apdu[0] & 0x10) ? 1 : 0];
     if (!h.size)
         return false;
     Prefix prefix;
     Suffix suffix;
     Native native(monitoringDirection && (apdu[0] & 0x20) != 0);
-    const size_t suffixStart = apdu.length() - 6 - tagLength;
+    const size_t suffixStart = apdu.length() - 6 - selectedTagLength;
     const size_t nativeSize = suffixStart - headerSize - 10;
     if (output.length() < headerSize + nativeSize
         || APDUParser::Parse(apdu.skip(headerSize).take(10), prefix, nullptr) != ParseResult::OK || !prefix.valid
         || prefix.value.userNum != user || APDUParser::Parse(apdu.skip(suffixStart), suffix, nullptr) != ParseResult::OK
-        || !suffix.valid || suffix.value.hmacValue.length() != tagLength
+        || !suffix.valid || suffix.value.hmacValue.length() != selectedTagLength
         || APDUParser::Parse(apdu.skip(headerSize + 10).take(nativeSize), native, nullptr,
                              apdu[1] == 1 ? ParserSettings::NoContents() : ParserSettings::Default())
             != ParseResult::OK || !native.valid)
         return false;
     const uint32_t delta = prefix.value.seqNum - h.sequence;
-    const bool confirm = !monitoringDirection && h.confirmPending && user == 1 && apdu.length() == 2 + 10 + 6 + tagLength
+    const bool confirm = !monitoringDirection && h.confirmPending && user == 1 && apdu.length() == 2 + 10 + 6 + selectedTagLength
         && apdu[1] == 0 && RequiresConfirm(apdu[0] & 0x0F, (apdu[0] & 0x10) != 0)
         && prefix.value.seqNum == h.challengeSequence;
     if (h.confirmPending ? !confirm : (!delta || delta >= 0x80000000u))
         return false;
-    const size_t authenticated = apdu.length() - tagLength;
+    const size_t authenticated = apdu.length() - selectedTagLength;
     std::memcpy(scratch.data(), h.apdu.data(), h.size);
     std::memcpy(scratch.data() + h.size, apdu, authenticated);
-    if (VerifyAuthenticationMAC(macAlgorithm, key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
+    if (VerifyAuthenticationMAC(selectedAlgorithm, key, ser4cpp::rseq_t(scratch.data(), h.size + authenticated),
                                 suffix.value.hmacValue)
         != crypto::Result::OK)
         return false;

@@ -1,6 +1,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "auth/AuthenticationSession.h"
 
+#include "auth/AuthenticationMAC.h"
 #include "crypto/CryptoProvider.h"
 
 #include <limits>
@@ -24,7 +25,9 @@ bool AuthenticationSession::Load(uint64_t now)
 {
     for (auto& entry : sessions)
         entry->Reset();
-    if (config.mode != AuthenticationConfig::Mode::REQUIRED || !config.credentials || !config.authorization
+    AuthenticationMACPolicy mac(ResolveAuthenticationMAC(config.macAlgorithm, config.tagLength));
+    if (!mac.Configure(config) || config.mode != AuthenticationConfig::Mode::REQUIRED
+        || !config.credentials || !config.authorization
         || config.users[0] != 1 || !config.users[1] || config.users[0] == config.users[1])
         return false;
     struct Key

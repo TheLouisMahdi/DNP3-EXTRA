@@ -229,6 +229,10 @@ private:
               association(config.association),
               responder(association, config.tagLength, config.replyTimeoutMs, false, config.macAlgorithm)
         {
+            monitoring.ConfigureMACs(config);
+            controlAggressive.ConfigureMACs(config);
+            monitoringAggressive.ConfigureMACs(config);
+            responder.ConfigureMACs(config);
         }
         ~AuthenticationState()
         {
@@ -270,6 +274,18 @@ private:
         bool replyPending = false;
         bool replyInFlight = false;
         bool protectedTask = false;
+        // Only a newly user-queued critical task admitted in Security Idle can
+        // initiate 7.5.3.4(c) recovery. Ownership is recorded at actual TX, never
+        // inferred from an application SEQ or an unanswered keyless request.
+        bool userCritical = false, recoveringKeys = false;
+        struct ErrorAttempt
+        {
+            uint32_t csq = 0, ksq = 0;
+            uint16_t user = 0;
+            uint8_t appSequence = 0;
+            uint64_t deadline = 0;
+            bool valid = false;
+        } errorAttempt;
         bool allowUnkeyedCritical = false; // Admission for this task only; never armed by a timer.
         bool replyIssued = false;
     };

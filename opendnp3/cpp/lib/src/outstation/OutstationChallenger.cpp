@@ -31,6 +31,7 @@ OutstationChallenger::OutstationChallenger(uint16_t associationId_,
       associationId(associationId_),
       tagLength(tagLength_),
       macAlgorithm(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
+      macPolicy(ResolveAuthenticationMAC(macAlgorithm_, tagLength_)),
       replyTimeoutMs(replyTimeoutMs_)
 {
 }
@@ -86,6 +87,12 @@ void OutstationChallenger::Tick(uint64_t nowMs)
         ClearPending();
 }
 
+bool OutstationChallenger::MatchesError(const Group120Var7& error, uint8_t appSequence) const
+{
+    return error.associationId == associationId && error.userNum == (monitoringDirection ? 1 : 0)
+        && requestSize && error.seqNum == pendingSequence && (transcript[0] & 0x0F) == appSequence;
+}
+
 bool OutstationChallenger::CancelOnError(const Group120Var7& error, uint8_t appSequence, uint64_t nowMs)
 {
     // A.45.7: echo the user of the challenged operation. Our standalone
@@ -95,9 +102,16 @@ bool OutstationChallenger::CancelOnError(const Group120Var7& error, uint8_t appS
     if (error.associationId != associationId || error.userNum != (monitoringDirection ? 1 : 0))
         return false;
     Tick(nowMs);
-    if (!requestSize || error.seqNum != pendingSequence || (transcript[0] & 0x0F) != appSequence)
+    if (!MatchesError(error, appSequence))
         return false;
     ClearPending(); // Never publish the challenged ASDU, invalidate keys or reset CSQ.
+    if (error.errorCode == 5)
+    {
+        macAlgorithm = macPolicy.Reject(macAlgorithm);
+        tagLength = AuthenticationTagLength(macAlgorithm);
+        // Zero disables new Challenges until configuration is corrected. Never
+        // retry immediately or fall back to an unapproved/previously rejected MAC.
+    }
     return true;
 }
 
@@ -177,7 +191,7 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         ClearPending();
     if (requestSize)
         return Result::BUSY; // Table 7-8, row 3: discard NEW request.
-    if (!ValidAuthenticationMAC(macAlgorithm, tagLength) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
+    if (!macPolicy.Allows(macAlgorithm) || !ValidAuthenticationMAC(macAlgorithm, tagLength) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
         || replyTimeoutMs % 100 != 0 || overlapping || !static_cast<const uint8_t*>(request) || request.length() < 2
         || request.length() > MAX_REQUEST_SIZE)
         return Result::INVALID_INPUT;

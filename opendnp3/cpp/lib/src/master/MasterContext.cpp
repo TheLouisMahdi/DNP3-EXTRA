@@ -23,6 +23,7 @@
 #include "app/APDULogging.h"
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
+#include "auth/AuthenticationError.h"
 #include "crypto/CryptoProvider.h"
 #include "gen/objects/Group12.h"
 #include "gen/objects/Group41.h"
@@ -236,6 +237,7 @@ void MContext::CompleteActiveTask()
     {
         authentication->protectedTask = false;
         authentication->allowUnkeyedCritical = false;
+        authentication->userCritical = authentication->recoveringKeys = authentication->errorAttempt.valid = false;
         authentication->replyIssued = false;
     }
 #endif
@@ -459,6 +461,31 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
 {
     logging::ParseAndLogRequestTx(this->logger, data);
     assert(!this->isSending);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions && authentication->protectedTask && activeTask
+        && !authentication->protectedConfirm && data.length() >= 12 && data[2] == 120)
+    {
+        auto& auth = *authentication;
+        Group120Var2 reply;
+        Group120Var3 aggressive;
+        auto prefix = data.skip(6);
+        const bool isReply = data[1] == 0x20 && data[3] == 2 && reply.Read(data.skip(8));
+        const bool isAggressive = data[1] < 0x20 && data[3] == 3 && Group120Var3::Read(prefix, aggressive);
+        const auto user = isReply ? reply.userNum : aggressive.userNum;
+        auto* session = auth.sessions->Find(user);
+        if ((isReply || isAggressive) && session && user == activeTask->AuthenticationUser()
+            && (data[0] & 0x1F) == solSeq.Get())
+        {
+            auth.errorAttempt.csq = isReply ? reply.seqNum : aggressive.seqNum;
+            auth.errorAttempt.ksq = session->Sequence();
+            auth.errorAttempt.user = user;
+            auth.errorAttempt.appSequence = data[0] & 0x0F;
+            auth.errorAttempt.deadline = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                executor->get_time().time_since_epoch()).count()) + params.responseTimeout.value.count();
+            auth.errorAttempt.valid = true;
+        }
+    }
+#endif
     this->isSending = true;
     this->lower->BeginTransmit(Message(this->addresses, data));
 }
@@ -593,12 +620,13 @@ bool MContext::Run(const std::shared_ptr<IMasterTask>& task)
         const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             executor->get_time().time_since_epoch()).count());
         auto* session = auth.sessions->Find(task->AuthenticationUser());
-        auth.allowUnkeyedCritical = task->IsUserTask() && !task->IsRecurring() && session
+        auth.userCritical = task->IsUserTask() && !task->IsRecurring() && session
             && auth.exchangeIndex == 2 && !auth.pendingWireSize && !auth.replyPending && !auth.replyInFlight
             && !auth.protectedConfirm && !auth.deferredAuthenticationCount && !auth.monitorWaiting
             && !auth.controlAggressive.HasPendingConfirm()
-            && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE
-            && session->CanSendUnkeyedCritical(now);
+            && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE;
+        auth.allowUnkeyedCritical = auth.userCritical && session->CanSendUnkeyedCritical(now);
+        auth.errorAttempt.valid = auth.recoveringKeys = false;
     }
 #endif
     FORMAT_LOG_BLOCK(logger, flags::INFO, "Begining task: %s", this->activeTask->Name());
@@ -731,7 +759,12 @@ MContext::TaskState MContext::ResumeActiveTask()
         // including every mandatory critical function in IEEE Table 7-7 (p252).
         authentication->protectedTask = request.GetFunction() != FunctionCode::CONFIRM
             && (authentication->sessions || request.GetFunction() != FunctionCode::READ);
+        // Reuse the active protection policy for Code 1 (including configured
+        // optional critical functions). The keyless exception above remains mandatory-only.
+        authentication->userCritical = authentication->userCritical
+            && authentication->protectedTask && !request.GetControl().UNS;
         authentication->replyIssued = false;
+        authentication->errorAttempt.valid = false; // A later SELECT/OPERATE stage is a new attempt.
         bool aggressive = false;
         if (authentication->protectedTask && authentication->sessions && !unkeyedCritical)
         {
@@ -952,7 +985,8 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
     const auto original = APDUHeaderParser::ParseResponse(native);
     Group120Var1 challenge;
     size_t nativeSize = 0;
-    if (!original.success || !auth.controlAggressive.InspectEmbeddedChallenge(native, challenge, nativeSize))
+    if (!original.success || (auth.recoveringKeys && original.header.function == FunctionCode::RESPONSE)
+        || !auth.controlAggressive.InspectEmbeddedChallenge(native, challenge, nativeSize))
     {
         FinalizeAuthenticationCounts();
         return;
@@ -971,7 +1005,8 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
             return;
         }
         if (!auth.responder.ObserveEmbeddedChallenge(auth.association, challenge, header.control.UNS, now)
-            || !auth.controlAggressive.RememberChallenge(wire, header.control.UNS, true))
+            || !auth.controlAggressive.RememberChallenge(wire, header.control.UNS, true,
+                    auth.monitoringAggressive.Algorithm(header.control.UNS)))
         {
             FinalizeAuthenticationCounts();
             return;
@@ -1054,6 +1089,17 @@ void MContext::ResetAuthentication()
     authentication->allowUnkeyedCritical = false;
     authentication->responder.Reset();
     DiscardEmbeddedConfirm();
+    // A task timeout can abort a CONFIRM that was delaying an already-owned
+    // Code 1 recovery. Settle its counts first, then retain the required renewal.
+    if (isOnline && authentication->recoveringKeys && authentication->errorAttempt.valid && authentication->sessions)
+    {
+        auto* owner = authentication->sessions->Find(authentication->errorAttempt.user);
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count());
+        if (owner && owner->Sequence() == authentication->errorAttempt.ksq)
+            owner->RequestRenewal(now);
+    }
+    authentication->userCritical = authentication->recoveringKeys = authentication->errorAttempt.valid = false;
     authentication->controlAggressive.Reset();
     authentication->monitoringAggressive.Reset();
     authentication->controlEligible = {{false, false}};
@@ -1171,6 +1217,19 @@ void MContext::ServiceAuthentication()
         auth.restartRekeys = 0;
     for (size_t n = 0; n < 2; ++n)
         auth.sessions->At(n)->Tick(now);
+    if (auth.recoveringKeys && auth.errorAttempt.valid && !auth.protectedConfirm
+        && !auth.deferredAuthenticationCount && !auth.replyPending && !auth.replyInFlight
+        && (auth.errorAttempt.user != 1 || !auth.monitorWaiting))
+    {
+        auto* owner = auth.sessions->Find(auth.errorAttempt.user);
+        if (owner && owner->Sequence() == auth.errorAttempt.ksq)
+        {
+            owner->RequestRenewal(now);
+            auth.controlEligible[owner->User() == auth.sessions->config.users[0] ? 0 : 1] = false;
+            if (auth.responderUser == owner->User()) auth.responder.Reset();
+        }
+        auth.errorAttempt.valid = false; // Applied once; a replacement KSQ needs no repeat renewal.
+    }
     auth.monitoring.Tick(now);
     if (auth.monitorWaiting && auth.monitoring.GetState() != OutstationChallenger::State::WAITING_FOR_REPLY)
     {
@@ -1211,10 +1270,12 @@ void MContext::ServiceAuthentication()
         auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
     }
     if (!auth.pendingWireSize && auth.exchangeIndex == 2 && !auth.monitorWaiting && !auth.protectedConfirm
-        && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE))
+        && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE && !auth.recoveringKeys))
     {
-        for (size_t n = 0; n < 2; ++n)
+        const size_t first = auth.recoveringKeys && auth.errorAttempt.user == auth.sessions->config.users[1] ? 1 : 0;
+        for (size_t offset = 0; offset < 2; ++offset)
         {
+            const size_t n = (first + offset) % 2;
             auto* session = auth.sessions->At(n);
             if (session->NeedsExchange(now))
             {
@@ -1281,18 +1342,32 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
         if (!header.control.IsFirAndFin() || header.control.CON || header.control.UNS
             || APDUParser::Parse(apdu.skip(4), error, nullptr) != ParseResult::OK || !error.valid
             || error.value.associationId != auth.association
-            || error.value.errorCode == 0 || error.value.errorCode == 2 || error.value.errorCode == 3
-            || (error.value.errorCode >= 13 && error.value.errorCode < 128))
+            || !ValidAuthenticationError(error.value))
             return true;
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication error received: code=%u user=%u sequence=%u",
                          error.value.errorCode, error.value.userNum, error.value.seqNum);
-        // Valid unknown-user Errors remain useful diagnostics, but an unconfigured
-        // nonzero user cannot own an active authentication exchange.
-        if (error.value.userNum && auth.sessions && !auth.sessions->Find(error.value.userNum))
-            return true;
+        // CancelOnError itself enforces the exact Challenge owner. Unknown
+        // nonzero users cannot cancel it, but still reach logging/accounting.
         const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             executor->get_time().time_since_epoch()).count());
-        if (auth.monitorWaiting && auth.monitoring.CancelOnError(error.value, header.control.SEQ, now))
+        auto* owner = auth.sessions ? auth.sessions->Find(error.value.userNum) : nullptr;
+        const auto& attempt = auth.errorAttempt;
+        const bool ownsAttempt = attempt.valid
+            && activeTask && tstate == TaskState::WAIT_FOR_RESPONSE && now < attempt.deadline
+            && owner && owner->LastKeyStatus() && owner->Sequence() == attempt.ksq
+            && error.value.userNum == attempt.user && error.value.seqNum == attempt.csq
+            && header.control.SEQ == attempt.appSequence && attempt.appSequence == solSeq.Get()
+            && activeTask->AuthenticationUser() == attempt.user;
+        const bool recover = error.value.errorCode == 1 && auth.userCritical && ownsAttempt;
+        auth.monitoring.Tick(now);
+        // Error has no direction field. If both independent common-user
+        // exchanges match, it cannot safely identify either owner.
+        const bool ambiguous = ownsAttempt && auth.monitorWaiting && auth.monitoring.MatchesError(error.value, header.control.SEQ);
+        if (ambiguous)
+            SIMPLE_LOG_BLOCK(logger, flags::WARN, "Ambiguous authentication Error ownership; ignored");
+        const bool discarded = !ambiguous && auth.monitorWaiting
+            && auth.monitoring.CancelOnError(error.value, header.control.SEQ, now);
+        if (discarded)
         {
             auth.monitorWaiting = false;
             // Only this operation's unsent Challenge is discarded; wire may be in flight.
@@ -1304,10 +1379,39 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 auth.pendingWireSize = 0;
             }
         }
-        // Responder/key-change recovery is code-specific (P4-FIX-02). An Error
-        // never authenticates data, starts a retry or resets another exchange.
+        if (!discarded && !ownsAttempt)
+            SIMPLE_LOG_BLOCK(logger, flags::WARN, "Challenger has no matching authentication Error exchange");
+        if (discarded && error.value.errorCode == 5)
+            FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication MAC rejected; next Challenge algorithm=%u (0=no permitted alternative)",
+                             auth.monitoring.MACAlgorithm());
+        if (auth.sessions && auth.sessions->config.errorObserver)
+        {
+            try
+            {
+                auth.sessions->config.errorObserver->OnErrorReceived(auth.association, error.value.userNum,
+                    error.value.seqNum, error.value.errorCode, discarded);
+            }
+            catch (...) {} // Diagnostics must never alter protocol/TX ownership.
+        }
+        if (!discarded && !ambiguous && recover)
+        {
+            // 7.5.3.4(c): recover keys, never retry or authorize the original ASDU.
+            // Local key expiry is allowed here; no expired key is read or reused.
+            auth.userCritical = false;
+            auth.recoveringKeys = true;
+            auth.replyIssued = false;
+            // Retain the owned attempt until ServiceAuthentication can settle
+            // an independent Reply/CONFIRM without invalidating its key budget.
+            ServiceAuthentication(); // Existing V4/V5/V6 procedure and retry budget.
+        }
         return true;
     }
+    // Recovery never turns the old request's response into success, including
+    // if an independent common-user CONFIRM later sets replyIssued.
+    if (authentication->recoveringKeys && (header.function == FunctionCode::RESPONSE
+        || (header.function == FunctionCode::AUTH_RESPONSE && !authentication->protectedConfirm
+            && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 1)))
+        return true;
     if (authentication->sessions)
     {
         auto& auth = *authentication;
