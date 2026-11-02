@@ -10,6 +10,7 @@
 
 namespace opendnp3
 {
+class AuthenticationStatistics;
 // Internal session-key lifecycle for one (association,user). The owner serializes
 // calls, supplies monotonic milliseconds, schedules retries, and counts auth ASDUs.
 // No transport, credential persistence, authorization or runtime activation.
@@ -53,6 +54,8 @@ public:
     // session state. Expiry is an absolute monotonic deadline, never a default key.
     Result Configure(ser4cpp::rseq_t updateKey, uint64_t credentialExpiry, uint64_t now);
     bool NeedsExchange(uint64_t now);
+    void SetStatistics(AuthenticationStatistics* value) { statistics = value; }
+    void CommunicationFailure(uint64_t now);
     uint8_t LastKeyStatus() const { return lastKeyStatus; } // Zero means no accepted remote status.
     bool CanSendUnkeyedCritical(uint64_t now);
     bool HasMonitoringHistory() const
@@ -77,7 +80,10 @@ public:
         return valid ? config.messageLimit - messages : 0;
     }
     void RequestRenewal(uint64_t now);
+    bool RequestAuthenticationRenewal(uint64_t now);
+    void OnExchangeTransmit(uint8_t variation, uint8_t sequence);
     void PeerRestart(uint64_t now); // after a bounded, explicitly detected peer restart
+    void RequestPeerRestart(uint64_t now); // Query first; retain old Monitoring proof until restart is confirmed.
     void Disconnect();              // invalidates authorization; keeps configured Update Key
     // Runtime owner reports whether its exact V6 is still queued, not on transport.
     void SetChangeQueued(ser4cpp::rseq_t change, bool queued);
@@ -98,6 +104,8 @@ public:
     {
         return ksq;
     }
+    bool AwaitingKeyConfirmation() const { return phase == Phase::CONFIRM; }
+    bool IsStatusAuthentic(const struct Group120Var5& value) const;
 
 private:
     enum class Phase
@@ -135,6 +143,8 @@ private:
     size_t lastChangeSize = 0;
     size_t pendingChangeSize = 0;
     bool changeQueued = false;
+    bool failureRenewalPending = false; // Reason belongs to this exchange, not a received USR.
+    bool cappedRetry = false; // Distinguishes the existing renewal backoff from reconnect/explicit renewal.
     size_t keySize = 0;
     bool configured = false;
     bool valid = false;
@@ -151,7 +161,9 @@ private:
     uint8_t appSequence = 0;
     uint8_t attempts = 0;
     uint8_t lastKeyStatus = 0;
+    uint8_t invalidStatus = 2; // Outstation's NOT_INIT/AUTH_FAIL/COMM_FAIL, not remote Key Status.
     Phase phase = Phase::IDLE;
+    AuthenticationStatistics* statistics = nullptr;
 };
 } // namespace opendnp3
 #endif

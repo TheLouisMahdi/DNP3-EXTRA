@@ -44,6 +44,7 @@
 #include <exe4cpp/asio/StrandExecutor.h>
 
 #include <deque>
+#include <functional>
 #include <memory>
 
 namespace opendnp3
@@ -211,6 +212,7 @@ private:
     // uses configured credential retrieval and the authenticated session exchange.
     friend class AuthenticationRuntimeTestAccess;
     friend class ProductionAuthenticationTestAccess;
+    friend class MasterStack;
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
@@ -233,10 +235,12 @@ private:
             controlAggressive.ConfigureMACs(config);
             monitoringAggressive.ConfigureMACs(config);
             responder.ConfigureMACs(config);
+            monitoring.SetStatistics(&sessions->statistics);
         }
         ~AuthenticationState()
         {
             serviceTimer.cancel();
+            monitoring.SetStatistics(nullptr);
         }
         OutstationChallenger monitoring;
         AggressiveMode controlAggressive, monitoringAggressive;
@@ -253,9 +257,9 @@ private:
         uint16_t responderUser = 0;
         bool wireInFlight = false;
         bool established = false;
+        std::function<void()> closeTCPConnection;
         bool peerRestartAllowed = true;
-        uint32_t restartRekeys = 0;
-        uint64_t restartWindow = 0;
+        bool restartIINSet = false, restartRecoveryPending = false;
         bool protectedConfirm = false;
         uint8_t deferredAuthenticationCount = 0;
         uint32_t deferredAuthenticationKSQ = 0;
@@ -296,6 +300,7 @@ private:
     void CancelAuthenticationReply();
     void TransmitAuthenticationReply();
     void ServiceAuthentication();
+    void ServiceSecurityStatistics(uint64_t now);
     void ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native, uint8_t count);
     void FinalizeAuthenticationCounts();
     void DiscardEmbeddedConfirm();

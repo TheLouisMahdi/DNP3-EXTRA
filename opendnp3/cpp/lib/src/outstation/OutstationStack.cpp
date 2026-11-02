@@ -48,6 +48,12 @@ OutstationStack::OutstationStack(const Logger& logger,
                application)
 {
     this->tstack.transport->SetAppLayer(ocontext);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (ocontext.authentication)
+        ocontext.authentication->closeTCPConnection = [owner = std::weak_ptr<IOHandler>(iohandler)]() {
+            if (auto channel = owner.lock()) channel->CloseForSecurity();
+        };
+#endif
 }
 
 bool OutstationStack::Enable()

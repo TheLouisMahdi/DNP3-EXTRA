@@ -1,6 +1,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #ifndef OPENDNP3_AUTHENTICATIONCONFIG_H
 #define OPENDNP3_AUTHENTICATIONCONFIG_H
+#include "opendnp3/auth/SecurityStatistic.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -32,9 +33,8 @@ public:
                               const uint8_t* requestAPDU,
                               size_t requestSize) const = 0;
 };
-// The owner may map this notification to Table 7-8 row 13 accounting:
-// Error Messages Received; and, when discardedPending is true, Discarded
-// Messages and Reset Max Reply Timeouts. No key material is exposed.
+// Diagnostics only. Internal Table 7-8 accounting is association-owned and does
+// not depend on an observer being installed. No key material is exposed.
 class IAuthenticationErrorObserver
 {
 public:
@@ -69,10 +69,14 @@ struct AuthenticationConfig
     enum class Transport { NETWORK, SERIAL };
     Transport transport = Transport::NETWORK;
     uint8_t keyWrapAlgorithm = 2;
-    uint16_t maxRestartRekeys = 2;
+    uint16_t maxRestartRekeys = 3;
     // Table 7-6/7-15: stop after Error Messages Sent EXCEEDS this threshold;
     // successful session-key change reopens the budget. Zero permits one Error.
     uint16_t maxErrorMessagesSent = 2;
+    // Local-only thresholds. Legacy explicit Max settings above remain aliases
+    // for indexes 17/10; contradictory explicit settings fail configuration.
+    SecurityStatisticThresholds statisticThresholds = DefaultSecurityStatisticThresholds();
+    std::shared_ptr<IAuthenticationStatisticsStore> statisticsStore;
     bool suppressAuthenticationErrors = false;
     bool aggressiveTransmit = false;
     bool aggressiveReceive = false;

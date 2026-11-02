@@ -6,6 +6,7 @@
 #include "app/parsing/APDUHeaderParser.h"
 #include "app/parsing/APDUParser.h"
 #include "auth/AuthenticationMAC.h"
+#include "auth/AuthenticationStatistics.h"
 #include "crypto/CryptoProvider.h"
 
 #include <algorithm>
@@ -96,6 +97,7 @@ SessionKeys::SessionKeys(Role role_, uint16_t association_, uint16_t user_, cons
 }
 SessionKeys::~SessionKeys()
 {
+    statistics = nullptr;
     Reset();
 }
 bool SessionKeys::ValidConfig() const
@@ -133,6 +135,7 @@ void SessionKeys::RetainRecovery()
 }
 void SessionKeys::Invalidate()
 {
+    invalidStatus = 2;
     valid = false;
     validUntil = 0;
     messages = 0;
@@ -142,6 +145,9 @@ void SessionKeys::Invalidate()
 }
 void SessionKeys::Reset()
 {
+    if (statistics) statistics->CancelRecovery(user);
+    cappedRetry = false;
+    failureRenewalPending = false;
     Invalidate();
     ClearPending();
     crypto::Clear(ser4cpp::wseq_t(update.data(), update.size()));
@@ -190,6 +196,9 @@ void SessionKeys::PeerRestart(uint64_t now)
 {
     if (!Observe(now) || !configured || role != Role::MASTER)
         return;
+    if (statistics) statistics->CancelRecovery(user);
+    failureRenewalPending = false;
+    cappedRetry = false;
     Invalidate();
     ClearPending();
     crypto::Clear(ser4cpp::wseq_t(monitoring.data(), monitoring.size()));
@@ -203,14 +212,40 @@ void SessionKeys::PeerRestart(uint64_t now)
     attempts = 0;
     nextAttempt = now;
 }
+void SessionKeys::RequestPeerRestart(uint64_t now)
+{
+    if (role != Role::MASTER || !Observe(now) || !configured) return;
+    if (statistics) statistics->CancelRecovery(user);
+    failureRenewalPending = cappedRetry = false;
+    RetainRecovery();
+    Invalidate();
+    ClearPending();
+    lastKeyStatus = 0;
+    attempts = 0;
+    nextAttempt = now;
+    // A restart IIN is not proof that the peer lost keys. Keep the old V5 MAC
+    // evidence; the existing bounded NOT_INIT/no-MAC path confirms that case.
+}
 void SessionKeys::Disconnect()
 {
+    if (statistics) statistics->CancelRecovery(user);
+    cappedRetry = false;
+    failureRenewalPending = false;
+    if (statistics && role == Role::MASTER && phase != Phase::IDLE)
+        statistics->Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
     lastKeyStatus = 0;
     RetainRecovery();
     Invalidate();
     ClearPending();
     attempts = 0;
     nextAttempt = lastTime;
+    if (role == Role::OUTSTATION) invalidStatus = 4;
+}
+void SessionKeys::CommunicationFailure(uint64_t now)
+{
+    if (!Observe(now)) return;
+    Disconnect(); // Preserves sent-V6 recovery material, credentials and KSQ.
+    nextAttempt = now;
 }
 void SessionKeys::SetChangeQueued(ser4cpp::rseq_t change, bool queued)
 {
@@ -230,15 +265,36 @@ void SessionKeys::Tick(uint64_t now)
 {
     if (!Observe(now))
         return;
+    if (cappedRetry && now >= nextAttempt)
+    {
+        cappedRetry = false;
+        if (statistics && role == Role::MASTER && config.intervalMs)
+            statistics->ResetMaximum(SecurityStatistic::RESTART_REKEYS);
+    }
     if (valid && now >= validUntil)
+    {
+        if (statistics && role == Role::MASTER) statistics->ResetMaximum(SecurityStatistic::RESTART_REKEYS);
         Invalidate();
+    }
     if (deadline && now >= deadline)
     {
+        failureRenewalPending = false;
+        bool exhausted = attempts >= 3;
+        if (statistics && role == Role::MASTER)
+        {
+            statistics->Increment(SecurityStatistic::REPLY_TIMEOUTS);
+            exhausted = statistics->Exceeded(SecurityStatistic::REPLY_TIMEOUTS);
+            if (exhausted)
+            {
+                statistics->KeyChangeTimeoutLimit(user);
+            }
+        }
         RetainRecovery();
         ClearPending();
         Invalidate();
-        nextAttempt = now + (attempts >= 3 ? (config.intervalMs ? config.intervalMs : config.replyTimeoutMs) : 0);
-        if (attempts >= 3)
+        nextAttempt = now + (exhausted ? (config.intervalMs ? config.intervalMs : config.replyTimeoutMs) : 0);
+        cappedRetry = exhausted;
+        if (exhausted)
             attempts = 0;
     }
 }
@@ -259,16 +315,39 @@ void SessionKeys::CountAuthentication(uint64_t now)
 {
     Tick(now);
     if (valid && ++messages >= config.messageLimit)
+    {
+        if (statistics && role == Role::MASTER) statistics->ResetMaximum(SecurityStatistic::RESTART_REKEYS);
         Invalidate();
+    }
 }
 void SessionKeys::RequestRenewal(uint64_t now)
 {
     Tick(now);
     if (role == Role::MASTER && configured && phase == Phase::IDLE)
     {
+        if (statistics) statistics->CancelRecovery(user);
+        failureRenewalPending = false;
+        cappedRetry = false;
         Invalidate();
         nextAttempt = now;
     }
+}
+bool SessionKeys::RequestAuthenticationRenewal(uint64_t now)
+{
+    Tick(now);
+    if (role != Role::MASTER || !configured || phase != Phase::IDLE || failureRenewalPending) return false;
+    Invalidate();
+    nextAttempt = now;
+    failureRenewalPending = true;
+    cappedRetry = false;
+    return true;
+}
+void SessionKeys::OnExchangeTransmit(uint8_t variation, uint8_t sequence)
+{
+    if (!failureRenewalPending || sequence != appSequence
+        || !((variation == 4 && phase == Phase::STATUS) || (variation == 6 && phase == Phase::CONFIRM))) return;
+    failureRenewalPending = false;
+    if (statistics) statistics->AuthenticationRekeyStarted();
 }
 bool SessionKeys::CanSendUnkeyedCritical(uint64_t now)
 {
@@ -285,11 +364,18 @@ bool SessionKeys::NeedsExchange(uint64_t now)
 }
 SessionKeys::Result SessionKeys::Fail(Result result, uint64_t now)
 {
+    failureRenewalPending = false;
+    if (statistics && role == Role::MASTER && phase != Phase::IDLE && attempts >= 3)
+    {
+        statistics->Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
+        statistics->CancelRecovery(user);
+    }
     RetainRecovery();
     ClearPending();
     Invalidate();
     // Invalid traffic cannot accelerate the retry loop.
     nextAttempt = now + (attempts >= 3 && config.intervalMs ? config.intervalMs : config.replyTimeoutMs);
+    cappedRetry = attempts >= 3;
     if (attempts >= 3)
         attempts = 0;
     return result;
@@ -319,7 +405,7 @@ SessionKeys::Result SessionKeys::Begin(uint16_t assoc, uint8_t seq, uint64_t now
     appSequence = seq;
     phase = Phase::STATUS;
     deadline = now + config.replyTimeoutMs;
-    ++attempts;
+    if (attempts < 255) ++attempts;
     size = request.ToRSeq().length();
     guard.committed = true;
     return Result::OK;
@@ -329,6 +415,14 @@ bool SessionKeys::CheckStatusMAC(const Group120Var5& value, ser4cpp::rseq_t key,
     return value.macAlgorithm == macAlgorithm && value.hmacValue.length() == config.tagLength
         && transcript.length() != 0
         && VerifyAuthenticationMAC(macAlgorithm, key, transcript, value.hmacValue) == crypto::Result::OK;
+}
+bool SessionKeys::IsStatusAuthentic(const Group120Var5& value) const
+{
+    if (role != Role::MASTER || value.userNum != user) return false;
+    return (haveMonitoring && CheckStatusMAC(value, ser4cpp::rseq_t(monitoring.data(), keySize),
+                                            ser4cpp::rseq_t(lastChange.data(), lastChangeSize)))
+        || (recoverySize && CheckStatusMAC(value, ser4cpp::rseq_t(recoveryMonitoring.data(), 32),
+                                          ser4cpp::rseq_t(recoveryChange.data(), recoverySize)));
 }
 bool SessionKeys::MakeStatus(
     uint8_t seq, uint8_t status, uint64_t now, ser4cpp::wseq_t output, size_t& size, IINField iin)
@@ -403,7 +497,10 @@ SessionKeys::Result SessionKeys::Process(
     }
     KeyHandler handler;
     if (APDUParser::Parse(objects, handler, nullptr) != ParseResult::OK || !handler.valid)
+    {
+        if (statistics) statistics->Unexpected();
         return Fail(Result::INVALID, now);
+    }
     if (role == Role::OUTSTATION)
     {
         if (handler.variation == 4)
@@ -411,22 +508,31 @@ SessionKeys::Result SessionKeys::Process(
             if (handler.request.userNum != user)
                 return Result::INVALID;
             ClearPending();
-            if (!MakeStatus(seq, valid ? 1 : 2, now, output, size, iin))
+            if (!MakeStatus(seq, valid ? 1 : invalidStatus, now, output, size, iin))
                 return Fail(Result::CRYPTO_ERROR, now);
             guard.committed = true;
             return Result::OK;
         }
         if (handler.variation != 6 || handler.change.userNum != user || !awaitingChange || handler.change.seqNum != ksq
             || seq != appSequence)
+        {
+            if (statistics) statistics->Unexpected();
             return Fail(Result::INVALID, now);
+        }
         const auto wrapped = handler.change.keyWrapData;
         if (wrapped.length() < 24 || wrapped.length() > MAX_APDU || wrapped.length() % 8)
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
             return Fail(Result::INVALID, now);
+        }
         Secret<MAX_APDU> plaintext;
         if (WrapAuthenticationKeys(config.keyWrapAlgorithm, true, ser4cpp::rseq_t(update.data(), updateSize), wrapped,
                                    ser4cpp::wseq_t(plaintext.bytes.data(), wrapped.length() - 8))
             != crypto::Result::OK)
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
             return Fail(Result::CRYPTO_ERROR, now);
+        }
         auto input = ser4cpp::rseq_t(plaintext.bytes.data(), wrapped.length() - 8);
         uint16_t length = 0;
         ser4cpp::UInt16::read_from(input, length);
@@ -436,7 +542,10 @@ SessionKeys::Result SessionKeys::Process(
             || !crypto::ConstantTimeEqual(input.skip(2 * length).take(statusSize),
                                           ser4cpp::rseq_t(statusBytes.data(), statusSize))
             || crypto::ConstantTimeEqual(input.take(length), input.skip(length).take(length)))
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
             return Fail(Result::INVALID, now);
+        }
         Invalidate();
         crypto::Clear(ser4cpp::wseq_t(monitoring.data(), monitoring.size()));
         std::memcpy(control.data(), input, length);
@@ -450,28 +559,64 @@ SessionKeys::Result SessionKeys::Process(
         lastChangeSize = apdu.length();
         ClearPending();
         if (!MakeStatus(seq, 1, now, output, size, iin))
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
             return Fail(Result::CRYPTO_ERROR, now);
+        }
         // Confirmation V5 is not a new invitation to re-use the completed V6.
         awaitingChange = false;
         deadline = 0;
         guard.committed = true;
+        if (statistics) statistics->SessionKeysChanged();
         return Result::INSTALLED;
     }
     if (handler.variation != 5 || phase == Phase::IDLE || seq != appSequence || handler.status.userNum != user)
+    {
+        if (statistics) statistics->Unexpected();
+        if (handler.variation == 5 && phase != Phase::IDLE && handler.status.userNum != user)
+        {
+            if (phase == Phase::CONFIRM)
+            {
+                // Table 7-13 row 12: return to Wait for Key Status without
+                // restarting the Reply Timer. A sent V6 may already be installed.
+                const auto expires = deadline;
+                RetainRecovery();
+                ClearPending();
+                phase = Phase::STATUS;
+                deadline = expires;
+            }
+            return Result::INVALID; // Never fail the foreign user's transaction.
+        }
         return Fail(Result::INVALID, now);
+    }
     const auto& status = handler.status;
     if (status.keyWrapAlgorithm != config.keyWrapAlgorithm || status.keyStatus < 1 || status.keyStatus > 4
         || status.challengeData.length() > MAX_STATUS - 11)
+    {
+        if (statistics) statistics->Unexpected();
         return Fail(Result::INVALID, now);
+    }
     if (phase == Phase::CONFIRM)
     {
         if (status.seqNum != static_cast<uint32_t>(ksq + 1)
             || !CheckStatusMAC(status, ser4cpp::rseq_t(candidate.data() + 32, 32),
                                ser4cpp::rseq_t(pendingChange.data(), pendingChangeSize)))
+        {
+            if (statistics)
+            {
+                statistics->Unexpected();
+                statistics->Increment(SecurityStatistic::AUTHENTICATION_FAILURES);
+            }
             return Fail(Result::INVALID, now);
+        }
         lastKeyStatus = status.keyStatus;
         if (status.keyStatus != 1)
-            return Fail(Result::INVALID, now);
+        {
+            // Table 7-13 row 2: unexpected, but remain waiting for the owned
+            // confirmation. Do not restart its timer or count a failed change.
+            if (statistics) statistics->Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+            return Result::INVALID;
+        }
         crypto::Clear(ser4cpp::wseq_t(control.data(), control.size()));
         crypto::Clear(ser4cpp::wseq_t(monitoring.data(), monitoring.size()));
         std::memcpy(control.data(), candidate.data(), 32);
@@ -492,6 +637,7 @@ SessionKeys::Result SessionKeys::Process(
         crypto::Clear(ser4cpp::wseq_t(recoveryChange.data(), recoveryChange.size()));
         recoverySize = 0;
         guard.committed = true;
+        if (statistics) statistics->SessionKeysChanged();
         return Result::INSTALLED;
     }
     const uint32_t advance = status.seqNum - ksq;
@@ -504,7 +650,14 @@ SessionKeys::Result SessionKeys::Process(
     const bool initialStatus = !haveMonitoring && !recoverySize && status.keyStatus != 1 && status.macAlgorithm == 0
         && !status.hmacValue.length();
     if ((haveKSQ && (!advance || advance >= 0x80000000u)) || (!existingMAC && !recoveryMAC && !initialStatus))
+    {
+        if (statistics)
+        {
+            statistics->Unexpected();
+            statistics->Increment(SecurityStatistic::AUTHENTICATION_FAILURES);
+        }
         return Fail(Result::INVALID, now);
+    }
     lastKeyStatus = status.keyStatus; // Only after existing user, sequence and MAC/initial-status validation.
     const size_t rawSize = status.Size() - status.hmacValue.length();
     auto raw = ser4cpp::wseq_t(statusBytes.data(), statusBytes.size());

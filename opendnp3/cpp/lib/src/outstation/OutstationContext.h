@@ -48,6 +48,7 @@
 #include <ser4cpp/container/Settable.h>
 
 #include <exe4cpp/IExecutor.h>
+#include <functional>
 
 namespace opendnp3
 {
@@ -95,6 +96,7 @@ private:
     // state through configured credentials and the normal protocol exchange.
     friend class AuthenticationRuntimeTestAccess;
     friend class ProductionAuthenticationTestAccess;
+    friend class OutstationStack;
     struct AuthenticationState
     {
         AuthenticationState(uint16_t association, size_t tagLength)
@@ -109,6 +111,7 @@ private:
         {
             replyTimer.cancel();
             monitoringTimer.cancel();
+            challenger.SetStatistics(nullptr);
         }
         explicit AuthenticationState(const AuthenticationConfig& config)
             : monitoring(config.association, config.tagLength, config.replyTimeoutMs, true, config.macAlgorithm),
@@ -122,6 +125,7 @@ private:
             controlAggressive.ConfigureMACs(config);
             monitoringAggressive.ConfigureMACs(config);
             challenger.ConfigureMACs(config);
+            challenger.SetStatistics(&sessions->statistics);
         }
         MasterResponder monitoring;
         AggressiveMode controlAggressive, monitoringAggressive;
@@ -131,7 +135,7 @@ private:
         std::unique_ptr<AuthenticationSession> sessions;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
         size_t pendingWireSize = 0;
-        uint32_t errorsSinceKeyChange = 0; // Suppression budget, not a duplicate G121 statistic.
+        std::function<void()> closeTCPConnection;
         uint8_t deferredControlCount = 0;
         uint32_t deferredControlKSQ = 0;
         uint32_t pendingReplyKSQ = 0;
@@ -151,6 +155,7 @@ private:
     void CountControlAuthentication(uint16_t user, uint8_t count, uint64_t now);
     void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();
+    void ServiceSecurityStatistics(uint64_t now);
     void TransmitPendingAuthentication();
     void SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t appSequence);
     bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);

@@ -53,6 +53,9 @@ public:
     }
 
     void Shutdown();
+    // Table 7-8 row 11. Close only the current TCP connection, off the parser
+    // callback stack; retain normal reconnect policy and ignore serial/UDP.
+    void CloseForSecurity();
 
     /// --- implement ILinkTx ---
 

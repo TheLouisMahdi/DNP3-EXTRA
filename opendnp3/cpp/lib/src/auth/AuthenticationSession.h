@@ -2,6 +2,7 @@
 #ifndef OPENDNP3_AUTHENTICATIONSESSION_H
 #define OPENDNP3_AUTHENTICATIONSESSION_H
 #include "auth/SessionKeys.h"
+#include "auth/AuthenticationStatistics.h"
 
 #include "opendnp3/auth/AuthenticationConfig.h"
 
@@ -20,6 +21,7 @@ public:
     bool Authorize(uint16_t user, uint8_t function, uint64_t now, ser4cpp::rseq_t request = ser4cpp::rseq_t()) const;
     void Disconnect();
     const AuthenticationConfig config;
+    AuthenticationStatistics statistics;
 
 private:
     std::array<std::unique_ptr<SessionKeys>, 2> sessions;

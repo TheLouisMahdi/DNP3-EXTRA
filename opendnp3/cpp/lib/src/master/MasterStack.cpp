@@ -51,6 +51,12 @@ MasterStack::MasterStack(const Logger& logger,
                config.master))
 {
     tstack.transport->SetAppLayer(*mcontext);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (mcontext->authentication)
+        mcontext->authentication->closeTCPConnection = [owner = std::weak_ptr<IOHandler>(iohandler)]() {
+            if (auto channel = owner.lock()) channel->CloseForSecurity();
+        };
+#endif
 }
 
 bool MasterStack::Enable()

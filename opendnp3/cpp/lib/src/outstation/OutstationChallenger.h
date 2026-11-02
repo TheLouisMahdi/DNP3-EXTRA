@@ -13,6 +13,7 @@
 
 namespace opendnp3
 {
+class AuthenticationStatistics;
 
 // Internal, single-threaded, unconnected to request dispatch. One instance per
 // association. Callers supply monotonic milliseconds; no host clock is used.
@@ -79,6 +80,10 @@ public:
         return valid;
     }
     void Tick(uint64_t nowMs);
+    void SetStatistics(AuthenticationStatistics* value) { statistics = value; }
+    // Runtime parser/key checks rejected a Reply before MAC evaluation. Only
+    // this Challenger's pending ASDU is consumed; no user/key is selected here.
+    void RejectReply(uint64_t nowMs);
     // Table 7-8 row 13: cancel only the exact outstanding Challenge, retaining keys/CSQ.
     bool MatchesError(const Group120Var7& error, uint8_t appSequence) const;
     bool CancelOnError(const Group120Var7& error, uint8_t appSequence, uint64_t nowMs);
@@ -128,7 +133,7 @@ private:
         std::array<uint8_t, 32> key{};
     };
     bool ObserveTime(uint64_t nowMs);
-    void ClearPending();
+    void ClearPending(bool discarded = true);
     void ClearUser(User& user);
     bool HasKeys() const;
     User* FindUser(uint16_t user);
@@ -153,6 +158,7 @@ private:
     uint32_t sequence = 0; // startup zero, independent of user; wraps modulo 2^32.
     uint64_t challengeTime = 0;
     uint64_t lastTime = 0;
+    AuthenticationStatistics* statistics = nullptr;
 };
 
 } // namespace opendnp3

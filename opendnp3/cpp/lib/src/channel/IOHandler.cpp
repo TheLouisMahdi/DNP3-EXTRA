@@ -48,6 +48,18 @@ void IOHandler::Shutdown()
     }
 }
 
+void IOHandler::CloseForSecurity()
+{
+    const auto active = channel;
+    if (!active || !active->IsTCP()) return;
+    active->executor->post([self = shared_from_this(), active]() {
+        if (self->isShutdown || self->channel != active) return;
+        self->Reset(); // Native shutdown notifies lower-layer-down; buffers follow existing I/O ownership.
+        self->UpdateListener(ChannelState::OPENING);
+        self->OnChannelShutdown();
+    });
+}
+
 void IOHandler::OnReadComplete(const std::error_code& ec, size_t num)
 {
     if (ec)

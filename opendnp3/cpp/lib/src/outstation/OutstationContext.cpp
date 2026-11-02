@@ -81,6 +81,7 @@ OContext::OContext(const Addresses& addresses,
     {
 #ifdef OPENDNP3_USE_SA_CRYPTO
         authentication = std::make_shared<AuthenticationState>(params.authentication);
+        authentication->sessions->statistics.SetLogger(&this->logger);
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         if (!authentication->sessions->Load(now))
@@ -358,7 +359,25 @@ void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
 #endif
     logging::ParseAndLogResponseTx(this->logger, encoded);
     this->isTransmitting = true;
-    this->lower->BeginTransmit(Message(Addresses(this->addresses.source, destination), encoded));
+    const bool started = this->lower->BeginTransmit(Message(Addresses(this->addresses.source, destination), encoded));
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (started && authentication && authentication->sessions)
+    {
+        auto& statistics = authentication->sessions->statistics;
+        statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_SENT);
+        if (encoded.length() >= 6 && encoded[4] == 120)
+        {
+            if (encoded[1] == 0x83 && encoded[5] == 1) statistics.Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
+            uint16_t user = 0;
+            if ((encoded[1] == 0x83 && encoded[5] == 2)
+                || (encoded[5] == 3 && AggressiveMode::InspectUser(encoded, true, user)))
+                statistics.Increment(SecurityStatistic::CRITICAL_MESSAGES_SENT);
+            if (encoded[5] == 7) statistics.Increment(SecurityStatistic::ERROR_MESSAGES_SENT);
+        }
+    }
+#else
+    (void)started;
+#endif
 }
 
 void OContext::CheckForTaskStart()
@@ -601,6 +620,8 @@ bool OContext::ProcessMessage(const Message& message)
     // respondToAnyMaster exception must never create an authentication bypass.
     if (authentication && message.addresses != this->addresses.Reverse())
         return false;
+    if (authentication && authentication->sessions)
+        authentication->sessions->statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_RECEIVED);
 #endif
 
     FORMAT_HEX_BLOCK(this->logger, flags::APP_HEX_RX, message.payload, 18, 18);
@@ -613,6 +634,10 @@ bool OContext::ProcessMessage(const Message& message)
     const auto result = APDUHeaderParser::ParseRequest(message.payload, &this->logger);
     if (!result.success)
     {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions)
+            authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
         return false;
     }
 
@@ -621,17 +646,37 @@ bool OContext::ProcessMessage(const Message& message)
     if (!result.header.control.IsFirAndFin())
     {
         SIMPLE_LOG_BLOCK(this->logger, flags::WARN, "Ignoring fragment. Requests must have FIR/FIN == 1");
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions)
+            authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
         return false;
     }
 
     if (result.header.control.CON)
     {
         SIMPLE_LOG_BLOCK(this->logger, flags::WARN, "Ignoring fragment. Requests cannot request confirmation");
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions)
+            authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
         return false;
     }
 
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+        ServiceSecurityStatistics(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count()));
+#endif
     if (this->RouteAuthentication(message, result.header, result.objects))
+    {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions)
+            ServiceSecurityStatistics(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                executor->get_time().time_since_epoch()).count()));
+#endif
         return true;
+    }
     return this->ProcessObjects(ParsedRequest(message.addresses, result.header, result.objects));
 }
 
@@ -1073,12 +1118,47 @@ void OContext::ResetAuthentication()
 #endif
 }
 
+void OContext::ServiceSecurityStatistics(uint64_t now)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions) return;
+    auto& auth = *authentication;
+    auto& statistics = auth.sessions->statistics;
+    auth.challenger.Tick(now);
+    if (statistics.Exceeded(SecurityStatistic::REPLY_TIMEOUTS))
+    {
+        statistics.ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
+        ResetAuthentication();
+        for (size_t n = 0; n < 2; ++n) auth.sessions->At(n)->CommunicationFailure(now);
+        // This event explicitly affects ALL users. A queued old Status is now
+        // obsolete, but the transport-owned wire buffer remains untouched.
+        crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+        auth.pendingWireSize = 0;
+    }
+    if (statistics.Exceeded(SecurityStatistic::AUTHENTICATION_FAILURES)
+        && statistics.Exceeded(SecurityStatistic::AUTHENTICATION_REKEYS))
+    {
+        statistics.ResetMaximum(SecurityStatistic::AUTHENTICATION_FAILURES);
+        auth.challenger.CancelPending();
+        auth.replyTimer.cancel();
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Authentication rekey limit exceeded");
+        if (auth.closeTCPConnection) auth.closeTCPConnection();
+    }
+    // P6-OPEN-03: Control Challenges use USR=0. Failure totals/Max stay
+    // association-scoped; do not invent a user or invalidate unrelated keys.
+#else
+    (void)now;
+#endif
+}
+
 void OContext::SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t appSequence)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     auto& auth = *authentication;
     if (!auth.sessions)
         return;
+    auth.sessions->statistics.Increment(SecurityStatistic::AUTHORIZATION_FAILURES);
+    auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
     FORMAT_LOG_BLOCK(logger, flags::WARN, "Authorization failed: user=%u sequence=%u", user, sequence);
     if (auth.sessions->config.errorObserver)
     {
@@ -1088,7 +1168,7 @@ void OContext::SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t 
     // 7.5.2.4 permits suppressing Errors. Never evict an independent queued
     // authentication message, interrupt a responder, or overwrite borrowed TX bytes.
     if (auth.sessions->config.suppressAuthenticationErrors
-        || auth.errorsSinceKeyChange > auth.sessions->config.maxErrorMessagesSent
+        || auth.sessions->statistics.Exceeded(SecurityStatistic::ERROR_MESSAGES_SENT)
         || !CanTransmit() || auth.pendingWireSize || auth.monitoringPending)
         return;
     DNPTime time;
@@ -1148,9 +1228,6 @@ void OContext::TransmitPendingAuthentication()
     const auto size = auth.pendingWireSize;
     std::memcpy(auth.wire.data(), auth.pendingWire.data(), size);
     auth.pendingWireSize = 0;
-    // Reserve the budget at the actual TX boundary, before calling the lower layer.
-    if (error)
-        ++auth.errorsSinceKeyChange;
     BeginTx(addresses.destination, ser4cpp::rseq_t(auth.wire.data(), size));
     if (error && auth.sessions->config.errorObserver)
     {
@@ -1176,13 +1253,21 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return false;
+    auto* statistics = authentication->sessions ? &authentication->sessions->statistics : nullptr;
+    uint16_t aggressiveUser = 0;
+    const bool aggressive = objects.length() >= 2 && objects[0] == 120 && objects[1] == 3
+        && AggressiveMode::InspectUser(message.payload, false, aggressiveUser);
+    if (statistics && aggressive) statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
     if (objects.length() >= 2 && objects[0] == 120 && objects[1] == 7)
     {
         auto& auth = *authentication;
         if (header.function != FunctionCode::AUTH_REQUEST_NO_ACK)
+        {
+            if (statistics) statistics->Unexpected();
             return true;
+        }
         class ErrorHandler final : public IAPDUHandler
         {
         public:
@@ -1204,16 +1289,25 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             || APDUParser::Parse(objects, error, nullptr) != ParseResult::OK || !error.valid
             || error.value.associationId != auth.association
             || !ValidAuthenticationError(error.value))
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
             return true;
+        }
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication error received: code=%u user=%u sequence=%u",
                          error.value.errorCode, error.value.userNum, error.value.seqNum);
+        if (statistics) statistics->Increment(SecurityStatistic::ERROR_MESSAGES_RECEIVED);
         // CancelOnError itself enforces the exact Challenge owner. Unknown
         // nonzero users cannot cancel it, but still reach logging/accounting.
         const bool discarded = auth.challenger.CancelOnError(error.value, header.control.SEQ, now);
         if (discarded)
             auth.replyTimer.cancel();
         if (!discarded)
+        {
+            // A valid but unowned Error is unexpected and discarded. Do not
+            // cancel another exchange, invalidate keys, or lose its diagnostic.
+            if (statistics) statistics->Unexpected();
             SIMPLE_LOG_BLOCK(logger, flags::WARN, "Challenger has no matching authentication Error exchange");
+        }
         if (discarded && error.value.errorCode == 5)
             FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication MAC rejected; next Challenge algorithm=%u (0=no permitted alternative)",
                              auth.challenger.MACAlgorithm());
@@ -1233,6 +1327,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     authentication->challenger.Tick(now);
     if (header.control.UNS && header.function != FunctionCode::CONFIRM)
     {
+        if (statistics) statistics->Unexpected();
         this->ResetAuthentication();
         return true;
     }
@@ -1271,10 +1366,16 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             if (!CanTransmit() || auth.pendingWireSize
                 || (objects[1] == 4 && auth.challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
                 || APDUParser::Parse(objects, value, nullptr) != ParseResult::OK || !value.valid)
+            {
+                if (statistics) statistics->Unexpected();
                 return true;
+            }
             auto* session = auth.sessions->Find(value.user);
             if (!session)
+            {
+                if (statistics) statistics->Unexpected();
                 return true;
+            }
             if (auth.deferredControlCount && session->User() == 1)
                 ResetAuthentication(); // Settle the owning common-user exchange before session replacement.
             size_t size = 0;
@@ -1283,7 +1384,6 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                                                  size, GetResponseIIN());
             if (result == SessionKeys::Result::INSTALLED)
             {
-                auth.errorsSinceKeyChange = 0; // Table 7-6: only successful key change reopens Error transmission.
                 const auto index = session->User() == auth.sessions->config.users[0] ? 0u : 1u;
                 auth.controlEligible[index] = false;
                 if (session->User() == 1)
@@ -1306,11 +1406,15 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         if (objects[1] == 1)
         {
             if (!auth.monitoringPending || auth.pendingWireSize)
+            {
+                if (statistics) statistics->Unexpected();
                 return true;
+            }
             auto* session = auth.sessions->Find(1);
             if (!session || !session->Ready(now)
                 || (auth.deferredControlCount && session->Sequence() != auth.deferredControlKSQ))
             {
+                if (statistics) statistics->Unexpected();
                 ResetAuthentication();
                 return true;
             }
@@ -1334,16 +1438,27 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 TransmitPendingAuthentication();
             }
             else
+            {
+                if (statistics) statistics->Unexpected();
                 ResetAuthentication();
+            }
             return true;
         }
     }
     // Held common-key counts belong only to the retained response. Its monitoring
     // Challenge and key replacement were handled above; no new operation may use this budget.
     if (authentication->sessions && authentication->deferredControlCount)
+    {
+        if (statistics) statistics->Unexpected();
         return true;
+    }
     if (header.function == FunctionCode::AUTH_REQUEST)
     {
+        if (objects.length() < 2 || objects[0] != 120 || objects[1] != 2)
+        {
+            if (statistics) statistics->Unexpected();
+            return true; // Table 7-8 row 2: not a Reply; preserve the pending Challenge.
+        }
         // Parsing is side-effect free. Only a single, well-framed G120V2 may
         // consume pending authentication and release the exact queued request.
         class ReplyHandler final : public IAPDUHandler
@@ -1366,7 +1481,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         if (header.control.SEQ != authentication->sequence
             || APDUParser::Parse(objects, handler, nullptr) != ParseResult::OK || !handler.valid)
         {
-            this->ResetAuthentication();
+            authentication->challenger.RejectReply(now);
+            authentication->replyTimer.cancel();
             return true;
         }
         size_t size = 0;
@@ -1375,7 +1491,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             auto* session = authentication->sessions->Find(handler.reply.userNum);
             if (!session || !session->Ready(now))
             {
-                ResetAuthentication();
+                authentication->challenger.RejectReply(now);
+                authentication->replyTimer.cancel();
                 return true;
             }
         }
@@ -1420,6 +1537,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             }
             else if (authorizationDenied)
                 SendAuthorizationError(handler.reply.seqNum, handler.reply.userNum, original.header.control.SEQ);
+            else if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
             if (authentication->sessions)
             {
                 // Two distinct ASDUs: outgoing control Challenge and incoming verified Reply.
@@ -1433,20 +1551,45 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     {
         auto& auth = *authentication;
         if (!auth.sessions->config.aggressiveReceive)
+        {
+            if (statistics) statistics->Unexpected();
             return true;
-        uint16_t user = 0;
-        if (!AggressiveMode::InspectUser(message.payload, false, user))
+        }
+        const uint16_t user = aggressiveUser;
+        if (!aggressive)
+        {
+            if (statistics)
+            {
+                statistics->AuthenticationFailed();
+                statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
+            }
             return true;
+        }
         auto* session = auth.sessions->Find(user);
         const auto index = user == auth.sessions->config.users[0] ? 0u : 1u;
         size_t size = 0;
         if (!session || !session->Ready(now) || !auth.controlEligible[index]
             || !auth.controlAggressive.Verify(auth.association, user, session->ControlKey(now), message.payload,
                                               ser4cpp::wseq_t(auth.authorized.data(), auth.authorized.size()), size))
+        {
+            if (statistics)
+            {
+                statistics->AuthenticationFailed(); // Parsed USR is NOT an authenticated owner.
+                statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
+                if (auth.challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
+                    statistics->Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+            }
             return true;
+        }
+        if (statistics) statistics->Increment(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
         auth.challenger.ObserveAggressiveSequence(auth.controlAggressive.Sequence());
         if (header.function != FunctionCode::CONFIRM)
         {
+            if (statistics && auth.challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
+            {
+                statistics->Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+                statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
+            }
             auth.challenger.CancelPending();
             auth.replyTimer.cancel();
         }
@@ -1472,6 +1615,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             if (Group120Var3::Read(prefix, authenticated))
                 SendAuthorizationError(authenticated.seqNum, user, original.header.control.SEQ);
         }
+        else if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
         CountControlAuthentication(user, 1, now); // One incoming authenticated V3/native/V9 ASDU, after dispatch.
         crypto::Clear(ser4cpp::wseq_t(auth.authorized.data(), auth.authorized.size()));
         return true;
@@ -1479,20 +1623,31 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     // Unexpected authentication messages cannot reach ordinary request handlers.
     if (header.function == FunctionCode::AUTH_REQUEST_NO_ACK || FunctionCodeSpec::to_type(header.function) >= 0x80)
     {
+        if (statistics) statistics->Unexpected();
         this->ResetAuthentication();
         return true;
     }
     // Table 7-8 (IEEE PDF p257): discard new critical/non-critical messages while
     // waiting. Authentication never uses the normal deferred-request bypass.
     if (authentication->challenger.GetState() == OutstationChallenger::State::WAITING_FOR_REPLY)
+    {
+        if (statistics)
+        {
+            statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
+            statistics->Unexpected();
+        }
         return true;
+    }
     if (!authentication->sessions
         && (header.function == FunctionCode::READ || header.function == FunctionCode::CONFIRM))
         return false;
     if (authentication->sessions)
     {
         if (authentication->monitoringPending)
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
             return true;
+        }
         if (authentication->challenger.GetState() == OutstationChallenger::State::NO_SESSION_KEYS)
             for (size_t n = 0; n < 2; ++n)
             {
@@ -1507,7 +1662,10 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     // response state is busy, discard rather than admitting an unauthenticated
     // operation to the broadcast/no-ack/deferred execution paths.
     if (!this->CanTransmit() || (!this->state->IsIdle() && header.function != FunctionCode::CONFIRM))
+    {
+        if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
         return true;
+    }
     size_t size = 0;
     authentication->replyTimer.cancel();
     if (authentication->challenger.Challenge(
@@ -1524,9 +1682,11 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                     std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch())
                         .count());
                 authentication->challenger.Tick(time);
+                this->ServiceSecurityStatistics(time);
             });
         this->BeginTx(message.addresses.source, ser4cpp::rseq_t(authentication->challenge.data(), size));
     }
+    else if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
     return true;
 #else
     (void)message;

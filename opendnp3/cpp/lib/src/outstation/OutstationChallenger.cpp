@@ -1,5 +1,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "outstation/OutstationChallenger.h"
+#include "auth/AuthenticationStatistics.h"
 
 #include "app/APDURequest.h"
 #include "app/APDUResponse.h"
@@ -38,6 +39,7 @@ OutstationChallenger::OutstationChallenger(uint16_t associationId_,
 
 OutstationChallenger::~OutstationChallenger()
 {
+    statistics = nullptr;
     Reset();
 }
 
@@ -49,8 +51,9 @@ void OutstationChallenger::ClearUser(User& user)
     user.validUntil = 0;
 }
 
-void OutstationChallenger::ClearPending()
+void OutstationChallenger::ClearPending(bool discarded)
 {
+    if (requestSize && discarded && statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
     crypto::Clear(ser4cpp::wseq_t(transcript.data(), transcript.size()));
     requestSize = 0;
     challengeTime = 0;
@@ -84,7 +87,24 @@ bool OutstationChallenger::ObserveTime(uint64_t nowMs)
 void OutstationChallenger::Tick(uint64_t nowMs)
 {
     if (ObserveTime(nowMs) && requestSize && nowMs - challengeTime >= replyTimeoutMs)
+    {
+        if (statistics) statistics->Increment(SecurityStatistic::REPLY_TIMEOUTS);
         ClearPending();
+    }
+}
+void OutstationChallenger::RejectReply(uint64_t nowMs)
+{
+    Tick(nowMs);
+    if (statistics)
+    {
+        if (requestSize)
+        {
+            statistics->AuthenticationFailed(monitoringDirection ? 1 : 0);
+            statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
+        }
+        else statistics->Unexpected();
+    }
+    ClearPending();
 }
 
 bool OutstationChallenger::MatchesError(const Group120Var7& error, uint8_t appSequence) const
@@ -105,6 +125,7 @@ bool OutstationChallenger::CancelOnError(const Group120Var7& error, uint8_t appS
     if (!MatchesError(error, appSequence))
         return false;
     ClearPending(); // Never publish the challenged ASDU, invalidate keys or reset CSQ.
+    if (statistics) statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
     if (error.errorCode == 5)
     {
         macAlgorithm = macPolicy.Reject(macAlgorithm);
@@ -164,6 +185,7 @@ OutstationChallenger::Result OutstationChallenger::SetSessionKey(uint16_t number
             }
     if (!user)
         return Result::BUSY;
+    if (requestSize && statistics) statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
     ClearPending();
     ClearUser(*user);
     std::memcpy(user->key.data(), key, key.length());
@@ -187,10 +209,18 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         return Result::WRONG_ASSOCIATION;
     if (!ObserveTime(nowMs))
         return Result::INVALID_INPUT;
-    if (requestSize && nowMs - challengeTime >= replyTimeoutMs)
-        ClearPending();
+    Tick(nowMs);
     if (requestSize)
-        return Result::BUSY; // Table 7-8, row 3: discard NEW request.
+    {
+        // Table 7-8 row 3: a new critical ASDU cannot replace the owned
+        // pending ASDU. Context callers reject before reaching this path.
+        if (statistics)
+        {
+            statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
+            statistics->Unexpected(); // Exactly one unexpected and one discarded.
+        }
+        return Result::BUSY;
+    }
     if (!macPolicy.Allows(macAlgorithm) || !ValidAuthenticationMAC(macAlgorithm, tagLength) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
         || replyTimeoutMs % 100 != 0 || overlapping || !static_cast<const uint8_t*>(request) || request.length() < 2
         || request.length() > MAX_REQUEST_SIZE)
@@ -254,7 +284,10 @@ OutstationChallenger::Result OutstationChallenger::Reply(
     if (!ObserveTime(nowMs))
         return Result::INVALID_INPUT;
     if (!requestSize)
+    {
+        if (statistics) statistics->Unexpected();
         return Result::UNEXPECTED_REPLY;
+    }
     Result result = Result::INVALID_MAC;
     if (nowMs - challengeTime >= replyTimeoutMs)
         result = Result::EXPIRED;
@@ -276,6 +309,7 @@ OutstationChallenger::Result OutstationChallenger::Reply(
                     result = Result::OUTPUT_TOO_SMALL;
                 else
                 {
+                    if (statistics) statistics->Increment(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
                     std::memcpy(output, transcript.data() + challengeSize, requestSize);
                     outputSize = requestSize;
                     std::memcpy(acceptedChallenge.data(), transcript.data(), challengeSize);
@@ -293,7 +327,17 @@ OutstationChallenger::Result OutstationChallenger::Reply(
 
     // Table 7-8 rows 5..7: valid/invalid Reply or timeout always consumes pending
     // state. No retry with the same challenge, even after an invalid MAC/user/CSQ.
-    ClearPending();
+    if (statistics)
+    {
+        if (result == Result::EXPIRED) statistics->Increment(SecurityStatistic::REPLY_TIMEOUTS);
+        else
+        {
+            statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
+            if (result == Result::INVALID_MAC || result == Result::INVALID_USER || result == Result::INVALID_SEQUENCE)
+                statistics->AuthenticationFailed(monitoringDirection ? 1 : 0);
+        }
+    }
+    ClearPending(result != Result::AUTHENTICATED);
     return result;
 }
 

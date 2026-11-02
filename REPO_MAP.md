@@ -3,7 +3,7 @@
 C++ DNP3 workspace: two console apps + local OpenDNP3 3.1.2 source.
 Paths are relative to this root; section prefixes apply where stated.
 Read this map first; open only relevant files. Update after structural changes.
-Only `opendnp3/` has Git metadata; the workspace root is not a Git repository.
+The workspace root is the current Git repository; `opendnp3/` is its library subtree.
 
 ## Entry Points
 - `apps/master/main.cpp` → TCP client, polls, commands, measurement callbacks.
@@ -23,6 +23,7 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
 - `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
+- `auth/AuthenticationStatistics.*` → bounded association security counters, reporting baselines and five protocol maxima; no G121/G122 publication.
 - `auth/AggressiveMode.*` → authenticated V3/V9 envelopes, separate solicited/unsolicited challenge histories and replay checks.
 - `auth/WindowsAuthenticationCredentials.cpp` → read-only Windows Credential Manager adapter.
 - `master/MasterResponder.*`, `outstation/OutstationChallenger.*` → Control/Monitoring challenge-response cores.
@@ -39,6 +40,7 @@ Prefix: `opendnp3/cpp/lib/include/opendnp3/`
 - `outstation/UpdateBuilder.h` → measurement update API.
 - `channel/`, `link/LinkConfig.h` → endpoint, serial, TLS, retry and addressing settings.
 - `auth/AuthenticationConfig.h` → explicit secure/compatibility modes, users, credential retrieval and APDU authorization.
+- `auth/SecurityStatistic.h` → IEEE indexes/default thresholds and portable durable-retention interface.
 - `auth/WindowsAuthenticationCredentials.h` → Windows credential format and expiry contract.
 - `app/` → public measurement and command types.
 

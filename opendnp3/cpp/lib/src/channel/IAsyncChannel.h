@@ -40,6 +40,7 @@ public:
     IAsyncChannel(const std::shared_ptr<exe4cpp::StrandExecutor>& executor) : executor(executor) {}
 
     virtual ~IAsyncChannel() {}
+    virtual bool IsTCP() const { return false; }
 
     void SetCallbacks(const std::shared_ptr<IChannelCallbacks>& callbacks)
     {

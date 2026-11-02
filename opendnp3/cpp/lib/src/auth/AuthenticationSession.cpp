@@ -8,8 +8,19 @@
 
 namespace opendnp3
 {
+namespace
+{
+    SecurityStatisticThresholds StatisticThresholds(const AuthenticationConfig& config)
+    {
+        auto result = config.statisticThresholds;
+        if (config.maxErrorMessagesSent != 2) result[10] = config.maxErrorMessagesSent;
+        if (config.maxRestartRekeys != 3) result[17] = config.maxRestartRekeys;
+        return result;
+    }
+}
 AuthenticationSession::AuthenticationSession(SessionKeys::Role role, const AuthenticationConfig& config_)
-    : config(config_)
+    : config(config_), statistics(config.association, role == SessionKeys::Role::MASTER,
+                                 StatisticThresholds(config), config.statisticsStore)
 {
     SessionKeys::Config settings;
     settings.intervalMs = config.renewalIntervalMs;
@@ -19,7 +30,10 @@ AuthenticationSession::AuthenticationSession(SessionKeys::Role role, const Authe
     settings.macAlgorithm = config.macAlgorithm;
     settings.keyWrapAlgorithm = config.keyWrapAlgorithm;
     for (size_t n = 0; n < sessions.size(); ++n)
+    {
         sessions[n].reset(new SessionKeys(role, config.association, config.users[n], settings));
+        sessions[n]->SetStatistics(&statistics);
+    }
 }
 bool AuthenticationSession::Load(uint64_t now)
 {
@@ -27,6 +41,10 @@ bool AuthenticationSession::Load(uint64_t now)
         entry->Reset();
     AuthenticationMACPolicy mac(ResolveAuthenticationMAC(config.macAlgorithm, config.tagLength));
     if (!mac.Configure(config) || config.mode != AuthenticationConfig::Mode::REQUIRED
+        || (config.maxErrorMessagesSent != 2 && config.statisticThresholds[10] != 2
+            && config.maxErrorMessagesSent != config.statisticThresholds[10])
+        || (config.maxRestartRekeys != 3 && config.statisticThresholds[17] != 3
+            && config.maxRestartRekeys != config.statisticThresholds[17])
         || !config.credentials || !config.authorization
         || config.users[0] != 1 || !config.users[1] || config.users[0] == config.users[1])
         return false;
@@ -104,5 +122,6 @@ void AuthenticationSession::Disconnect()
 {
     for (auto& entry : sessions)
         entry->Disconnect();
+    statistics.Disconnect(); // Communication failure, Table 7-8 rows 8/9; no stale recovery owner on reconnect.
 }
 } // namespace opendnp3

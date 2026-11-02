@@ -1,5 +1,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "auth/SessionKeys.h"
+#include "auth/AuthenticationStatistics.h"
 #include "crypto/CryptoProvider.h"
 #include "gen/objects/Group120.h"
 
@@ -115,11 +116,13 @@ TEST_CASE("SessionKeys - actual wrapped exchange and independent direction keys"
 
 TEST_CASE("SessionKeys - confirmation MAC sequence user and malformed traffic fail closed", "[session-keys]")
 {
+    AuthenticationStatistics statistics(7, true, DefaultSecurityStatisticThresholds());
     KeyPair pair;
+    pair.master.SetStatistics(&statistics);
     pair.ToChange();
     REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
             == R::INSTALLED);
-    const auto mutation = GENERATE(0, 1, 2, 3, 4);
+    const auto mutation = GENERATE(0, 1, 2, 3, 4, 5);
     if (mutation == 0)
         pair.confirmation.bytes[pair.confirmation.size - 1] ^= 1;
     if (mutation == 1)
@@ -130,8 +133,12 @@ TEST_CASE("SessionKeys - confirmation MAC sequence user and malformed traffic fa
         pair.confirmation.bytes[18] = 3; // wrong MAL and tag size
     if (mutation == 4)
         --pair.confirmation.size;
+    if (mutation == 5)
+        pair.confirmation.bytes[16] = 1; // Unsupported wrap algorithm for this session.
     REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
             != R::INSTALLED);
+    REQUIRE(statistics.Value(SecurityStatistic::UNEXPECTED_MESSAGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::DISCARDED_MESSAGES) == 1);
     REQUIRE_FALSE(pair.master.Ready(pair.now));
     REQUIRE(pair.master.ControlKey(pair.now).is_empty());
     REQUIRE(pair.request.size == 0);
@@ -700,4 +707,189 @@ TEST_CASE("SessionKeys - non OK critical transmission requires capped Security I
         REQUIRE_FALSE(pair.master.CanSendUnkeyedCritical(10000000));
         REQUIRE(pair.master.LastKeyStatus() == 0);
     }
+}
+
+TEST_CASE("SessionKeys - statistics count installed and failed key changes at real boundaries", "[session-keys][sa-statistics]")
+{
+    AuthenticationStatistics m(7, true, DefaultSecurityStatisticThresholds());
+    AuthenticationStatistics o(7, false, DefaultSecurityStatisticThresholds());
+    KeyPair pair;
+    pair.master.SetStatistics(&m);
+    pair.outstation.SetStatistics(&o);
+    pair.Exchange();
+    REQUIRE(m.Value(SecurityStatistic::SESSION_KEY_CHANGES) == 1);
+    REQUIRE(o.Value(SecurityStatistic::SESSION_KEY_CHANGES) == 1);
+    REQUIRE(m.ReportPending(SecurityStatistic::AUTHENTICATION_FAILURES));
+    REQUIRE(o.ReportPending(SecurityStatistic::AUTHENTICATION_FAILURES));
+    REQUIRE(m.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == 0); // Key Status MAC is not Challenger success.
+    pair.ToChange();
+    pair.change.bytes[pair.change.size - 1] ^= 1;
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+        == R::CRYPTO_ERROR);
+    REQUIRE(o.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 1);
+    REQUIRE(o.Value(SecurityStatistic::SESSION_KEY_CHANGES) == 1);
+    // Replaying the failed V6 is now unexpected, not a second owned key change.
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+        == R::INVALID);
+    REQUIRE(o.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 1);
+    REQUIRE(o.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(o.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 0);
+}
+
+TEST_CASE("SessionKeys - configured Reply Timeout Max and disconnect account failed transaction once",
+          "[session-keys][sa-statistics]")
+{
+    auto thresholds = DefaultSecurityStatisticThresholds();
+    thresholds[3] = 1;
+    AuthenticationStatistics statistics(7, true, thresholds);
+    KeyPair pair;
+    pair.master.SetStatistics(&statistics);
+    SECTION("Max is strictly exceeded, then backoff and moving Max rearm")
+    {
+        for (unsigned n = 0; n < 2; ++n)
+        {
+            REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+            pair.now += pair.config.replyTimeoutMs;
+            pair.master.Tick(pair.now);
+            REQUIRE(statistics.Value(SecurityStatistic::REPLY_TIMEOUTS) == n + 1);
+            REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == n);
+        }
+        REQUIRE_FALSE(pair.master.NeedsExchange(pair.now));
+        REQUIRE(statistics.Maximum(SecurityStatistic::REPLY_TIMEOUTS) == 3);
+        uint16_t owner = 0;
+        REQUIRE(statistics.TakeKeyChangeTimeoutLimit(owner));
+        REQUIRE(owner == 2);
+        REQUIRE_FALSE(statistics.TakeKeyChangeTimeoutLimit(owner));
+        pair.master.Tick(pair.now);
+        REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 1);
+    }
+    SECTION("Disconnect consumes a pending key transaction only once")
+    {
+        REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+        pair.master.Disconnect();
+        pair.master.Disconnect();
+        REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 1);
+        REQUIRE(statistics.Value(SecurityStatistic::REPLY_TIMEOUTS) == 0);
+    }
+}
+
+TEST_CASE("SessionKeys - failure recovery counts only its first owned transmission", "[session-keys][sa-statistics]")
+{
+    AuthenticationStatistics statistics(7, true, DefaultSecurityStatisticThresholds());
+    KeyPair pair;
+    pair.master.SetStatistics(&statistics);
+    for (unsigned n = 0; n < 6; ++n) statistics.AuthenticationFailed(2); // Established test exchange owner.
+    REQUIRE(pair.master.RequestAuthenticationRenewal(pair.now));
+    REQUIRE_FALSE(pair.master.RequestAuthenticationRenewal(pair.now));
+    REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHENTICATION_REKEYS) == 0);
+    pair.master.OnExchangeTransmit(4, 2); // Wrong application's SEQ cannot own this request.
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHENTICATION_REKEYS) == 0);
+    pair.master.OnExchangeTransmit(4, 3);
+    pair.master.OnExchangeTransmit(4, 3);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHENTICATION_REKEYS) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::SESSION_KEY_CHANGES) == 0);
+    REQUIRE_FALSE(statistics.Exceeded(SecurityStatistic::AUTHENTICATION_FAILURES));
+}
+
+TEST_CASE("SessionKeys - authentic non OK confirmation preserves the pending change",
+          "[session-keys][sa-statistics]")
+{
+    AuthenticationStatistics statistics(7, true, DefaultSecurityStatisticThresholds());
+    KeyPair pair;
+    pair.master.SetStatistics(&statistics);
+    pair.ToChange();
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+        == R::INSTALLED);
+    const auto confirmation = pair.confirmation;
+    pair.confirmation.bytes[17] = 3; // Table 7-13 row 2: authentic status, but not OK.
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+        == R::INVALID);
+    REQUIRE(pair.request.size == 0);
+    REQUIRE(pair.master.AwaitingKeyConfirmation());
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+    REQUIRE(statistics.Value(SecurityStatistic::UNEXPECTED_MESSAGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::DISCARDED_MESSAGES) == 0);
+    REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 0);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHENTICATION_FAILURES) == 0);
+    REQUIRE(pair.master.Process(7, confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+        == R::INSTALLED);
+    REQUIRE(statistics.Value(SecurityStatistic::SESSION_KEY_CHANGES) == 1);
+}
+
+TEST_CASE("SessionKeys - another user's status does not abort an owned status request",
+          "[session-keys][sa-statistics]")
+{
+    AuthenticationStatistics statistics(7, true, DefaultSecurityStatisticThresholds());
+    KeyPair pair;
+    pair.master.SetStatistics(&statistics);
+    pair.ToStatus();
+    const auto owned = pair.status;
+    pair.status.bytes[14] = 1; // Active exchange belongs to user 2.
+    REQUIRE(pair.master.Process(7, pair.status.Read(), pair.now, pair.change.Write(), pair.change.size) == R::INVALID);
+    REQUIRE(pair.change.size == 0);
+    REQUIRE(pair.master.IsExchanging());
+    REQUIRE_FALSE(pair.master.AwaitingKeyConfirmation());
+    REQUIRE(statistics.Value(SecurityStatistic::UNEXPECTED_MESSAGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::DISCARDED_MESSAGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 0);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHENTICATION_FAILURES) == 0);
+    REQUIRE(pair.master.Process(7, owned.Read(), pair.now, pair.change.Write(), pair.change.size) == R::OK);
+    REQUIRE(pair.master.AwaitingKeyConfirmation());
+}
+
+TEST_CASE("SessionKeys - foreign confirmation returns to status with sent key recovery and original deadline",
+          "[session-keys][sa-statistics]")
+{
+    AuthenticationStatistics statistics(7, true, DefaultSecurityStatisticThresholds());
+    KeyPair pair;
+    pair.master.SetStatistics(&statistics);
+    pair.ToChange();
+    pair.master.SetChangeQueued(pair.change.Read(), false); // V6 actually handed to the lower layer.
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+        == R::INSTALLED);
+    pair.confirmation.bytes[14] = 1;
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now + 1, pair.request.Write(), pair.request.size)
+        == R::INVALID);
+    REQUIRE(pair.request.size == 0);
+    REQUIRE(pair.master.IsExchanging());
+    REQUIRE_FALSE(pair.master.AwaitingKeyConfirmation());
+    REQUIRE(statistics.Value(SecurityStatistic::UNEXPECTED_MESSAGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::DISCARDED_MESSAGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 0);
+    pair.master.Tick(pair.now + pair.config.replyTimeoutMs - 1);
+    REQUIRE(pair.master.IsExchanging());
+    pair.now += pair.config.replyTimeoutMs;
+    pair.master.Tick(pair.now); // The foreign message did not extend the deadline.
+    REQUIRE_FALSE(pair.master.IsExchanging());
+    REQUIRE(statistics.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
+    pair.Exchange(); // Authenticate the peer's installed V6 using retained recovery material.
+    REQUIRE(statistics.Value(SecurityStatistic::SESSION_KEY_CHANGES) == 1);
+    REQUIRE(statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == 0);
+}
+
+TEST_CASE("SessionKeys - restart Max rearms on renewal boundary, never on reconnect", "[session-keys][sa-statistics]")
+{
+    auto thresholds = DefaultSecurityStatisticThresholds();
+    thresholds[3] = 0;
+    AuthenticationStatistics statistics(7, true, thresholds);
+    SessionKeys::Config config;
+    config.intervalMs = GENERATE(uint32_t{0}, uint32_t{900000});
+    KeyPair pair(config);
+    pair.master.SetStatistics(&statistics);
+    for (unsigned n = 0; n < 4; ++n) statistics.Increment(SecurityStatistic::RESTART_REKEYS);
+    REQUIRE(statistics.Exceeded(SecurityStatistic::RESTART_REKEYS));
+    pair.master.Disconnect();
+    pair.master.Tick(pair.now);
+    REQUIRE(statistics.Exceeded(SecurityStatistic::RESTART_REKEYS));
+    REQUIRE(pair.master.Begin(7, 3, pair.now, pair.request.Write(), pair.request.size) == R::OK);
+    pair.now += config.replyTimeoutMs;
+    pair.master.Tick(pair.now); // Exceeds Reply Timeout Max; starts existing capped-renewal backoff.
+    REQUIRE(statistics.Exceeded(SecurityStatistic::RESTART_REKEYS));
+    const auto delay = config.intervalMs ? config.intervalMs : config.replyTimeoutMs;
+    pair.master.Tick(pair.now + delay - 1);
+    REQUIRE(statistics.Exceeded(SecurityStatistic::RESTART_REKEYS));
+    pair.master.Tick(pair.now + delay);
+    REQUIRE(statistics.Exceeded(SecurityStatistic::RESTART_REKEYS) == (config.intervalMs == 0));
+    REQUIRE(statistics.Value(SecurityStatistic::RESTART_REKEYS) == 4);
 }

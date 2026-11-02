@@ -67,6 +67,7 @@ MContext::MContext(const Addresses& addresses,
     {
 #ifdef OPENDNP3_USE_SA_CRYPTO
         authentication = std::make_shared<AuthenticationState>(params.authentication);
+        authentication->sessions->statistics.SetLogger(&this->logger);
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         if (!authentication->sessions->Load(now))
@@ -128,6 +129,7 @@ bool MContext::OnLowerLayerDown()
         authentication->pendingWireSize = 0;
         authentication->exchangeIndex = 2;
         authentication->peerRestartAllowed = true;
+        authentication->restartRecoveryPending = false;
         authentication->monitorWaiting = false;
         authentication->monitoring.Reset();
         DiscardEmbeddedConfirm(); // Settle the old session before disconnect invalidates it.
@@ -166,14 +168,69 @@ bool MContext::OnReceive(const Message& message)
     }
 
     const auto result = APDUHeaderParser::ParseResponse(message.payload, &this->logger);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+        authentication->sessions->statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_RECEIVED);
+#endif
     if (!result.success)
     {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions)
+            authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
         return true;
     }
 
     logging::LogHeader(this->logger, flags::APP_HEADER_RX, result.header);
 
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+    {
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count());
+        ServiceSecurityStatistics(now);
+        auto& auth = *authentication;
+        const bool normalResponse = (result.header.function == FunctionCode::RESPONSE && !result.header.control.UNS)
+            || (result.header.function == FunctionCode::UNSOLICITED_RESPONSE && result.header.control.UNS);
+        if (normalResponse)
+        {
+            const bool restart = result.header.IIN.IsSet(IINBit::DEVICE_RESTART);
+            const bool rising = restart && !auth.restartIINSet;
+            auth.restartIINSet = restart;
+            if (rising && auth.established)
+            {
+                auto& statistics = auth.sessions->statistics;
+                statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+                if (statistics.Exceeded(SecurityStatistic::RESTART_REKEYS)) return true;
+                statistics.Increment(SecurityStatistic::RESTART_REKEYS);
+                statistics.ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
+                for (size_t n = 0; n < 2; ++n) auth.sessions->At(n)->RequestPeerRestart(now);
+                ResetAuthentication(); // Association restart; retain all transport-owned APDU bytes.
+                crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+                auth.pendingWireSize = 0;
+                if (auth.exchangeIndex < 2)
+                {
+                    auth.exchangeIndex = 2;
+                    auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
+                }
+                auth.peerRestartAllowed = auth.restartRecoveryPending = true;
+                if (activeTask && tstate == TaskState::WAIT_FOR_RESPONSE)
+                {
+                    responseTimer.cancel();
+                    tstate = OnResponseTimeout_WaitForResponse();
+                }
+                ServiceAuthentication();
+                return true; // Table 7-8 row 28 overrides ordinary response processing.
+            }
+        }
+    }
+#endif
     this->OnParsedHeader(message.payload, result.header, result.objects);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+        ServiceSecurityStatistics(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count()));
+#endif
 
     return true;
 }
@@ -289,6 +346,9 @@ void MContext::ProcessAPDU(const APDUResponseHeader& header, const ser4cpp::rseq
     default:
         FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Ignoring unsupported function code: %s",
                          FunctionCodeSpec::to_human_string(header.function));
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions) authentication->sessions->statistics.Unexpected();
+#endif
         break;
     }
 }
@@ -329,10 +389,18 @@ void MContext::ProcessUnsolicitedResponse(const APDUResponseHeader& header, cons
     if (!header.control.UNS)
     {
         SIMPLE_LOG_BLOCK(logger, flags::WARN, "Ignoring unsolicited response without UNS bit set");
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions)
+            authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
         return;
     }
 
     auto result = MeasurementHandler::ProcessMeasurements(header.as_response_info(), objects, logger, SOEHandler.get());
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (result != ParseResult::OK && authentication && authentication->sessions)
+        authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
 
     if ((result == ParseResult::OK) && header.control.CON)
     {
@@ -487,7 +555,28 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
     }
 #endif
     this->isSending = true;
-    this->lower->BeginTransmit(Message(this->addresses, data));
+    const bool started = this->lower->BeginTransmit(Message(this->addresses, data));
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (started && authentication && authentication->sessions)
+    {
+        auto& statistics = authentication->sessions->statistics;
+        statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_SENT);
+        if (data.length() >= 4 && data[2] == 120)
+        {
+            if (data[1] == 0x20 && (data[3] == 4 || data[3] == 6) && authentication->exchangeIndex < 2)
+                authentication->sessions->At(authentication->exchangeIndex)->OnExchangeTransmit(data[3], data[0] & 15);
+            if (data[1] == 0x20 && data[3] == 1) statistics.Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
+            // P6-OPEN-02: Reply OR Aggressive/mandatory CONFIRM, never both.
+            uint16_t user = 0;
+            if ((data[1] == 0x20 && data[3] == 2)
+                || (data[3] == 3 && AggressiveMode::InspectUser(data, false, user)))
+                statistics.Increment(SecurityStatistic::CRITICAL_MESSAGES_SENT);
+            if (data[1] == 0x21 && data[3] == 7) statistics.Increment(SecurityStatistic::ERROR_MESSAGES_SENT);
+        }
+    }
+#else
+    (void)started;
+#endif
 }
 
 void MContext::StartResponseTimer()
@@ -838,6 +927,9 @@ MContext::TaskState MContext::OnResponseEvent(const APDUResponseHeader& header, 
         return OnResponse_WaitForResponse(header, objects);
     default:
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Not expecting a response, sequence: %u", header.control.SEQ);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions) authentication->sessions->statistics.Unexpected();
+#endif
         return tstate;
     }
 }
@@ -872,6 +964,9 @@ MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeade
     if (header.control.SEQ != this->solSeq)
     {
         FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Response with bad sequence: %u", header.control.SEQ);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions) authentication->sessions->statistics.Unexpected();
+#endif
         return TaskState::WAIT_FOR_RESPONSE;
     }
 
@@ -882,6 +977,10 @@ MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeade
     auto now = Timestamp(this->executor->get_time());
 
     auto result = this->activeTask->OnResponse(header, objects, now);
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (result == IMasterTask::ResponseResult::ERROR_BAD_RESPONSE && authentication && authentication->sessions)
+        authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+#endif
 
     if (header.control.CON)
     {
@@ -976,7 +1075,10 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
 #ifdef OPENDNP3_USE_SA_CRYPTO
     auto& auth = *authentication;
     if (auth.controlAggressive.HasPendingConfirm() || auth.deferredAuthenticationCount)
+    {
+        auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
         return;
+    }
     auto* session = auth.sessions->Find(1);
     if (!session)
         return;
@@ -988,6 +1090,7 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
     if (!original.success || (auth.recoveringKeys && original.header.function == FunctionCode::RESPONSE)
         || !auth.controlAggressive.InspectEmbeddedChallenge(native, challenge, nativeSize))
     {
+        auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
         FinalizeAuthenticationCounts();
         return;
     }
@@ -1001,6 +1104,7 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
             || (header.function == FunctionCode::RESPONSE
                 && (!activeTask || tstate != TaskState::WAIT_FOR_RESPONSE || header.control.SEQ != solSeq)))
         {
+            auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
             FinalizeAuthenticationCounts();
             return;
         }
@@ -1008,6 +1112,7 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
             || !auth.controlAggressive.RememberChallenge(wire, header.control.UNS, true,
                     auth.monitoringAggressive.Algorithm(header.control.UNS)))
         {
+            auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
             FinalizeAuthenticationCounts();
             return;
         }
@@ -1037,6 +1142,7 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
         if (!session->Ready(now) || auth.protectedConfirm || auth.replyPending || auth.replyInFlight
             || auth.exchangeIndex < 2 || auth.pendingWireSize)
         {
+            auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
             FinalizeAuthenticationCounts();
             return;
         }
@@ -1051,7 +1157,27 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
     }
     else
         FinalizeAuthenticationCounts(); // Ordinary verified payloads survive count-only invalidation.
-    this->ProcessAPDU(original.header, original.objects.take(nativeSize - 4));
+    const auto nativeObjects = original.objects.take(nativeSize - 4);
+    // Native V7 events are data, not standalone authentication Errors. Count
+    // validated objects (including mixed fragments), without applying recovery
+    // or changing ordinary task/SOE dispatch. Reuse the existing object parser.
+    class ErrorEvents final : public IAPDUHandler
+    {
+    public:
+        uint32_t count = 0;
+        bool IsAllowed(uint32_t, GroupVariation, QualifierCode) override { return true; }
+        IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var7>& values) override
+        {
+            values.ForeachItem([this](const Group120Var7& value) {
+                if (ValidAuthenticationError(value)) ++count;
+            });
+            return IINField::Empty();
+        }
+    } errors;
+    if (APDUParser::Parse(nativeObjects, errors, nullptr) == ParseResult::OK)
+        for (uint32_t n = 0; n < errors.count; ++n)
+            auth.sessions->statistics.Increment(SecurityStatistic::ERROR_MESSAGES_RECEIVED);
+    this->ProcessAPDU(original.header, nativeObjects);
     // A native parser/task can decline the response without queueing a CONFIRM.
     if (auth.deferredAuthenticationCount && !auth.protectedConfirm && !auth.nativeConfirmQueued)
         FinalizeAuthenticationCounts();
@@ -1204,32 +1330,13 @@ void MContext::TransmitAuthenticationReply()
 #endif
 }
 
-void MContext::ServiceAuthentication()
+void MContext::ServiceSecurityStatistics(uint64_t now)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
-    if (!authentication || !authentication->sessions || !isOnline)
-        return;
+    if (!authentication || !authentication->sessions) return;
     auto& auth = *authentication;
-    auth.serviceTimer.cancel();
-    const auto now = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
-    if (auth.restartRekeys && now - auth.restartWindow >= auth.sessions->config.renewalIntervalMs)
-        auth.restartRekeys = 0;
-    for (size_t n = 0; n < 2; ++n)
-        auth.sessions->At(n)->Tick(now);
-    if (auth.recoveringKeys && auth.errorAttempt.valid && !auth.protectedConfirm
-        && !auth.deferredAuthenticationCount && !auth.replyPending && !auth.replyInFlight
-        && (auth.errorAttempt.user != 1 || !auth.monitorWaiting))
-    {
-        auto* owner = auth.sessions->Find(auth.errorAttempt.user);
-        if (owner && owner->Sequence() == auth.errorAttempt.ksq)
-        {
-            owner->RequestRenewal(now);
-            auth.controlEligible[owner->User() == auth.sessions->config.users[0] ? 0 : 1] = false;
-            if (auth.responderUser == owner->User()) auth.responder.Reset();
-        }
-        auth.errorAttempt.valid = false; // Applied once; a replacement KSQ needs no repeat renewal.
-    }
+    auto& statistics = auth.sessions->statistics;
+    for (size_t n = 0; n < 2; ++n) auth.sessions->At(n)->Tick(now);
     auth.monitoring.Tick(now);
     if (auth.monitorWaiting && auth.monitoring.GetState() != OutstationChallenger::State::WAITING_FOR_REPLY)
     {
@@ -1245,6 +1352,96 @@ void MContext::ServiceAuthentication()
             auth.pendingWireSize = 0;
         }
     }
+    uint16_t exhaustedUser = 0;
+    const bool keyTimeout = statistics.TakeKeyChangeTimeoutLimit(exhaustedUser);
+    if (keyTimeout || statistics.Exceeded(SecurityStatistic::REPLY_TIMEOUTS))
+    {
+        auth.restartRecoveryPending = false;
+        statistics.ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
+        for (size_t n = 0; n < 2; ++n)
+            if (!keyTimeout || auth.sessions->At(n)->User() != exhaustedUser)
+                auth.sessions->At(n)->CommunicationFailure(now);
+        ResetAuthentication(); // All-user event, Table 7-8 row 8/Table 7-13 row 5.
+        crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+        auth.pendingWireSize = 0; // Never overwrite auth.wire/reply/aggressiveWire while in flight.
+        if (auth.exchangeIndex < 2)
+        {
+            auth.exchangeIndex = 2;
+            auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
+        }
+    }
+    if (!statistics.Exceeded(SecurityStatistic::AUTHENTICATION_FAILURES)) return;
+    if (statistics.Exceeded(SecurityStatistic::AUTHENTICATION_REKEYS))
+    {
+        statistics.ResetMaximum(SecurityStatistic::AUTHENTICATION_FAILURES);
+        auth.monitoring.CancelPending();
+        // ServiceAuthentication's existing owner check drops an unsent V1;
+        // retain monitorWaiting until that cleanup, never erase unrelated V4/V6.
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Authentication rekey limit exceeded");
+        if (auth.closeTCPConnection) auth.closeTCPConnection(); // Native TCP-only, asynchronous close.
+        return;
+    }
+    const auto user = statistics.RecoveryUser();
+    auto* session = auth.sessions->Find(user);
+    // An unverified received USR never populates RecoveryUser. An independent
+    // key exchange continues; its eventual success may rearm the failure Max.
+    if (!session || session->IsExchanging()) return;
+    if (!session->Ready(now) && !session->NeedsExchange(now)) return; // Respect the existing retry backoff.
+    if (!session->RequestAuthenticationRenewal(now)) return;
+    if (user == 1)
+    {
+        auth.controlEligible[0] = auth.monitoringEligible = false;
+        auth.monitoring.CancelPending();
+        auth.monitorWaiting = false;
+        auth.monitoringAggressive.Reset();
+        if (auth.pendingWireSize >= 4 && auth.pendingWire[2] == 120 && auth.pendingWire[3] == 1)
+        {
+            crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWireSize));
+            auth.pendingWireSize = 0;
+        }
+        DiscardEmbeddedConfirm();
+        if (auth.responderUser == user)
+        {
+            CancelAuthenticationReply();
+            auth.responder.Reset();
+            auth.replyIssued = false;
+        }
+        if (activeTask && auth.protectedTask && activeTask->AuthenticationUser() == user
+            && tstate == TaskState::WAIT_FOR_RESPONSE)
+        {
+            responseTimer.cancel();
+            tstate = OnResponseTimeout_WaitForResponse(); // Abort only the owning task, no global reset.
+        }
+    }
+#else
+    (void)now;
+#endif
+}
+
+void MContext::ServiceAuthentication()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions || !isOnline)
+        return;
+    auto& auth = *authentication;
+    auth.serviceTimer.cancel();
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+
+    if (auth.recoveringKeys && auth.errorAttempt.valid && !auth.protectedConfirm
+        && !auth.deferredAuthenticationCount && !auth.replyPending && !auth.replyInFlight
+        && (auth.errorAttempt.user != 1 || !auth.monitorWaiting))
+    {
+        auto* owner = auth.sessions->Find(auth.errorAttempt.user);
+        if (owner && owner->Sequence() == auth.errorAttempt.ksq)
+        {
+            owner->RequestRenewal(now);
+            auth.controlEligible[owner->User() == auth.sessions->config.users[0] ? 0 : 1] = false;
+            if (auth.responderUser == owner->User()) auth.responder.Reset();
+        }
+        auth.errorAttempt.valid = false; // Applied once; a replacement KSQ needs no repeat renewal.
+    }
+    ServiceSecurityStatistics(now);
     if (auth.protectedConfirm && now >= auth.confirmDeadline && !auth.replyInFlight
         && !(auth.wireInFlight && auth.wireSize >= 2 && auth.wire[1] == 0))
     {
@@ -1256,6 +1453,7 @@ void MContext::ServiceAuthentication()
         CancelAuthenticationReply();
     if (auth.exchangeIndex < 2 && !auth.sessions->At(auth.exchangeIndex)->IsExchanging())
     {
+        auth.restartRecoveryPending = false;
         // V4/V6 are generated only by this exchange. Tick may have expired or
         // reset its session while TX still owned wire; never send its queued copy.
         // A queued monitoring Challenge is independently owned and must survive.
@@ -1314,6 +1512,11 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return false;
+    auto* statistics = authentication->sessions ? &authentication->sessions->statistics : nullptr;
+    uint16_t aggressiveUser = 0;
+    const bool aggressive = apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 3
+        && AggressiveMode::InspectUser(apdu, true, aggressiveUser);
+    if (statistics && aggressive) statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
     // Standalone errors are Info objects (Table 7-9); native V7 events retain
     // their ordinary RESPONSE/UNSOLICITED_RESPONSE processing path.
     if (apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 7
@@ -1321,7 +1524,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
     {
         auto& auth = *authentication;
         if (header.function != FunctionCode::AUTH_RESPONSE)
+        {
+            if (statistics) statistics->Unexpected();
             return true;
+        }
         class ErrorHandler final : public IAPDUHandler
         {
         public:
@@ -1343,9 +1549,13 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             || APDUParser::Parse(apdu.skip(4), error, nullptr) != ParseResult::OK || !error.valid
             || error.value.associationId != auth.association
             || !ValidAuthenticationError(error.value))
+        {
+            if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
             return true;
+        }
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication error received: code=%u user=%u sequence=%u",
                          error.value.errorCode, error.value.userNum, error.value.seqNum);
+        if (statistics) statistics->Increment(SecurityStatistic::ERROR_MESSAGES_RECEIVED);
         // CancelOnError itself enforces the exact Challenge owner. Unknown
         // nonzero users cannot cancel it, but still reach logging/accounting.
         const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1380,7 +1590,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             }
         }
         if (!discarded && !ownsAttempt)
+        {
+            if (statistics) statistics->Unexpected();
             SIMPLE_LOG_BLOCK(logger, flags::WARN, "Challenger has no matching authentication Error exchange");
+        }
         if (discarded && error.value.errorCode == 5)
             FORMAT_LOG_BLOCK(logger, flags::WARN, "Authentication MAC rejected; next Challenge algorithm=%u (0=no permitted alternative)",
                              auth.monitoring.MACAlgorithm());
@@ -1411,7 +1624,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
     if (authentication->recoveringKeys && (header.function == FunctionCode::RESPONSE
         || (header.function == FunctionCode::AUTH_RESPONSE && !authentication->protectedConfirm
             && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 1)))
+    {
+        if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
         return true;
+    }
     if (authentication->sessions)
     {
         auto& auth = *authentication;
@@ -1420,7 +1636,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
         if (header.function == FunctionCode::AUTH_RESPONSE && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 5)
         {
             if (auth.exchangeIndex >= 2 || auth.pendingWireSize)
+            {
+                if (statistics) statistics->Unexpected();
                 return true;
+            }
             class StatusHandler final : public IAPDUHandler
             {
             public:
@@ -1438,18 +1657,45 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     return IINField::Empty();
                 }
             } status;
+            const bool validStatus = APDUParser::Parse(apdu.skip(4), status, nullptr) == ParseResult::OK && status.valid;
+            if (!validStatus)
+            {
+                if (statistics) statistics->Unexpected();
+                return true; // No decoded owner: do not fail a different pending key transaction.
+            }
+            if (!header.control.IsFirAndFin() || header.control.CON || header.control.UNS
+                || header.control.SEQ != auth.exchangeSequence)
+            {
+                if (statistics) statistics->Unexpected();
+                return true; // Stale/malformed envelope cannot consume the current transaction.
+            }
+            auto* expected = auth.sessions->At(auth.exchangeIndex);
+            if (status.value.userNum != expected->User())
+            {
+                auto* other = auth.sessions->Find(status.value.userNum);
+                if (statistics && expected->AwaitingKeyConfirmation() && (!other || !other->IsStatusAuthentic(status.value)))
+                    statistics->AuthenticationFailed(); // No authenticated recovery owner is established.
+                size_t ignored = 0;
+                expected->Process(auth.association, apdu, now,
+                                  ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), ignored);
+                return true; // The owned core applies Table 7-13 row 12; no foreign session is reset.
+            }
             if (auth.established && auth.peerRestartAllowed
                 && auth.sessions->At(auth.exchangeIndex)->HasMonitoringHistory()
                 && header.IIN.IsSet(IINBit::DEVICE_RESTART) && header.control.IsFirAndFin() && !header.control.CON
-                && !header.control.UNS && APDUParser::Parse(apdu.skip(4), status, nullptr) == ParseResult::OK
-                && status.valid && status.value.userNum == auth.sessions->At(auth.exchangeIndex)->User()
+                && !header.control.UNS && header.control.SEQ == auth.exchangeSequence
+                && status.value.userNum == auth.sessions->At(auth.exchangeIndex)->User()
                 && status.value.macAlgorithm == 0 && status.value.keyStatus == 2)
             {
                 auth.peerRestartAllowed = false;
-                if (auth.restartRekeys >= auth.sessions->config.maxRestartRekeys)
+                statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
+                const bool countedRestart = auth.restartRecoveryPending;
+                auth.restartRecoveryPending = false;
+                auth.restartIINSet = true;
+                if (!countedRestart && statistics->Exceeded(SecurityStatistic::RESTART_REKEYS))
                     return true;
-                ++auth.restartRekeys;
-                auth.restartWindow = now;
+                if (!countedRestart) statistics->Increment(SecurityStatistic::RESTART_REKEYS);
+                statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
                 for (size_t n = 0; n < 2; ++n)
                     auth.sessions->At(n)->PeerRestart(now);
                 ResetAuthentication();
@@ -1462,6 +1708,11 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             const auto result = auth.sessions->At(auth.exchangeIndex)
                                     ->Process(auth.association, apdu, now,
                                               ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), size);
+            if (result == SessionKeys::Result::OK || result == SessionKeys::Result::INSTALLED)
+            {
+                auth.restartRecoveryPending = false;
+                auth.restartIINSet = header.IIN.IsSet(IINBit::DEVICE_RESTART);
+            }
             auth.pendingWireSize = size;
             if (size)
                 auth.sessions->At(auth.exchangeIndex)->SetChangeQueued(
@@ -1489,7 +1740,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             && !auth.replyPending && !auth.replyInFlight && header.function == FunctionCode::AUTH_RESPONSE
             && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 1;
         if ((auth.deferredAuthenticationCount && !nativeConfirmChallenge) || auth.controlAggressive.HasPendingConfirm())
+        {
+            if (statistics) statistics->Unexpected();
             return true;
+        }
         if (header.function == FunctionCode::AUTH_RESPONSE && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 2)
         {
             class Reply final : public IAPDUHandler
@@ -1510,10 +1764,12 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 }
             } reply;
             size_t size = 0;
-            if (auth.monitorWaiting && header.control.IsFirAndFin() && !header.control.CON && !header.control.UNS
-                && header.control.SEQ == auth.monitorSequence
+            const bool validReply = auth.monitorWaiting && header.control.IsFirAndFin()
+                && !header.control.CON && !header.control.UNS && header.control.SEQ == auth.monitorSequence
                 && APDUParser::Parse(apdu.skip(4), reply, nullptr) == ParseResult::OK && reply.valid
-                && auth.sessions->Find(1)->Ready(now)
+                && auth.sessions->Find(1)->Ready(now);
+            if (!validReply) auth.monitoring.RejectReply(now);
+            if (validReply
                 && auth.monitoring.Reply(auth.association, reply.value, now,
                                          ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()),
                                          size)
@@ -1528,7 +1784,12 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 this->ProcessAuthenticatedResponse(verified, verified, 2);
             }
             else
-                this->ResetAuthentication();
+            {
+                auth.monitoring.CancelPending();
+                // Use the existing V1 owner cleanup. A rejected monitoring Reply
+                // must not cancel another user's pending V4/V6 or in-flight TX.
+                ServiceAuthentication();
+            }
             crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
             return true;
         }
@@ -1537,15 +1798,24 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
         {
             if (!auth.sessions->config.aggressiveReceive || !auth.monitoringEligible
                 || (header.function == FunctionCode::RESPONSE && auth.protectedTask && !auth.replyIssued))
+            {
+                if (statistics)
+                {
+                    if (auth.sessions->config.aggressiveReceive) statistics->AuthenticationFailed(aggressive ? 1 : 0);
+                    else statistics->Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+                    statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
+                }
                 return true;
-            uint16_t user = 0;
+            }
+            const uint16_t user = aggressiveUser;
             auto* session = auth.sessions->Find(1);
             size_t size = 0;
-            if (session && session->Ready(now) && AggressiveMode::InspectUser(apdu, true, user) && user == 1
+            if (session && session->Ready(now) && aggressive && user == 1
                 && auth.monitoringAggressive.Verify(
                     auth.association, user, session->MonitoringKey(now), apdu,
                     ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()), size))
             {
+                if (statistics) statistics->Increment(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
                 auth.monitoring.ObserveAggressiveSequence(auth.monitoringAggressive.Sequence());
                 if (!header.control.UNS && auth.monitorWaiting && header.control.SEQ == auth.monitorSequence)
                 {
@@ -1554,22 +1824,49 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 }
                 this->ProcessAuthenticatedResponse(apdu, ser4cpp::rseq_t(auth.verifiedResponse.data(), size), 1);
             }
+            else if (statistics)
+            {
+                statistics->AuthenticationFailed(aggressive ? 1 : 0); // Monitoring Direction is legitimately user 1.
+                statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
+                if (auth.monitorWaiting) statistics->Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+            }
             crypto::Clear(ser4cpp::wseq_t(auth.verifiedResponse.data(), auth.verifiedResponse.size()));
             return true;
         }
         if (header.function == FunctionCode::RESPONSE || header.function == FunctionCode::UNSOLICITED_RESPONSE)
         {
             if (auth.protectedTask && !auth.replyIssued && header.function == FunctionCode::RESPONSE)
+            {
+                if (statistics) statistics->Unexpected();
                 return true;
+            }
             if (auth.monitorWaiting || auth.pendingWireSize || auth.controlAggressive.HasPendingConfirm())
+            {
+                if (statistics)
+                {
+                    if (auth.monitorWaiting) statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
+                    statistics->Unexpected();
+                }
                 return true;
+            }
             Group120Var1 embedded;
             size_t nativeSize = 0;
             if (!auth.controlAggressive.InspectEmbeddedChallenge(apdu, embedded, nativeSize))
+            {
+                if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
                 return true;
+            }
             auto* session = auth.sessions->Find(1);
             if (!session || !session->Ready(now))
+            {
+                if (statistics)
+                {
+                    statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
+                    statistics->Unexpected();
+                    if (session && session->IsExchanging()) statistics->AuthenticationFailed();
+                }
                 return true;
+            }
             if (auth.monitoring.GetState() == OutstationChallenger::State::NO_SESSION_KEYS)
                 auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now);
             size_t size = 0;
@@ -1582,6 +1879,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 auth.monitorSequence = header.control.SEQ;
                 this->ServiceAuthentication();
             }
+            else if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
             return true;
         }
     }
@@ -1593,6 +1891,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
              && (!authentication->protectedTask || tstate != TaskState::WAIT_FOR_RESPONSE))
             || authentication->replyPending || authentication->replyInFlight)
         {
+            if (statistics) statistics->Unexpected();
             this->ResetAuthentication();
             return true;
         }
@@ -1603,6 +1902,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()), authentication->replySize)
             != MasterResponder::Result::OK)
         {
+            if (statistics) statistics->Unexpected();
             this->ResetAuthentication();
             return true;
         }

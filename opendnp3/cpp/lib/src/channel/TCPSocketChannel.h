@@ -29,6 +29,7 @@ class TCPSocketChannel final : public IAsyncChannel
 {
 
 public:
+    bool IsTCP() const override { return true; }
     static std::shared_ptr<IAsyncChannel> Create(std::shared_ptr<exe4cpp::StrandExecutor> executor,
                                                  asio::ip::tcp::socket socket)
     {
