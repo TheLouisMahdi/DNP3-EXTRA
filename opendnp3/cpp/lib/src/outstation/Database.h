@@ -21,6 +21,7 @@
 #define OPENDNP3_DATABASE_H
 
 #include "app/MeasurementTypeSpecs.h"
+#include "auth/AuthenticationStatistics.h"
 #include "outstation/IClassAssigner.h"
 #include "outstation/IEventReceiver.h"
 #include "outstation/IResponseLoader.h"
@@ -51,6 +52,10 @@ public:
     void SelectTime() override;
     void Unselect() override;
     void SetReadIIN(const IINField& value);
+    void SetSecurityStatistics(const AuthenticationStatistics::StaticSnapshot& snapshot)
+    {
+        securityStatistics = &snapshot;
+    }
 
     // ------- IClassAssigner -------------
     Range AssignClassToAll(AssignClassType type, PointClass clazz) override;
@@ -81,6 +86,9 @@ private:
     bool time_selected = false;
     IINField read_iin;
     Range read_iin_range = Range::Invalid();
+    const AuthenticationStatistics::StaticSnapshot* securityStatistics = nullptr;
+    uint32_t securitySelection = 0;
+    bool securityIndexed = false;
 
     StaticDataMap<BinarySpec> binary_input;
     StaticDataMap<DoubleBitBinarySpec> double_binary;

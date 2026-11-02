@@ -21,6 +21,7 @@
 #define OPENDNP3_STATICWRITERS_H
 
 #include "app/HeaderWriter.h"
+#include "auth/AuthenticationStatistics.h"
 #include "app/MeasurementTypeSpecs.h"
 #include "outstation/StaticDataMap.h"
 
@@ -40,6 +41,9 @@ template<class Spec> using static_write_func_t = bool (*)(StaticDataMap<Spec>& m
 
 struct StaticWriters : private StaticOnly
 {
+    static bool WriteSecurityStatistics(const AuthenticationStatistics::StaticSnapshot& snapshot,
+                                        uint32_t& selection, HeaderWriter& writer, QualifierCode qualifier);
+
     static static_write_func_t<BinarySpec> get(StaticBinaryVariation variation);
     static static_write_func_t<DoubleBitBinarySpec> get(StaticDoubleBinaryVariation variation);
     static static_write_func_t<CounterSpec> get(StaticCounterVariation variation);

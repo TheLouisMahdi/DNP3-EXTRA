@@ -14,6 +14,12 @@ class Logger;
 class AuthenticationStatistics final
 {
 public:
+    struct StaticSnapshot
+    {
+        SecurityStatisticValues values{};
+        uint8_t flags = 0;
+    };
+
     AuthenticationStatistics(uint16_t association, bool master, const SecurityStatisticThresholds& thresholds,
                              std::shared_ptr<IAuthenticationStatisticsStore> store = nullptr);
     AuthenticationStatistics(const AuthenticationStatistics&) = delete;
@@ -31,6 +37,9 @@ public:
     bool TakeKeyChangeTimeoutLimit(uint16_t& owner);
     uint32_t Value(SecurityStatistic statistic) const;
     const SecurityStatisticValues& Values() const { return values; }
+    // One serialized Outstation READ owns this immutable view until the next
+    // READ replaces it. No per-point database counters or event acknowledgments.
+    const StaticSnapshot& CaptureStaticSnapshot();
     bool Retained() const { return retained; }
     bool ReportPending(SecurityStatistic statistic) const;
     void ReportGenerated(SecurityStatistic statistic, uint32_t reportedValue);
@@ -49,6 +58,7 @@ private:
     const std::shared_ptr<IAuthenticationStatisticsStore> store;
     Logger* logger = nullptr;
     SecurityStatisticValues values{}, reported{}, maximumBases{}, maximumDistances{};
+    StaticSnapshot staticSnapshot;
     uint32_t pendingReports = 0;
     uint16_t recoveryUser = 0;
     uint16_t timedOutUser = 0;

@@ -829,6 +829,11 @@ ser4cpp::Pair<IINField, AppControlField> OContext::HandleRead(const ser4cpp::rse
     this->eventBuffer.Unselect(); // always un-select any previously selected points when we start a new read request
     this->database.Unselect();
 
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+        database.SetSecurityStatistics(authentication->sessions->statistics.CaptureStaticSnapshot());
+#endif
+
     ReadHandler handler(this->database, this->eventBuffer);
     auto result = APDUParser::Parse(objects, handler, &this->logger,
                                     ParserSettings::NoContents()); // don't expect range/count context on a READ

@@ -2,6 +2,7 @@
 #include "app/APDUResponse.h"
 #include "app/APDURequest.h"
 #include "crypto/CryptoProvider.h"
+#include "gen/objects/Group121.h"
 #include "utils/BufferHelpers.h"
 #include "utils/CommandCallbackQueue.h"
 #include "utils/MasterTestFixture.h"
@@ -3247,4 +3248,61 @@ TEST_CASE("ProductionAuthentication - exceeded restart Max retains an independen
     REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(reply.data(), size))));
     REQUIRE(statistics.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == before[12] + 1);
     REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+}
+
+TEST_CASE("ProductionAuthentication - G121 READ and Class 0 project only the authenticated Outstation runtime",
+          "[production-sa][security-stat-read]")
+{
+    const bool classZero = GENERATE(false, true);
+    RuntimePair pair;
+    pair.Pump();
+    auto& statistics = ProductionAuthenticationTestAccess::Stats(pair.outstation.context);
+    auto& common = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+    auto& other = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2);
+    const auto before = statistics.Values();
+    const auto commonKSQ = common.Sequence(), otherKSQ = other.Sequence();
+    const bool failureReport = statistics.ReportPending(SecurityStatistic::AUTHENTICATION_FAILURES);
+    const auto failureMax = statistics.Maximum(SecurityStatistic::AUTHENTICATION_FAILURES);
+    const std::string original = classZero ? "C9 01 3C 01 06" : "C9 01 79 01 06";
+    HexSequence request(original);
+    MasterResponder peer(7);
+    REQUIRE(peer.SetSessionKey(1, common.ControlKey(0), common.ValidUntil(), 0) == MasterResponder::Result::OK);
+    REQUIRE(peer.RetainRequest(7, request.ToRSeq(), 0) == MasterResponder::Result::OK);
+    pair.outstation.SendToOutstation(original);
+    HexSequence challenge(pair.outstation.lower->PopWriteAsHex());
+    REQUIRE(challenge.ToRSeq()[1] == 0x83);
+    REQUIRE(challenge.ToRSeq()[5] == 1); // No unauthenticated G121 data release.
+    pair.outstation.OnTxReady();
+    std::array<uint8_t, 128> reply{};
+    size_t size = 0;
+    REQUIRE(peer.Respond(7, challenge.ToRSeq(), 0, wseq_t(reply.data(), reply.size()), size) == MasterResponder::Result::OK);
+    pair.outstation.SendToOutstation(HexConversions::to_hex(rseq_t(reply.data(), size)));
+    HexSequence response(pair.outstation.lower->PopWriteAsHex());
+    REQUIRE(response.ToRSeq().length() == 135);
+    REQUIRE(response.ToRSeq()[1] == 0x81);
+    REQUIRE(response.ToRSeq().skip(4).take(5).equals(HexSequence("79 01 00 00 11").ToRSeq()));
+    auto expected = statistics.Values();
+    --expected[5]; // The frozen view precedes actual transmission of this RESPONSE.
+    auto input = response.ToRSeq().skip(9);
+    for (uint16_t index = 0; index < 18; ++index)
+    {
+        Group121Var1 value;
+        REQUIRE(Group121Var1::Read(input, value));
+        REQUIRE(value.associationId == 0);
+        REQUIRE(value.flags == 0x41);
+        REQUIRE(value.value == expected[index]);
+    }
+    REQUIRE(statistics.Value(SecurityStatistic::TOTAL_MESSAGES_RECEIVED) == before[6] + 2);
+    REQUIRE(statistics.Value(SecurityStatistic::TOTAL_MESSAGES_SENT) == before[5] + 2);
+    REQUIRE(statistics.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == before[12] + 1);
+    REQUIRE(statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(statistics.Value(SecurityStatistic::RESTART_REKEYS) == 0);
+    REQUIRE(statistics.ReportPending(SecurityStatistic::AUTHENTICATION_FAILURES) == failureReport);
+    REQUIRE(statistics.Maximum(SecurityStatistic::AUTHENTICATION_FAILURES) == failureMax);
+    REQUIRE(common.Ready(0));
+    REQUIRE(other.Ready(0));
+    REQUIRE(common.Sequence() == commonKSQ);
+    REQUIRE(other.Sequence() == otherKSQ);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
 }

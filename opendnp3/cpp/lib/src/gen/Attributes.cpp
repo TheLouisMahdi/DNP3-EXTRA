@@ -217,6 +217,8 @@ bool HasFlags(GroupVariation gv)
         return true;
     case(GroupVariation::Group42Var8):
         return true;
+    case(GroupVariation::Group121Var1):
+        return true;
     default:
       return false;
   }

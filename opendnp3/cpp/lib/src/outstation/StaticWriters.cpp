@@ -23,6 +23,7 @@
 #include "gen/objects/Group10.h"
 #include "gen/objects/Group20.h"
 #include "gen/objects/Group21.h"
+#include "gen/objects/Group121.h"
 #include "gen/objects/Group3.h"
 #include "gen/objects/Group30.h"
 #include "gen/objects/Group40.h"
@@ -31,6 +32,57 @@
 
 namespace opendnp3
 {
+
+template<class IndexType>
+bool WriteSecurityStatistics(const AuthenticationStatistics::StaticSnapshot& snapshot,
+                             uint32_t& selection, HeaderWriter& writer, QualifierCode qualifier, bool indexed)
+{
+    if (indexed)
+    {
+        auto iter = writer.IterateOverCountWithPrefix<IndexType, SecurityStat>(qualifier, Group121Var1::Inst());
+        for (uint16_t index = 0; index < snapshot.values.size(); ++index)
+        {
+            const uint32_t bit = uint32_t(1) << index;
+            if (!(selection & bit)) continue;
+            if (!iter.Write(SecurityStat(snapshot.values[index], Flags(snapshot.flags), 0),
+                            static_cast<typename IndexType::type_t>(index))) return false;
+            selection &= ~bit;
+        }
+        return true;
+    }
+    for (uint16_t index = 0; index < snapshot.values.size();)
+    {
+        if (!(selection & (uint32_t(1) << index))) { ++index; continue; }
+        auto iter = writer.IterateOverRange<IndexType, SecurityStat>(
+            qualifier, Group121Var1::Inst(), static_cast<typename IndexType::type_t>(index));
+        do
+        {
+            if (!iter.Write(SecurityStat(snapshot.values[index], Flags(snapshot.flags), 0))) return false;
+            selection &= ~(uint32_t(1) << index);
+            ++index;
+        } while (index < snapshot.values.size() && (selection & (uint32_t(1) << index)));
+    }
+    return true;
+}
+
+bool StaticWriters::WriteSecurityStatistics(const AuthenticationStatistics::StaticSnapshot& snapshot,
+                                           uint32_t& selection, HeaderWriter& writer, QualifierCode qualifier)
+{
+    if (!selection) return true;
+    switch (qualifier)
+    {
+    case QualifierCode::UINT8_START_STOP:
+        return opendnp3::WriteSecurityStatistics<ser4cpp::UInt8>(snapshot, selection, writer, qualifier, false);
+    case QualifierCode::UINT16_START_STOP:
+        return opendnp3::WriteSecurityStatistics<ser4cpp::UInt16>(snapshot, selection, writer, qualifier, false);
+    case QualifierCode::UINT8_CNT_UINT8_INDEX:
+        return opendnp3::WriteSecurityStatistics<ser4cpp::UInt8>(snapshot, selection, writer, qualifier, true);
+    case QualifierCode::UINT16_CNT_UINT16_INDEX:
+        return opendnp3::WriteSecurityStatistics<ser4cpp::UInt16>(snapshot, selection, writer, qualifier, true);
+    default:
+        return false;
+    }
+}
 
 template<class Spec, class IndexType>
 bool LoadWithRangeIterator(StaticDataMap<Spec>& map,

@@ -299,6 +299,10 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
       return GroupVariation::Group120Var14;
     case(0x780F):
       return GroupVariation::Group120Var15;
+    case(0x7900):
+      return GroupVariation::Group121Var0;
+    case(0x7901):
+      return GroupVariation::Group121Var1;
     default:
       return GroupVariation::UNKNOWN;
   }
@@ -564,6 +568,10 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
       return "Group120Var14";
     case(GroupVariation::Group120Var15):
       return "Group120Var15";
+    case(GroupVariation::Group121Var0):
+      return "Group121Var0";
+    case(GroupVariation::Group121Var1):
+      return "Group121Var1";
     default:
       return "UNKNOWN";
   }
@@ -829,6 +837,10 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
       return "Authentication - Update Key Change Signature";
     case(GroupVariation::Group120Var15):
       return "Authentication - Update Key Change Confirmation";
+    case(GroupVariation::Group121Var0):
+      return "Security Statistic - Any Variation";
+    case(GroupVariation::Group121Var1):
+      return "Security Statistic - 32-bit With Flag";
     default:
       return "UNKNOWN";
   }
@@ -964,6 +976,8 @@ GroupVariation GroupVariationSpec::from_string(const std::string& arg)
   if(arg == "Group120Var13") return GroupVariation::Group120Var13;
   if(arg == "Group120Var14") return GroupVariation::Group120Var14;
   if(arg == "Group120Var15") return GroupVariation::Group120Var15;
+  if(arg == "Group121Var0") return GroupVariation::Group121Var0;
+  if(arg == "Group121Var1") return GroupVariation::Group121Var1;
   else return GroupVariation::UNKNOWN;
 }
 

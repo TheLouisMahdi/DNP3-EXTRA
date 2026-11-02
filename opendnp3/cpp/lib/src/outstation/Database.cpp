@@ -101,6 +101,8 @@ IINField Database::SelectAll(GroupVariation gv)
 {
     if (gv == GroupVariation::Group60Var1)
     {
+        // Table 5-1: security statistics cannot be excluded from Class 0.
+        if (securityStatistics) securitySelection = (uint32_t(1) << 18) - 1;
         this->select_all_class_zero<BinarySpec>(this->binary_input);
         this->select_all_class_zero<DoubleBitBinarySpec>(this->double_binary);
         this->select_all_class_zero<BinaryOutputStatusSpec>(this->binary_output_status);
@@ -116,6 +118,11 @@ IINField Database::SelectAll(GroupVariation gv)
 
     switch (gv)
     {
+    case GroupVariation::Group121Var0:
+    case GroupVariation::Group121Var1:
+        if (!securityStatistics) return IINBit::FUNC_NOT_SUPPORTED;
+        securitySelection = (uint32_t(1) << 18) - 1;
+        return IINField::Empty();
     case (GroupVariation::Group1Var0):
         return select_all<BinarySpec>(this->binary_input);
     case (GroupVariation::Group1Var1):
@@ -205,6 +212,14 @@ IINField Database::SelectAll(GroupVariation gv)
 
 IINField Database::SelectRange(GroupVariation gv, const Range& range)
 {
+    if (gv == GroupVariation::Group121Var0 || gv == GroupVariation::Group121Var1)
+    {
+        if (!securityStatistics) return IINBit::FUNC_NOT_SUPPORTED;
+        if (!range.IsValid() || range.start >= 18) return IINBit::PARAM_ERROR;
+        const auto stop = range.stop < 18 ? range.stop : uint16_t(17);
+        for (uint16_t index = range.start; index <= stop; ++index) securitySelection |= uint32_t(1) << index;
+        return range.stop < 18 ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
+    }
     switch (gv)
     {
     case (GroupVariation::Group1Var0):
@@ -305,6 +320,17 @@ IINField Database::SelectRange(GroupVariation gv, const Range& range)
 
 IINField Database::SelectIndices(GroupVariation gv, const ICollection<uint16_t>& indices)
 {
+    if (gv == GroupVariation::Group121Var0 || gv == GroupVariation::Group121Var1)
+    {
+        if (!securityStatistics) return IINBit::FUNC_NOT_SUPPORTED;
+        bool missing = false;
+        indices.ForeachItem([&](uint16_t index) {
+            if (index < 18) securitySelection |= uint32_t(1) << index;
+            else missing = true;
+        });
+        securityIndexed = true;
+        return missing ? IINField(IINBit::PARAM_ERROR) : IINField::Empty();
+    }
     switch (gv)
     {
     case (GroupVariation::Group1Var0):
@@ -391,6 +417,9 @@ IINField Database::SelectIndices(GroupVariation gv, const ICollection<uint16_t>&
 
 void Database::Unselect()
 {
+    securitySelection = 0;
+    securityIndexed = false;
+    securityStatistics = nullptr;
     this->time_selected = false;
     this->read_iin_range = Range::Invalid();
     this->binary_input.clear_selection();
@@ -465,7 +494,7 @@ bool Database::HasAnySelection() const
     return binary_input.has_any_selection() || double_binary.has_any_selection() || analog_input.has_any_selection()
         || counter.has_any_selection() || frozen_counter.has_any_selection() || binary_output_status.has_any_selection()
         || analog_output_status.has_any_selection() || time_and_interval.has_any_selection()
-        || octet_string.has_any_selection() || this->time_selected || this->read_iin_range.IsValid();
+        || octet_string.has_any_selection() || this->time_selected || this->read_iin_range.IsValid() || securitySelection;
 }
 
 bool Database::Load(HeaderWriter& writer)
@@ -475,6 +504,11 @@ bool Database::Load(HeaderWriter& writer)
         && load_type(this->frozen_counter, writer) && load_type(this->binary_output_status, writer)
         && load_type(this->analog_output_status, writer) && load_type(this->time_and_interval, writer)
         && load_type(this->octet_string, writer);
+
+    if (complete && securitySelection && !StaticWriters::WriteSecurityStatistics(
+            *securityStatistics, securitySelection, writer,
+            securityIndexed ? QualifierCode::UINT8_CNT_UINT8_INDEX : QualifierCode::UINT8_START_STOP))
+        return false;
 
     if (complete && this->read_iin_range.IsValid())
     {

@@ -23,7 +23,8 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
 - `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
-- `auth/AuthenticationStatistics.*` → bounded association security counters, reporting baselines and five protocol maxima; no G121/G122 publication.
+- `auth/AuthenticationStatistics.*` → bounded association security counters, reporting baselines and five protocol maxima; frozen G121 READ snapshots, no G122 publication.
+- G121 continuity limitation: without a successful initial retention load, snapshots conservatively retain DISCONTINUITY. Per-point acquisition/transmission rearming is not implemented; a platform retention backend is still required for restart persistence. Normal UINT32 rollover does not set DISCONTINUITY.
 - `auth/AggressiveMode.*` → authenticated V3/V9 envelopes, separate solicited/unsolicited challenge histories and replay checks.
 - `auth/WindowsAuthenticationCredentials.cpp` → read-only Windows Credential Manager adapter.
 - `master/MasterResponder.*`, `outstation/OutstationChallenger.*` → Control/Monitoring challenge-response cores.

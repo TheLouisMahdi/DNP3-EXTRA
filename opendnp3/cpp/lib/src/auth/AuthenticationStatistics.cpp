@@ -36,6 +36,15 @@ bool AuthenticationStatistics::HasMaximum(SecurityStatistic statistic)
         || statistic == SecurityStatistic::AUTHENTICATION_REKEYS || statistic == SecurityStatistic::ERROR_MESSAGES_SENT
         || statistic == SecurityStatistic::RESTART_REKEYS;
 }
+const AuthenticationStatistics::StaticSnapshot& AuthenticationStatistics::CaptureStaticSnapshot()
+{
+    staticSnapshot.values = values;
+    // A failed Save does not lose the still-live RAM history. A missing/failed
+    // initial Load cannot establish continuity with pre-startup values. Keep DC
+    // conservative: P6a has no per-point acquisition/transmission quality latch.
+    staticSnapshot.flags = loaded ? 0x01 : 0x41;
+    return staticSnapshot;
+}
 void AuthenticationStatistics::Persist()
 {
     if (!store || !loaded) return; // Never overwrite unread totals with startup zeros.

@@ -26,6 +26,7 @@
 #include "gen/objects/Group11.h"
 #include "gen/objects/Group12.h"
 #include "gen/objects/Group13.h"
+#include "gen/objects/Group121.h"
 #include "gen/objects/Group2.h"
 #include "gen/objects/Group20.h"
 #include "gen/objects/Group21.h"
@@ -45,6 +46,19 @@
 
 namespace opendnp3
 {
+
+// Group 121: reserved flag bits are never transmitted (Annex A.46.1).
+struct ConvertGroup121Var1 : private StaticOnly
+{
+    static Group121Var1 Apply(const SecurityStat& value)
+    {
+        Group121Var1 result;
+        result.flags = value.flags.value & 0x5F;
+        result.associationId = value.associationId;
+        result.value = value.value;
+        return result;
+    }
+};
 
 // Group 1
 typedef ConvertQ<Group1Var2, Binary> ConvertGroup1Var2;

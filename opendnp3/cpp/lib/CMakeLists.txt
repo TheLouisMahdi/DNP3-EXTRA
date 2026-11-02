@@ -1,6 +1,7 @@
 set(opendnp3_public_headers
     ./include/opendnp3/auth/AuthenticationConfig.h
     ./include/opendnp3/auth/SecurityStatistic.h
+    ./include/opendnp3/app/SecurityStat.h
     ./include/opendnp3/auth/WindowsAuthenticationCredentials.h
     
     ./include/opendnp3/ConsoleLogger.h
@@ -279,6 +280,7 @@ set(opendnp3_private_headers
     ./src/gen/objects/Group42.h
     ./src/gen/objects/Group43.h
     ./src/gen/objects/Group50.h
+    ./src/gen/objects/Group121.h
     ./src/gen/objects/Group51.h
     ./src/gen/objects/Group52.h
     ./src/gen/objects/Group60.h
@@ -545,6 +547,7 @@ set(opendnp3_src
     ./src/gen/objects/Group42.cpp
     ./src/gen/objects/Group43.cpp
     ./src/gen/objects/Group120.cpp
+    ./src/gen/objects/Group121.cpp
     ./src/app/parsing/FreeFormatParser.cpp
     ./src/gen/objects/Group50.cpp
     ./src/gen/objects/Group51.cpp

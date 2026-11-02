@@ -25,6 +25,7 @@
 #include "opendnp3/app/BinaryCommandEvent.h"
 #include "opendnp3/app/ControlRelayOutputBlock.h"
 #include "opendnp3/app/MeasurementTypes.h"
+#include "opendnp3/app/SecurityStat.h"
 #include "opendnp3/util/StaticOnly.h"
 
 namespace opendnp3
@@ -111,6 +112,14 @@ struct FrozenCounterFactory : private StaticOnly
     inline static FrozenCounter From(uint8_t flags, uint32_t count, DNPTime time)
     {
         return FrozenCounter(count, Flags(flags), time);
+    }
+};
+
+struct SecurityStatFactory : private StaticOnly
+{
+    inline static SecurityStat From(uint8_t flags, uint16_t associationId, uint32_t value)
+    {
+        return SecurityStat(value, Flags(flags), associationId);
     }
 };
 

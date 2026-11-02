@@ -82,6 +82,7 @@ EnumAndType GroupVariationRecord::GetEnumAndType(uint8_t group, uint8_t variatio
 
 GroupVariationType GroupVariationRecord::GetType(uint8_t group, uint8_t variation)
 {
+    if (group == 121) return GroupVariationType::STATIC;
     switch (group)
     {
     case (1):
