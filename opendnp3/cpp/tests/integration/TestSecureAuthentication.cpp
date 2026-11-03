@@ -2,6 +2,7 @@
 #include "crypto/CryptoProvider.h"
 #include "mocks/NullSOEHandler.h"
 #include "mocks/QueuedChannelListener.h"
+#include "dnp3mocks/RemoteUpdateKeyCredentials.h"
 
 #include <opendnp3/DNP3Manager.h>
 #include <opendnp3/master/DefaultMasterApplication.h>
@@ -205,5 +206,85 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     read();
     control();
     REQUIRE(commands->operated.load() == 4);
+    manager.Shutdown();
+}
+
+TEST_CASE("SecureAuthenticationTCP - remote Method 4 installs a key used by native commands and reconnect", "[sa-tcp][remote-update-tcp]")
+{
+    using namespace remote_update_test;
+    auto mc = std::make_shared<RemoteCredentials>();
+    auto oc = std::make_shared<RemoteCredentials>();
+    auto policy = std::make_shared<RemotePolicy>();
+    auto authority = std::make_shared<RemoteAuthority>();
+    auto listener = std::make_shared<QueuedChannelListener>();
+    auto trace = std::make_shared<AuthenticationTrace>();
+    auto commands = std::make_shared<TcpCommands>();
+    DNP3Manager manager(1, trace);
+    const uint16_t port = 20196;
+    auto server = manager.AddTCPServer("remote-sa-server", levels::NORMAL, ServerAcceptMode::CloseExisting,
+        IPEndpoint("127.0.0.1", port), nullptr);
+    auto client = manager.AddTCPClient("remote-sa-client", levels::NORMAL, ChannelRetry::Default(),
+        {IPEndpoint("127.0.0.1", port)}, "127.0.0.1", listener);
+    OutstationStackConfig outConfig(DatabaseConfig{});
+    outConfig.link.LocalAddr = 10;
+    outConfig.link.RemoteAddr = 1;
+    outConfig.outstation.params.authentication = RemoteSettings(oc, policy, authority, 2);
+    outConfig.outstation.params.allowUnsolicited = false;
+    MasterStackConfig masterConfig;
+    masterConfig.link.LocalAddr = 1;
+    masterConfig.link.RemoteAddr = 10;
+    masterConfig.master.disableUnsolOnStartup = false;
+    masterConfig.master.startupIntegrityClassMask = ClassField::None();
+    masterConfig.master.unsolClassMask = ClassField::None();
+    masterConfig.master.ignoreRestartIIN = true;
+    masterConfig.master.authentication = RemoteSettings(mc, policy, authority, 2);
+    masterConfig.master.authentication.updateKeyTrust.reset();
+    auto outstation = server->AddOutstation("remote-sa-outstation", commands, DefaultOutstationApplication::Create(), outConfig);
+    auto master = client->AddMaster("remote-sa-master", NullSOEHandler::Create(), DefaultMasterApplication::Create(), masterConfig);
+    REQUIRE(outstation);
+    REQUIRE(master);
+    REQUIRE(outstation->Enable());
+    REQUIRE(master->Enable());
+    REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    auto request = authority->Status(3, 1, "A");
+    request.source = authority;
+    auto completion = std::make_shared<ScanResult>();
+    auto future = completion->result.get_future();
+    REQUIRE(master->ChangeUpdateKey(request, TaskConfig::With(completion)));
+    REQUIRE(future.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    INFO(trace->Snapshot());
+    REQUIRE(future.get() == TaskCompletion::SUCCESS);
+    REQUIRE(mc->users[1].updateKey == authority->nextKey);
+    REQUIRE(oc->users[1].updateKey == authority->nextKey);
+    auto control = [&]() {
+        auto completion = std::make_shared<std::promise<TaskCompletion>>();
+        auto result = completion->get_future();
+        auto config = TaskConfig::Default();
+        config.authenticationUser = 2;
+        master->SelectAndOperate(ControlRelayOutputBlock(OperationType::LATCH_ON), 0,
+            [completion](const ICommandTaskResult& value) { completion->set_value(value.summary); }, config);
+        REQUIRE(result.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+        INFO(trace->Snapshot());
+        REQUIRE(result.get() == TaskCompletion::SUCCESS);
+    };
+    control();
+    REQUIRE(commands->operated.load() == 1);
+    REQUIRE(master->Disable());
+    REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
+    REQUIRE(master->Enable());
+    REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    control();
+    REQUIRE(commands->operated.load() == 2);
+    // Recreate the Outstation: durable credentials, not cached Session Keys,
+    // must establish the fresh sessions after restart.
+    server->Shutdown();
+    REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
+    server = manager.AddTCPServer("remote-sa-restarted-server", levels::NORMAL, ServerAcceptMode::CloseExisting,
+        IPEndpoint("127.0.0.1", port), nullptr);
+    outstation = server->AddOutstation("remote-sa-restarted-outstation", commands, DefaultOutstationApplication::Create(), outConfig);
+    REQUIRE(outstation->Enable());
+    REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    control();
+    REQUIRE(commands->operated.load() == 3);
     manager.Shutdown();
 }

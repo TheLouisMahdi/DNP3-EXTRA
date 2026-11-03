@@ -188,6 +188,17 @@ void MasterStack::Write(const TimeAndInterval& value, uint16_t index, const Task
     };
     return this->executor->post(add);
 }
+bool MasterStack::ChangeUpdateKey(const UpdateKeyRequest& request, const TaskConfig& config)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    auto self = this->shared_from_this();
+    return executor->return_from<bool>([self, request, config]() {
+        return self->mcontext->ChangeUpdateKey(request, config);
+    });
+#else
+    return false;
+#endif
+}
 
 void MasterStack::Restart(RestartType op, const RestartOperationCallbackT& callback, TaskConfig config)
 {

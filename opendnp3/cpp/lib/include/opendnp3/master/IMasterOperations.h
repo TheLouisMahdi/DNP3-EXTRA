@@ -19,6 +19,7 @@
  */
 #ifndef OPENDNP3_IMASTEROPERATIONS_H
 #define OPENDNP3_IMASTEROPERATIONS_H
+#include "opendnp3/auth/UpdateKeyConfig.h"
 
 #include "opendnp3/StackStatistics.h"
 #include "opendnp3/app/ClassField.h"
@@ -47,6 +48,9 @@ namespace opendnp3
 class IMasterOperations : public ICommandProcessor
 {
 public:
+    // False means unsupported/not queued. The existing TaskConfig callback
+    // reports asynchronous completion of accepted operations.
+    virtual bool ChangeUpdateKey(const UpdateKeyRequest&, const TaskConfig& = TaskConfig::Default()) { return false; }
     virtual ~IMasterOperations() {}
 
     /**

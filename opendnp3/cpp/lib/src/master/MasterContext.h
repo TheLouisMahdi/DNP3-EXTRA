@@ -68,6 +68,7 @@ private:
              const MasterParams& params);
 
 public:
+    bool ChangeUpdateKey(const struct UpdateKeyRequest& request, const TaskConfig& config);
     enum class TaskState
     {
         IDLE,
@@ -212,6 +213,7 @@ private:
     // uses configured credential retrieval and the authenticated session exchange.
     friend class AuthenticationRuntimeTestAccess;
     friend class ProductionAuthenticationTestAccess;
+    friend class RemoteUpdateKeyTestAccess;
     friend class MasterStack;
     struct AuthenticationState
     {
@@ -235,6 +237,7 @@ private:
             controlAggressive.ConfigureMACs(config);
             monitoringAggressive.ConfigureMACs(config);
             responder.ConfigureMACs(config);
+            exchangeIndex = sessions->Size();
             monitoring.SetStatistics(&sessions->statistics);
         }
         ~AuthenticationState()
@@ -244,13 +247,14 @@ private:
         }
         OutstationChallenger monitoring;
         AggressiveMode controlAggressive, monitoringAggressive;
-        std::array<bool, 2> controlEligible{{false, false}};
+        std::array<bool, 16> controlEligible{};
+        size_t SessionCount() const { return sessions ? sessions->Size() : 2; }
         bool monitoringEligible = false;
         std::array<uint8_t, SessionKeys::MAX_APDU> aggressiveWire{};
         std::unique_ptr<AuthenticationSession> sessions;
         exe4cpp::Timer serviceTimer;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{}, verifiedResponse{};
-        std::array<uint32_t, 2> keyEpoch{{0, 0}};
+        std::array<uint32_t, 16> keyEpoch{};
         size_t wireSize = 0, pendingWireSize = 0;
         size_t exchangeIndex = 2;
         uint8_t exchangeSequence = 0;
@@ -300,6 +304,7 @@ private:
     void CancelAuthenticationReply();
     void TransmitAuthenticationReply();
     void ServiceAuthentication();
+    void InvalidateRemoteCredentials();
     void ServiceSecurityStatistics(uint64_t now);
     void ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const ser4cpp::rseq_t& native, uint8_t count);
     void FinalizeAuthenticationCounts();

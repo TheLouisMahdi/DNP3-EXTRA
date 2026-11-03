@@ -192,6 +192,34 @@ SessionKeys::Result SessionKeys::Configure(ser4cpp::rseq_t key, uint64_t expiry,
     credentialExpiry = expiry;
     return Result::OK;
 }
+void SessionKeys::Revoke()
+{
+    const auto previousSequence = ksq;
+    const auto previousHaveSequence = haveKSQ;
+    Reset();
+    ksq = previousSequence;
+    haveKSQ = previousHaveSequence;
+}
+SessionKeys::Result SessionKeys::ReplaceUpdateKey(ser4cpp::rseq_t key, uint64_t expiry, uint64_t now)
+{
+    const auto previousSequence = ksq;
+    const auto previousHaveSequence = haveKSQ;
+    const auto result = Configure(key, expiry, now);
+    ksq = previousSequence;
+    haveKSQ = previousHaveSequence;
+    return result;
+}
+bool SessionKeys::NextUpdateKeySequence(uint32_t& sequence)
+{
+    if (role != Role::OUTSTATION || IsExchanging() || awaitingChange) return false;
+    sequence = ++ksq;
+    haveKSQ = true;
+    return true;
+}
+ser4cpp::rseq_t SessionKeys::UpdateKey(uint64_t now)
+{
+    return Observe(now) && configured ? ser4cpp::rseq_t(update.data(), updateSize) : ser4cpp::rseq_t();
+}
 void SessionKeys::PeerRestart(uint64_t now)
 {
     if (!Observe(now) || !configured || role != Role::MASTER)

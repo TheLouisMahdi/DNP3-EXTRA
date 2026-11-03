@@ -32,6 +32,13 @@ namespace crypto
 
     // Empty output is a successful no-op. Nonempty output uses a CSPRNG, without fallback.
     Result GenerateRandom(ser4cpp::wseq_t output);
+    Result SHA256(ser4cpp::rseq_t message, ser4cpp::wseq_t output);
+    // IEEE A.45.11 / FIPS186-2 Appendix 3.1, general-purpose form
+    // (Change Notice 1 p74). Fresh CSPRNG seed for every 32-byte challenge.
+    Result GenerateUpdateKeyChallenge(ser4cpp::wseq_t output);
+    // Deterministic provider primitive, for known-answer tests. 20..64 seed
+    // bytes, 32 output bytes. Production callers use GenerateUpdateKeyChallenge.
+    Result ExpandUpdateKeyChallenge(ser4cpp::rseq_t seed, ser4cpp::wseq_t output);
 
     // Nonempty key, possibly empty message. Output: full 32-byte digest or its first
     // 8/16 bytes. Only the 8/16-byte tags are accepted by VerifyHMACSHA256.

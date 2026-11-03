@@ -55,12 +55,12 @@ PROFILE-053,11,120,6,Session key change,32,5B,-,-,SECURITY,Free format,NOT_AUDIT
 PROFILE-054,11,120,7,Authentication error,33,5B,131,5B,SECURITY,Free format,NOT_AUDITED
 PROFILE-055,11,120,8,User certificate,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
 PROFILE-056,11,120,9,Message authentication code,1-31,5B,129|130,5B,SECURITY,Free format; special function semantics,NOT_AUDITED
-PROFILE-057,11,120,10,User status change,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
-PROFILE-058,11,120,11,Update key change request,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
-PROFILE-059,11,120,12,Update key change reply,-,-,131,5B,SECURITY,Free format,NOT_AUDITED
-PROFILE-060,11,120,13,Update key change,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
-PROFILE-061,11,120,14,Update key change signature,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
-PROFILE-062,12,120,15,Update key change confirmation,32,5B,131,5B,SECURITY,Free format,NOT_AUDITED
+PROFILE-057,11,120,10,User status change,32,5B,-,-,SECURITY,Method 4 ADD CHANGE DELETE native runtime; authority-only certification and pending roles; RUK-OPEN-01; SA_REMOTE_UPDATE_KEYS_REPORT.md,VERIFIED
+PROFILE-058,11,120,11,Update key change request,32,5B,-,-,SECURITY,Method 4 owned native exchange and bounded retries; SA_REMOTE_UPDATE_KEYS_REPORT.md,VERIFIED
+PROFILE-059,11,120,12,Update key change reply,-,-,131,5B,SECURITY,Method 4 shared KSQ and FIPS186-2 fresh 32-byte challenges; SA_REMOTE_UPDATE_KEYS_REPORT.md,VERIFIED
+PROFILE-060,11,120,13,Update key change,32,5B,-,-,SECURITY,Method 4 authority ciphertext pass-through and exact bound unwrap; SA_REMOTE_UPDATE_KEYS_REPORT.md,VERIFIED
+PROFILE-061,11,120,14,Update key change signature,32,5B,-,-,SECURITY,Existing codec only; Method 68 runtime is the next implementation slice; SA_REMOTE_UPDATE_KEYS_REPORT.md,CODEC_ONLY
+PROFILE-062,12,120,15,Update key change confirmation,32,5B,131,5B,SECURITY,Method 4 both MAC directions and verification-only recovery; SA_REMOTE_UPDATE_KEYS_REPORT.md,VERIFIED
 PROFILE-063,12,121,1,Security statistics 32-bit with flag,1,00|01|06|17|28,129,00|01|17|28,STATISTICS,Read semantics by association and index; Outstation READ/Class 0 and Master typed decode; source evidence: P6b-O2_REPORT.md / P6b-M1_REPORT.md,IMPLEMENTED
 PROFILE-064,12,122,0,Security statistics event any,1,00|01|06|17|28,-,-,STATISTICS,Event selector for configured variations; Outstation selection/publication and Master prefix/range decode; source evidence: P6b-O2_REPORT.md / P6b-M1_REPORT.md,IMPLEMENTED
 PROFILE-065,12,122,1,Security statistics event with flag,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited; untimed representation retained unchanged; source evidence: P6b-O2_REPORT.md / P6b-M1_REPORT.md,IMPLEMENTED

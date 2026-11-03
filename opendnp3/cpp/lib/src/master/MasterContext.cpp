@@ -33,6 +33,9 @@
 #include "master/MeasurementHandler.h"
 #include "master/RestartOperationTask.h"
 #include "master/UserPollTask.h"
+#ifdef OPENDNP3_USE_SA_CRYPTO
+#include "master/UpdateKeyTask.h"
+#endif
 
 #include "opendnp3/logging/LogLevels.h"
 
@@ -127,7 +130,7 @@ bool MContext::OnLowerLayerDown()
         authentication->wireInFlight = false;
         crypto::Clear(ser4cpp::wseq_t(authentication->pendingWire.data(), authentication->pendingWire.size()));
         authentication->pendingWireSize = 0;
-        authentication->exchangeIndex = 2;
+        authentication->exchangeIndex = authentication->SessionCount();
         authentication->peerRestartAllowed = true;
         authentication->restartRecoveryPending = false;
         authentication->monitorWaiting = false;
@@ -204,13 +207,13 @@ bool MContext::OnReceive(const Message& message)
                 if (statistics.Exceeded(SecurityStatistic::RESTART_REKEYS)) return true;
                 statistics.Increment(SecurityStatistic::RESTART_REKEYS);
                 statistics.ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
-                for (size_t n = 0; n < 2; ++n) auth.sessions->At(n)->RequestPeerRestart(now);
+                for (size_t n = 0; n < auth.sessions->Size(); ++n) auth.sessions->At(n)->RequestPeerRestart(now);
                 ResetAuthentication(); // Association restart; retain all transport-owned APDU bytes.
                 crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
                 auth.pendingWireSize = 0;
-                if (auth.exchangeIndex < 2)
+                if (auth.exchangeIndex < auth.SessionCount())
                 {
-                    auth.exchangeIndex = 2;
+                    auth.exchangeIndex = auth.SessionCount();
                     auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
                 }
                 auth.peerRestartAllowed = auth.restartRecoveryPending = true;
@@ -282,7 +285,7 @@ void MContext::OnResponseTimeout()
 {
     if (isOnline)
     {
-        this->ResetAuthentication();
+        if (!activeTask || !activeTask->IsAuthenticationTask()) this->ResetAuthentication();
         this->tstate = this->OnResponseTimeoutEvent();
     }
 }
@@ -309,6 +312,24 @@ void MContext::OnParsedHeader(const ser4cpp::rseq_t& apdu,
                               const APDUResponseHeader& header,
                               const ser4cpp::rseq_t& objects)
 {
+    if (activeTask && activeTask->IsAuthenticationTask() && tstate == TaskState::WAIT_FOR_RESPONSE
+        && activeTask->AcceptsAuthenticationResponse(header, objects))
+    {
+        InvalidateRemoteCredentials();
+        ProcessResponse(header, objects);
+        return;
+    }
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions && authentication->sessions->remote
+        && objects.length() >= 2 && objects[0] == 120
+        && (objects[1] == 8 || (objects[1] >= 10 && objects[1] <= 15)))
+    {
+        // Remote-key Info objects have their own scheduled owner. Unowned or
+        // malformed input must not enter ordinary Challenge/Reply reset paths.
+        authentication->sessions->statistics.Unexpected();
+        return;
+    }
+#endif
     if (this->RouteAuthentication(apdu, header))
         return;
     // Note: this looks silly, but OnParsedHeader() is virtual and can be overriden to do SA
@@ -316,6 +337,18 @@ void MContext::OnParsedHeader(const ser4cpp::rseq_t& apdu,
 }
 
 /// --- command handlers ----
+bool MContext::ChangeUpdateKey(const UpdateKeyRequest& request, const TaskConfig& config)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions || !authentication->sessions->remote) return false;
+    ScheduleAdhocTask(std::make_shared<UpdateKeyTask>(tasks.context, *application, logger, config,
+        Timestamp(executor->get_time()) + params.taskStartTimeout, executor, authentication,
+        *authentication->sessions->remote, request));
+    return true;
+#else
+    return false;
+#endif
+}
 
 void MContext::DirectOperate(CommandSet&& commands, const CommandResultCallbackT& callback, const TaskConfig& config)
 {
@@ -472,7 +505,7 @@ bool MContext::CheckConfirmTransmit()
                 auth.protectedConfirm = false;
                 return false;
             }
-            if (auth.exchangeIndex < 2 || auth.pendingWireSize || auth.replyPending || auth.replyInFlight)
+            if (auth.exchangeIndex < auth.SessionCount() || auth.pendingWireSize || auth.replyPending || auth.replyInFlight)
                 return false;
             if (!auth.controlAggressive.Create(auth.association, 1, session->ControlKey(now), wrapper.ToRSeq(),
                                                ser4cpp::wseq_t(auth.wire.data(), auth.wire.size()), auth.wireSize))
@@ -497,7 +530,7 @@ bool MContext::CheckConfirmTransmit()
             auth.protectedConfirm = false;
             return false;
         }
-        if ((auth.protectedConfirm && !auth.nativeConfirmQueued) || auth.exchangeIndex < 2 || auth.pendingWireSize
+        if ((auth.protectedConfirm && !auth.nativeConfirmQueued) || auth.exchangeIndex < auth.SessionCount() || auth.pendingWireSize
             || (auth.protectedTask && !auth.replyIssued && tstate == TaskState::WAIT_FOR_RESPONSE)
             || !session || !session->Ready(now)
             || auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE)
@@ -561,11 +594,12 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (started && authentication && authentication->sessions)
     {
+        if (authentication->sessions->remote) authentication->sessions->remote->Transmitted(data);
         auto& statistics = authentication->sessions->statistics;
         statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_SENT);
         if (data.length() >= 4 && data[2] == 120)
         {
-            if (data[1] == 0x20 && (data[3] == 4 || data[3] == 6) && authentication->exchangeIndex < 2)
+            if (data[1] == 0x20 && (data[3] == 4 || data[3] == 6) && authentication->exchangeIndex < authentication->SessionCount())
                 authentication->sessions->At(authentication->exchangeIndex)->OnExchangeTransmit(data[3], data[0] & 15);
             if (data[1] == 0x20 && data[3] == 1) statistics.Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
             // P6-OPEN-02: Reply OR Aggressive/mandatory CONFIRM, never both.
@@ -584,7 +618,9 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
 void MContext::StartResponseTimer()
 {
     auto timeout = [self = shared_from_this()]() { self->OnResponseTimeout(); };
-    this->responseTimer = this->executor->start(this->params.responseTimeout.value, timeout);
+    const auto milliseconds = activeTask ? activeTask->ResponseTimeoutMs() : 0;
+    this->responseTimer = this->executor->start(milliseconds ? std::chrono::milliseconds(milliseconds)
+        : this->params.responseTimeout.value, timeout);
 }
 
 std::shared_ptr<IMasterTask> MContext::AddScan(TimeDuration period,
@@ -712,7 +748,7 @@ bool MContext::Run(const std::shared_ptr<IMasterTask>& task)
             executor->get_time().time_since_epoch()).count());
         auto* session = auth.sessions->Find(task->AuthenticationUser());
         auth.userCritical = task->IsUserTask() && !task->IsRecurring() && session
-            && auth.exchangeIndex == 2 && !auth.pendingWireSize && !auth.replyPending && !auth.replyInFlight
+            && auth.exchangeIndex == auth.SessionCount() && !auth.pendingWireSize && !auth.replyPending && !auth.replyInFlight
             && !auth.protectedConfirm && !auth.deferredAuthenticationCount && !auth.monitorWaiting
             && !auth.controlAggressive.HasPendingConfirm()
             && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE;
@@ -759,7 +795,20 @@ MContext::TaskState MContext::ResumeActiveTask()
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     bool unkeyedCritical = false;
-    if (authentication && authentication->sessions)
+    if (authentication && activeTask->IsAuthenticationTask()
+        && (authentication->exchangeIndex < authentication->SessionCount() || authentication->pendingWireSize
+            || authentication->replyPending || authentication->replyInFlight || authentication->protectedConfirm
+            || authentication->monitorWaiting))
+    {
+        if (Timestamp(executor->get_time()) >= activeTask->StartExpirationTime())
+        {
+            activeTask->OnStartTimeout(Timestamp(executor->get_time()));
+            CompleteActiveTask();
+            return TaskState::IDLE;
+        }
+        return TaskState::TASK_READY;
+    }
+    if (authentication && authentication->sessions && !activeTask->IsAuthenticationTask())
     {
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
@@ -771,7 +820,7 @@ MContext::TaskState MContext::ResumeActiveTask()
             return TaskState::IDLE;
         }
         auto& auth = *authentication;
-        unkeyedCritical = auth.allowUnkeyedCritical && auth.exchangeIndex == 2 && !auth.pendingWireSize
+        unkeyedCritical = auth.allowUnkeyedCritical && auth.exchangeIndex == auth.SessionCount() && !auth.pendingWireSize
             && !auth.replyPending && !auth.replyInFlight && !auth.protectedConfirm && !auth.deferredAuthenticationCount
             && !auth.monitorWaiting && !auth.controlAggressive.HasPendingConfirm()
             && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE
@@ -788,9 +837,10 @@ MContext::TaskState MContext::ResumeActiveTask()
             if (session->Ready(now) && session->RemainingMessages() < 2)
                 session->RequestRenewal(now);
         }
-        const bool allReady
-            = authentication->sessions->At(0)->Ready(now) && authentication->sessions->At(1)->Ready(now);
-        if (!unkeyedCritical && (!allReady || authentication->exchangeIndex < 2 || !session->Ready(now)
+        const bool allReady = authentication->sessions->remote
+            ? (common && common->Ready(now) && session->Ready(now))
+            : authentication->sessions->At(0)->Ready(now) && authentication->sessions->At(1)->Ready(now);
+        if (!unkeyedCritical && (!allReady || authentication->exchangeIndex < authentication->SessionCount() || !session->Ready(now)
             || authentication->protectedConfirm || authentication->deferredAuthenticationCount))
         {
             if (Timestamp(executor->get_time()) >= activeTask->StartExpirationTime())
@@ -801,7 +851,7 @@ MContext::TaskState MContext::ResumeActiveTask()
             }
             return TaskState::TASK_READY;
         }
-        const auto index = session->User() == authentication->sessions->config.users[0] ? 0u : 1u;
+        const auto index = authentication->sessions->Index(session->User());
         const bool fresh = authentication->keyEpoch[index] != session->Sequence();
         if (!unkeyedCritical && (fresh || authentication->responderUser != session->User()
             || authentication->responder.GetState() == MasterResponder::State::NO_SESSION_KEYS))
@@ -848,7 +898,7 @@ MContext::TaskState MContext::ResumeActiveTask()
     {
         // Test-mode policy protects all ordinary functions except READ/CONFIRM,
         // including every mandatory critical function in IEEE Table 7-7 (p252).
-        authentication->protectedTask = request.GetFunction() != FunctionCode::CONFIRM
+        authentication->protectedTask = !activeTask->IsAuthenticationTask() && request.GetFunction() != FunctionCode::CONFIRM
             && (authentication->sessions || request.GetFunction() != FunctionCode::READ);
         // Reuse the active protection policy for Code 1 (including configured
         // optional critical functions). The keyless exception above remains mandatory-only.
@@ -861,7 +911,7 @@ MContext::TaskState MContext::ResumeActiveTask()
         {
             auto& auth = *authentication;
             auto* session = auth.sessions->Find(activeTask->AuthenticationUser());
-            const auto index = session->User() == auth.sessions->config.users[0] ? 0u : 1u;
+            const auto index = auth.sessions->Index(session->User());
             if (auth.sessions->config.aggressiveTransmit && auth.controlEligible[index]
                 && auth.controlAggressive.HasChallenge(request.GetControl().UNS))
             {
@@ -1005,6 +1055,7 @@ MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeade
 
 MContext::TaskState MContext::OnResponseTimeout_WaitForResponse()
 {
+    if (activeTask->RetryOnResponseTimeout()) return StartTask_TaskReady();
     SIMPLE_LOG_BLOCK(logger, flags::WARN, "Timeout waiting for response");
 
     auto now = Timestamp(this->executor->get_time());
@@ -1101,7 +1152,7 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         const auto& header = original.header;
-        if (!session->Ready(now) || auth.exchangeIndex < 2 || auth.pendingWireSize
+        if (!session->Ready(now) || auth.exchangeIndex < auth.SessionCount() || auth.pendingWireSize
             || auth.protectedConfirm || auth.replyPending || auth.replyInFlight
             || (header.function == FunctionCode::RESPONSE
                 && (!activeTask || tstate != TaskState::WAIT_FOR_RESPONSE || header.control.SEQ != solSeq)))
@@ -1142,7 +1193,7 @@ void MContext::ProcessAuthenticatedResponse(const ser4cpp::rseq_t& wire, const s
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         if (!session->Ready(now) || auth.protectedConfirm || auth.replyPending || auth.replyInFlight
-            || auth.exchangeIndex < 2 || auth.pendingWireSize)
+            || auth.exchangeIndex < auth.SessionCount() || auth.pendingWireSize)
         {
             auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
             FinalizeAuthenticationCounts();
@@ -1203,7 +1254,7 @@ void MContext::ResetAuthentication()
         && authentication->pendingWire[1] == FunctionCodeSpec::to_type(FunctionCode::AUTH_REQUEST)
         && authentication->pendingWire[2] == 120 && authentication->pendingWire[3] == 6)
     {
-        if (authentication->sessions && authentication->exchangeIndex < 2)
+        if (authentication->sessions && authentication->exchangeIndex < authentication->SessionCount())
         {
             const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                 executor->get_time().time_since_epoch()).count());
@@ -1211,7 +1262,7 @@ void MContext::ResetAuthentication()
         }
         crypto::Clear(ser4cpp::wseq_t(authentication->pendingWire.data(), authentication->pendingWire.size()));
         authentication->pendingWireSize = 0;
-        authentication->exchangeIndex = 2;
+        authentication->exchangeIndex = authentication->SessionCount();
         authentication->exchangeSequence = (authentication->exchangeSequence + 1) & 15;
     }
     authentication->allowUnkeyedCritical = false;
@@ -1230,7 +1281,7 @@ void MContext::ResetAuthentication()
     authentication->userCritical = authentication->recoveringKeys = authentication->errorAttempt.valid = false;
     authentication->controlAggressive.Reset();
     authentication->monitoringAggressive.Reset();
-    authentication->controlEligible = {{false, false}};
+    authentication->controlEligible.fill(false);
     authentication->monitoringEligible = false;
     // Authentication state resets immediately; an active TX still borrows these bytes.
     if (!isSending)
@@ -1325,7 +1376,7 @@ void MContext::TransmitAuthenticationReply()
         auto* session = authentication->sessions->Find(authentication->responderUser);
         if (session)
         {
-            const auto index = session->User() == authentication->sessions->config.users[0] ? 0u : 1u;
+            const auto index = authentication->sessions->Index(session->User());
             if (authentication->controlAggressive.RememberChallenge(
                     authentication->responder.LastAcceptedChallenge(),
                     authentication->responder.LastChallengeWasUnsolicited()))
@@ -1341,13 +1392,42 @@ void MContext::TransmitAuthenticationReply()
 #endif
 }
 
+void MContext::InvalidateRemoteCredentials()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions || !authentication->sessions->remote) return;
+    auto& auth = *authentication;
+    while (const auto user = auth.sessions->remote->TakeInvalidatedUser())
+    {
+        const auto index = auth.sessions->Index(user);
+        if (index < auth.controlEligible.size()) auth.controlEligible[index] = false;
+        if (auth.responderUser == user)
+        {
+            CancelAuthenticationReply();
+            auth.responder.Reset();
+            auth.responderUser = 0;
+        }
+        if (user == 1)
+        {
+            auth.monitoring.CancelPending();
+            auth.monitorWaiting = auth.monitoringEligible = false;
+            auth.monitoringAggressive.Reset();
+        }
+    }
+#endif
+}
 void MContext::ServiceSecurityStatistics(uint64_t now)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication || !authentication->sessions) return;
     auto& auth = *authentication;
     auto& statistics = auth.sessions->statistics;
-    for (size_t n = 0; n < 2; ++n) auth.sessions->At(n)->Tick(now);
+    if (auth.sessions->remote)
+    {
+        auth.sessions->remote->Tick(now);
+        InvalidateRemoteCredentials();
+    }
+    for (size_t n = 0; n < auth.sessions->Size(); ++n) auth.sessions->At(n)->Tick(now);
     auth.monitoring.Tick(now);
     if (auth.monitorWaiting && auth.monitoring.GetState() != OutstationChallenger::State::WAITING_FOR_REPLY)
     {
@@ -1369,15 +1449,15 @@ void MContext::ServiceSecurityStatistics(uint64_t now)
     {
         auth.restartRecoveryPending = false;
         statistics.ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
-        for (size_t n = 0; n < 2; ++n)
+        for (size_t n = 0; n < auth.sessions->Size(); ++n)
             if (!keyTimeout || auth.sessions->At(n)->User() != exhaustedUser)
                 auth.sessions->At(n)->CommunicationFailure(now);
         ResetAuthentication(); // All-user event, Table 7-8 row 8/Table 7-13 row 5.
         crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
         auth.pendingWireSize = 0; // Never overwrite auth.wire/reply/aggressiveWire while in flight.
-        if (auth.exchangeIndex < 2)
+        if (auth.exchangeIndex < auth.SessionCount())
         {
-            auth.exchangeIndex = 2;
+            auth.exchangeIndex = auth.SessionCount();
             auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
         }
     }
@@ -1447,7 +1527,7 @@ void MContext::ServiceAuthentication()
         if (owner && owner->Sequence() == auth.errorAttempt.ksq)
         {
             owner->RequestRenewal(now);
-            auth.controlEligible[owner->User() == auth.sessions->config.users[0] ? 0 : 1] = false;
+            auth.controlEligible[auth.sessions->Index(owner->User())] = false;
             if (auth.responderUser == owner->User()) auth.responder.Reset();
         }
         auth.errorAttempt.valid = false; // Applied once; a replacement KSQ needs no repeat renewal.
@@ -1462,7 +1542,7 @@ void MContext::ServiceAuthentication()
     }
     if (auth.replyPending && !auth.replyInFlight && !IsAuthenticationReplyValid(now))
         CancelAuthenticationReply();
-    if (auth.exchangeIndex < 2 && !auth.sessions->At(auth.exchangeIndex)->IsExchanging())
+    if (auth.exchangeIndex < auth.SessionCount() && !auth.sessions->At(auth.exchangeIndex)->IsExchanging())
     {
         auth.restartRecoveryPending = false;
         // V4/V6 are generated only by this exchange. Tick may have expired or
@@ -1475,18 +1555,19 @@ void MContext::ServiceAuthentication()
             crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
             auth.pendingWireSize = 0;
         }
-        auth.exchangeIndex = 2;
+        auth.exchangeIndex = auth.SessionCount();
         auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
     }
-    if (!auth.pendingWireSize && auth.exchangeIndex == 2 && !auth.monitorWaiting && !auth.protectedConfirm
+    if (!auth.pendingWireSize && auth.exchangeIndex == auth.SessionCount() && !auth.monitorWaiting && !auth.protectedConfirm
+        && !(activeTask && activeTask->IsAuthenticationTask())
         // Key expiry must not bypass the deferred Code 1 recovery above while its Reply still owns TX.
         && !(auth.recoveringKeys && auth.errorAttempt.valid && (auth.replyPending || auth.replyInFlight))
         && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE && !auth.recoveringKeys))
     {
-        const size_t first = auth.recoveringKeys && auth.errorAttempt.user == auth.sessions->config.users[1] ? 1 : 0;
-        for (size_t offset = 0; offset < 2; ++offset)
+        const size_t first = auth.recoveringKeys ? auth.sessions->Index(auth.errorAttempt.user) : 0;
+        for (size_t offset = 0; offset < auth.sessions->Size(); ++offset)
         {
-            const size_t n = (first + offset) % 2;
+            const size_t n = (first + offset) % auth.sessions->Size();
             auto* session = auth.sessions->At(n);
             if (session->NeedsExchange(now))
             {
@@ -1503,7 +1584,7 @@ void MContext::ServiceAuthentication()
     {
         std::memcpy(auth.wire.data(), auth.pendingWire.data(), auth.pendingWireSize);
         auth.wireSize = auth.pendingWireSize;
-        if (auth.exchangeIndex < 2)
+        if (auth.exchangeIndex < auth.SessionCount())
             auth.sessions->At(auth.exchangeIndex)->SetChangeQueued(
                 ser4cpp::rseq_t(auth.wire.data(), auth.wireSize), false);
         crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
@@ -1511,7 +1592,7 @@ void MContext::ServiceAuthentication()
         auth.wireInFlight = true;
         this->Transmit(ser4cpp::rseq_t(auth.wire.data(), auth.wireSize));
     }
-    else if (!isSending && !auth.monitorWaiting && auth.exchangeIndex == 2 && activeTask
+    else if (!isSending && !auth.monitorWaiting && auth.exchangeIndex == auth.SessionCount() && activeTask
              && tstate == TaskState::TASK_READY)
         tstate = this->ResumeActiveTask();
     if (!isSending && !auth.protectedConfirm)
@@ -1648,7 +1729,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
         if (header.function == FunctionCode::AUTH_RESPONSE && apdu.length() >= 6 && apdu[4] == 120 && apdu[5] == 5)
         {
-            if (auth.exchangeIndex >= 2 || auth.pendingWireSize)
+            if (auth.exchangeIndex >= auth.SessionCount() || auth.pendingWireSize)
             {
                 if (statistics) statistics->Unexpected();
                 return true;
@@ -1709,10 +1790,10 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     return true;
                 if (!countedRestart) statistics->Increment(SecurityStatistic::RESTART_REKEYS);
                 statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
-                for (size_t n = 0; n < 2; ++n)
+                for (size_t n = 0; n < auth.sessions->Size(); ++n)
                     auth.sessions->At(n)->PeerRestart(now);
                 ResetAuthentication();
-                auth.exchangeIndex = 2;
+                auth.exchangeIndex = auth.SessionCount();
                 auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
                 ServiceAuthentication();
                 return true;
@@ -1739,7 +1820,7 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     auth.monitoringEligible = false;
                 if (session->User() == 1)
                     auth.monitoring.SetSessionKey(1, session->MonitoringKey(now), session->ValidUntil(), now);
-                auth.exchangeIndex = 2;
+                auth.exchangeIndex = auth.SessionCount();
                 auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
             }
             this->ServiceAuthentication();

@@ -2,6 +2,7 @@
 #include "auth/AuthenticationSession.h"
 
 #include "auth/AuthenticationMAC.h"
+#include "auth/RemoteUpdateKeys.h"
 #include "crypto/CryptoProvider.h"
 
 #include <limits>
@@ -29,17 +30,24 @@ AuthenticationSession::AuthenticationSession(SessionKeys::Role role, const Authe
     settings.tagLength = config.tagLength;
     settings.macAlgorithm = config.macAlgorithm;
     settings.keyWrapAlgorithm = config.keyWrapAlgorithm;
+    const auto capacity = config.remoteUpdateKeys && config.userCapacity >= 2
+        && config.userCapacity <= MAX_AUTHENTICATION_USERS ? config.userCapacity : 2;
+    sessions.resize(capacity);
     for (size_t n = 0; n < sessions.size(); ++n)
     {
-        sessions[n].reset(new SessionKeys(role, config.association, config.users[n], settings));
+        sessions[n].reset(new SessionKeys(role, config.association,
+            n < 2 ? config.users[n] : static_cast<uint16_t>(n + 1), settings));
         sessions[n]->SetStatistics(&statistics);
     }
+    if (config.remoteUpdateKeys) remote.reset(new RemoteUpdateKeys(*this, role));
 }
+AuthenticationSession::~AuthenticationSession() = default;
 bool AuthenticationSession::Load(uint64_t now)
 {
     for (auto& entry : sessions)
         entry->Reset();
     AuthenticationMACPolicy mac(ResolveAuthenticationMAC(config.macAlgorithm, config.tagLength));
+    for (const auto& entry : sessions) if (!entry->ValidConfiguration()) return false;
     if (!mac.Configure(config) || config.mode != AuthenticationConfig::Mode::REQUIRED
         || (config.maxErrorMessagesSent != 2 && config.statisticThresholds[10] != 2
             && config.maxErrorMessagesSent != config.statisticThresholds[10])
@@ -48,6 +56,12 @@ bool AuthenticationSession::Load(uint64_t now)
         || !config.credentials || !config.authorization
         || config.users[0] != 1 || !config.users[1] || config.users[0] == config.users[1])
         return false;
+    if (remote)
+    {
+        const bool loaded = remote->Load(now);
+        if (!loaded) for (auto& entry : sessions) entry->Reset();
+        return loaded;
+    }
     struct Key
     {
         std::array<uint8_t, 32> bytes{};
@@ -102,9 +116,15 @@ SessionKeys* AuthenticationSession::At(size_t index)
 {
     return index < sessions.size() ? sessions[index].get() : nullptr;
 }
+size_t AuthenticationSession::Index(uint16_t user) const
+{
+    for (size_t n = 0; n < sessions.size(); ++n)
+        if (sessions[n]->User() == user) return n;
+    return sessions.size();
+}
 bool AuthenticationSession::Authorize(uint16_t user, uint8_t function, uint64_t now, ser4cpp::rseq_t request) const
 {
-    if (!config.authorization)
+    if (!config.authorization || (remote && !remote->Authorize(user, function, now)))
         return false;
     try
     {
@@ -120,6 +140,7 @@ bool AuthenticationSession::Authorize(uint16_t user, uint8_t function, uint64_t 
 }
 void AuthenticationSession::Disconnect()
 {
+    if (remote) remote->Cancel();
     for (auto& entry : sessions)
         entry->Disconnect();
     statistics.Disconnect(); // Communication failure, Table 7-8 rows 8/9; no stale recovery owner on reconnect.

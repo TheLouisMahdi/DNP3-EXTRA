@@ -53,7 +53,12 @@ public:
     // Copies an externally provisioned 32-byte Update Key. Replacement wipes all
     // session state. Expiry is an absolute monotonic deadline, never a default key.
     Result Configure(ser4cpp::rseq_t updateKey, uint64_t credentialExpiry, uint64_t now);
+    // Remote update changes share KSQ with Session Keys (A.45.12).
+    Result ReplaceUpdateKey(ser4cpp::rseq_t updateKey, uint64_t credentialExpiry, uint64_t now);
+    bool NextUpdateKeySequence(uint32_t& sequence);
+    ser4cpp::rseq_t UpdateKey(uint64_t now);
     bool NeedsExchange(uint64_t now);
+    bool ValidConfiguration() const { return ValidConfig(); }
     void SetStatistics(AuthenticationStatistics* value) { statistics = value; }
     void CommunicationFailure(uint64_t now);
     uint8_t LastKeyStatus() const { return lastKeyStatus; } // Zero means no accepted remote status.
@@ -89,6 +94,7 @@ public:
     void SetChangeQueued(ser4cpp::rseq_t change, bool queued);
     void CancelQueuedChange(uint64_t now);
     void Reset();                   // wipes credentials and all owned secrets
+    void Revoke();                  // same erasure, retaining the association-local KSQ source
     bool Ready(uint64_t now);
     ser4cpp::rseq_t ControlKey(uint64_t now);
     ser4cpp::rseq_t MonitoringKey(uint64_t now);

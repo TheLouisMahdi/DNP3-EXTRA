@@ -683,7 +683,10 @@ if(DNP3_SA_CRYPTO)
     list(APPEND all_sources ./src/auth/AuthenticationStatistics.h ./src/auth/AuthenticationStatistics.cpp)
     list(APPEND all_sources ./src/auth/AuthenticationMAC.h ./src/auth/AggressiveMode.h ./src/auth/AggressiveMode.cpp)
     list(APPEND all_sources ./src/auth/SessionKeys.h ./src/auth/SessionKeys.cpp
-        ./src/auth/AuthenticationSession.h ./src/auth/AuthenticationSession.cpp)
+        ./src/auth/AuthenticationSession.h ./src/auth/AuthenticationSession.cpp
+        ./src/auth/UpdateKeyFunctions.h ./src/auth/UpdateKeyFunctions.cpp
+        ./src/auth/RemoteUpdateKeys.h ./src/auth/RemoteUpdateKeys.cpp)
+    list(APPEND all_sources ./src/master/UpdateKeyTask.h ./src/master/UpdateKeyTask.cpp)
     if(WIN32)
         list(APPEND all_sources ./src/auth/WindowsAuthenticationCredentials.cpp)
     endif()

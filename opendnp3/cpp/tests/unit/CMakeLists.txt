@@ -89,7 +89,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}
 if(DNP3_SA_CRYPTO)
     list(APPEND unittests_src ./TestAuthenticationStatistics.cpp)
     list(APPEND unittests_src ./TestSecurityStatRead.cpp ./TestSecurityStatEvents.cpp)
-    list(APPEND unittests_src ./TestCryptoProvider.cpp ./TestSessionKeys.cpp ./TestAuthenticationConfig.cpp ./TestAuthenticationDirections.cpp ./TestProductionAuthentication.cpp ./TestAggressiveMode.cpp)
+    list(APPEND unittests_src ./TestCryptoProvider.cpp ./TestSessionKeys.cpp ./TestAuthenticationConfig.cpp ./TestAuthenticationDirections.cpp ./TestProductionAuthentication.cpp ./TestAggressiveMode.cpp ./TestRemoteUpdateKeys.cpp)
     list(APPEND unittests_src ./TestOutstationChallenger.cpp)
     list(APPEND unittests_src ./TestMasterResponder.cpp)
     list(APPEND unittests_src ./TestAuthenticationRuntime.cpp)

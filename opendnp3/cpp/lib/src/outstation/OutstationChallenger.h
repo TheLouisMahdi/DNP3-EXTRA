@@ -48,7 +48,7 @@ public:
     };
 
     // Engineering bounds for this internal slice, not DNP3 limits.
-    static constexpr size_t MAX_USERS = 2;
+    static constexpr size_t MAX_USERS = 16;
     static constexpr size_t MAX_REQUEST_SIZE = DEFAULT_MAX_APDU_SIZE;
     // IEEE Table 7-17 (PDF p288): 32-byte SHA256 challenge data.
     static constexpr size_t CHALLENGE_DATA_SIZE = 32;
@@ -70,11 +70,14 @@ public:
     // A successful replacement cancels pending authentication; never reuse it
     // across a key change. validUntilMs is an injected session-validity deadline.
     Result SetSessionKey(uint16_t user, ser4cpp::rseq_t key, uint64_t validUntilMs, uint64_t nowMs);
+    void RemoveUser(uint16_t user);
     void Reset(); // wipes keys and pending state, but preserves CSQ (7.5.2.3.3).
     bool ConfigureMACs(const AuthenticationConfig& config)
     {
         if (requestSize) return false;
         const bool valid = macPolicy.Configure(config);
+        userCapacity = config.remoteUpdateKeys ? config.userCapacity : 2;
+        if (userCapacity < 2 || userCapacity > MAX_USERS) { userCapacity = 2; return false; }
         macAlgorithm = valid ? ResolveAuthenticationMAC(config.macAlgorithm, config.tagLength) : 0;
         tagLength = AuthenticationTagLength(macAlgorithm);
         return valid;
@@ -146,6 +149,7 @@ private:
     AuthenticationMACPolicy macPolicy;
     const uint32_t replyTimeoutMs;
     std::array<User, MAX_USERS> users{};
+    size_t userCapacity = 2; // Preserve the existing bound unless remote users are configured.
     // Table A-3 (PDF p765): full Challenge fragment || full challenged fragment.
     // No addressing, Reply user field or application-added HMAC padding is added.
     std::array<uint8_t, CHALLENGE_SIZE + MAX_REQUEST_SIZE> transcript{};

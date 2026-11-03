@@ -147,6 +147,7 @@ public:
                    const TaskConfig& config) override;
 
     void Write(const TimeAndInterval& value, uint16_t index, const TaskConfig& config) override;
+    bool ChangeUpdateKey(const UpdateKeyRequest& request, const TaskConfig& config) override;
 
     void Restart(RestartType op, const RestartOperationCallbackT& callback, TaskConfig config) override;
 

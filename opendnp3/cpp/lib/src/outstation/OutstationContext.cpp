@@ -18,6 +18,9 @@
  * limitations under the License.
  */
 #include "OutstationContext.h"
+#ifdef OPENDNP3_USE_SA_CRYPTO
+#include "auth/RemoteUpdateKeys.h"
+#endif
 
 #include "app/APDUBuilders.h"
 #include "app/APDULogging.h"
@@ -153,6 +156,8 @@ bool OContext::OnLowerLayerDown()
     if (authentication && authentication->sessions)
     {
         authentication->sessions->Disconnect();
+        authentication->remoteTimer.cancel();
+        authentication->remoteResponsePending = false;
         authentication->pendingWireSize = 0;
         authentication->selectUser = 0;
     }
@@ -339,11 +344,11 @@ void OContext::BeginUnsolTx(APDUResponse& response)
     this->BeginTx(this->addresses.destination, data);
 }
 
-void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
+void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse)
 {
     auto encoded = message;
 #ifdef OPENDNP3_USE_SA_CRYPTO
-    if (authentication && authentication->sessions && message.length() >= 4
+    if (!authenticationResponse && authentication && authentication->sessions && message.length() >= 4
         && (message[1] == 0x81 || message[1] == 0x82))
     {
         auto& auth = *authentication;
@@ -397,6 +402,7 @@ void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message)
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (started && authentication && authentication->sessions)
     {
+        if (authentication->sessions->remote) authentication->sessions->remote->Transmitted(encoded);
         auto& statistics = authentication->sessions->statistics;
         statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_SENT);
         if (encoded.length() >= 6 && encoded[4] == 120)
@@ -1143,7 +1149,7 @@ void OContext::ResetAuthentication()
     authentication->challenger.Reset();
     authentication->controlAggressive.Reset();
     authentication->monitoringAggressive.Reset();
-    authentication->controlEligible = {{false, false}};
+    authentication->controlEligible.fill(false);
     authentication->monitoringEligible = false;
     if (!isTransmitting)
         crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
@@ -1165,18 +1171,44 @@ void OContext::ResetAuthentication()
 #endif
 }
 
+void OContext::InvalidateRemoteCredentials()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!authentication || !authentication->sessions || !authentication->sessions->remote) return;
+    auto& auth = *authentication;
+    while (const auto invalidated = auth.sessions->remote->TakeInvalidatedUser())
+    {
+        auth.challenger.RemoveUser(invalidated);
+        const auto index = auth.sessions->Index(invalidated);
+        if (index < auth.controlEligible.size()) auth.controlEligible[index] = false;
+        if (auth.selectUser == invalidated) { auth.selectUser = 0; control.Unselect(); }
+        if (invalidated == 1)
+        {
+            auth.monitoring.Reset();
+            auth.monitoringPending = auth.monitoringEligible = false;
+            auth.monitoringTimer.cancel();
+            auth.monitoringAggressive.Reset();
+        }
+    }
+#endif
+}
 void OContext::ServiceSecurityStatistics(uint64_t now)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication || !authentication->sessions) return;
     auto& auth = *authentication;
     auto& statistics = auth.sessions->statistics;
+    if (auth.sessions->remote)
+    {
+        auth.sessions->remote->Tick(now);
+        InvalidateRemoteCredentials();
+    }
     auth.challenger.Tick(now);
     if (statistics.Exceeded(SecurityStatistic::REPLY_TIMEOUTS))
     {
         statistics.ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
         ResetAuthentication();
-        for (size_t n = 0; n < 2; ++n) auth.sessions->At(n)->CommunicationFailure(now);
+        for (size_t n = 0; n < auth.sessions->Size(); ++n) auth.sessions->At(n)->CommunicationFailure(now);
         // This event explicitly affects ALL users. A queued old Status is now
         // obsolete, but the transport-owned wire buffer remains untouched.
         crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
@@ -1275,7 +1307,9 @@ void OContext::TransmitPendingAuthentication()
     const auto size = auth.pendingWireSize;
     std::memcpy(auth.wire.data(), auth.pendingWire.data(), size);
     auth.pendingWireSize = 0;
-    BeginTx(addresses.destination, ser4cpp::rseq_t(auth.wire.data(), size));
+    const bool remoteResponse = auth.remoteResponsePending;
+    auth.remoteResponsePending = false;
+    BeginTx(addresses.destination, ser4cpp::rseq_t(auth.wire.data(), size), remoteResponse);
     if (error && auth.sessions->config.errorObserver)
     {
         Group120Var7 value;
@@ -1307,6 +1341,33 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     if (statistics && aggressive) statistics->Increment(SecurityStatistic::CRITICAL_MESSAGES_RECEIVED);
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    if (authentication->sessions && authentication->sessions->remote && objects.length() >= 2
+        && objects[0] == 120 && (objects[1] == 10 || objects[1] == 11 || objects[1] == 13 || objects[1] == 15))
+    {
+        auto& auth = *authentication;
+        auto& remote = *auth.sessions->remote;
+        if (!CanTransmit() || auth.pendingWireSize) return true;
+        DNPTime time;
+        try { time = application->Now(); } catch (...) {}
+        const bool response = remote.Request(header, objects, now,
+            ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), auth.pendingWireSize, GetResponseIIN(), time);
+        InvalidateRemoteCredentials();
+        if (response)
+        {
+            auth.remoteResponsePending = true;
+            TransmitPendingAuthentication();
+        }
+        else if (statistics) statistics->Unexpected();
+        auth.remoteTimer.cancel();
+        if (remote.Busy())
+            auth.remoteTimer = executor->start(std::chrono::milliseconds(remote.Deadline() > now ? remote.Deadline() - now : 0), [this]() {
+                const auto time = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    executor->get_time().time_since_epoch()).count());
+                authentication->sessions->remote->Tick(time);
+                InvalidateRemoteCredentials();
+            });
+        return true;
+    }
     if (objects.length() >= 2 && objects[0] == 120 && objects[1] == 7)
     {
         auto& auth = *authentication;
@@ -1345,7 +1406,9 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
         if (statistics) statistics->Increment(SecurityStatistic::ERROR_MESSAGES_RECEIVED);
         // CancelOnError itself enforces the exact Challenge owner. Unknown
         // nonzero users cannot cancel it, but still reach logging/accounting.
-        const bool discarded = auth.challenger.CancelOnError(error.value, header.control.SEQ, now);
+        const bool discardedRemote = auth.sessions && auth.sessions->remote
+            && auth.sessions->remote->CancelOnError(error.value, header.control.SEQ, now);
+        const bool discarded = discardedRemote || auth.challenger.CancelOnError(error.value, header.control.SEQ, now);
         if (discarded)
             auth.replyTimer.cancel();
         if (!discarded)
@@ -1423,6 +1486,12 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 if (statistics) statistics->Unexpected();
                 return true;
             }
+            if (auth.sessions->remote && auth.sessions->remote->Busy()
+                && auth.sessions->remote->Owner() == value.user)
+            {
+                if (statistics) statistics->Unexpected();
+                return true; // The same user's remote update owns the shared KSQ.
+            }
             if (auth.deferredControlCount && session->User() == 1)
                 ResetAuthentication(); // Settle the owning common-user exchange before session replacement.
             size_t size = 0;
@@ -1431,7 +1500,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                                                  size, GetResponseIIN());
             if (result == SessionKeys::Result::INSTALLED)
             {
-                const auto index = session->User() == auth.sessions->config.users[0] ? 0u : 1u;
+                const auto index = auth.sessions->Index(session->User());
                 auth.controlEligible[index] = false;
                 if (session->User() == 1)
                     auth.monitoringEligible = false;
@@ -1556,7 +1625,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             if (authentication->sessions)
             {
                 auto& auth = *authentication;
-                const auto index = handler.reply.userNum == auth.sessions->config.users[0] ? 0u : 1u;
+                const auto index = auth.sessions->Index(handler.reply.userNum);
                 if (auth.controlAggressive.RememberChallenge(auth.challenger.LastAcceptedChallenge(),
                                                              auth.challenger.LastChallengeWasUnsolicited()))
                     auth.controlEligible[index] = true;
@@ -1614,9 +1683,9 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             return true;
         }
         auto* session = auth.sessions->Find(user);
-        const auto index = user == auth.sessions->config.users[0] ? 0u : 1u;
+        const auto index = auth.sessions->Index(user);
         size_t size = 0;
-        if (!session || !session->Ready(now) || !auth.controlEligible[index]
+        if (!session || !session->Ready(now) || (index >= auth.controlEligible.size() || !auth.controlEligible[index])
             || !auth.controlAggressive.Verify(auth.association, user, session->ControlKey(now), message.payload,
                                               ser4cpp::wseq_t(auth.authorized.data(), auth.authorized.size()), size))
         {
@@ -1698,7 +1767,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             return true;
         }
         if (authentication->challenger.GetState() == OutstationChallenger::State::NO_SESSION_KEYS)
-            for (size_t n = 0; n < 2; ++n)
+            for (size_t n = 0; n < authentication->sessions->Size(); ++n)
             {
                 auto* session = authentication->sessions->At(n);
                 if (session->Ready(now))

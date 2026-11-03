@@ -98,6 +98,7 @@ private:
     // state through configured credentials and the normal protocol exchange.
     friend class AuthenticationRuntimeTestAccess;
     friend class ProductionAuthenticationTestAccess;
+    friend class RemoteUpdateKeyTestAccess;
     friend class SecurityStatEventTestAccess;
     friend class OutstationStack;
     struct AuthenticationState
@@ -114,6 +115,7 @@ private:
         {
             replyTimer.cancel();
             monitoringTimer.cancel();
+            remoteTimer.cancel();
             challenger.SetStatistics(nullptr);
         }
         explicit AuthenticationState(const AuthenticationConfig& config)
@@ -132,12 +134,14 @@ private:
         }
         MasterResponder monitoring;
         AggressiveMode controlAggressive, monitoringAggressive;
-        std::array<bool, 2> controlEligible{{false, false}};
+        std::array<bool, 16> controlEligible{};
         bool monitoringEligible = false;
         std::array<uint8_t, SessionKeys::MAX_APDU> aggressiveWire{};
         std::unique_ptr<AuthenticationSession> sessions;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
         size_t pendingWireSize = 0;
+        bool remoteResponsePending = false;
+        exe4cpp::Timer remoteTimer;
         std::function<void()> closeTCPConnection;
         uint8_t deferredControlCount = 0;
         uint32_t deferredControlKSQ = 0;
@@ -163,6 +167,7 @@ private:
     void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();
     void ServiceSecurityStatistics(uint64_t now);
+    void InvalidateRemoteCredentials();
     void TransmitPendingAuthentication();
     void SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t appSequence);
     bool RouteAuthentication(const Message& message, const APDUHeader& header, const ser4cpp::rseq_t& objects);
@@ -203,7 +208,7 @@ private:
 
     void BeginUnsolTx(APDUResponse& response);
 
-    void BeginTx(uint16_t destination, const ser4cpp::rseq_t& message);
+    void BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse = false);
 
     void CheckForTaskStart();
 

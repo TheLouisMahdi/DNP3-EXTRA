@@ -74,6 +74,10 @@ public:
 
     uint16_t AuthenticationUser() const { return config.authenticationUser; }
     bool IsUserTask() const { return GetTaskType() == MasterTaskType::USER_TASK; }
+    virtual bool IsAuthenticationTask() const { return false; }
+    virtual bool AcceptsAuthenticationResponse(const APDUResponseHeader&, const ser4cpp::rseq_t&) { return false; }
+    virtual bool RetryOnResponseTimeout() { return false; }
+    virtual uint32_t ResponseTimeoutMs() const { return 0; } // Zero preserves MasterParams.
 
     /**
      * The task's priority. Lower numbers are higher priority.

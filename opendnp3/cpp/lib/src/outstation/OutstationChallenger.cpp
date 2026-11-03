@@ -167,6 +167,13 @@ OutstationChallenger::State OutstationChallenger::GetState() const
     return HasKeys() ? State::IDLE : State::NO_SESSION_KEYS;
 }
 
+void OutstationChallenger::RemoveUser(uint16_t number)
+{
+    auto* user = FindUser(number);
+    if (user) ClearUser(*user);
+    // A pending request has not yet selected its responding user. Its eventual
+    // Reply must still find a live credential and pass role authorization.
+}
 OutstationChallenger::Result OutstationChallenger::SetSessionKey(uint16_t number,
                                                                  ser4cpp::rseq_t key,
                                                                  uint64_t validUntilMs,
@@ -177,10 +184,10 @@ OutstationChallenger::Result OutstationChallenger::SetSessionKey(uint16_t number
         return Result::INVALID_INPUT;
     auto user = FindUser(number);
     if (!user)
-        for (auto& candidate : users)
-            if (!candidate.number)
+        for (size_t n = 0; n < userCapacity; ++n)
+            if (!users[n].number)
             {
-                user = &candidate;
+                user = &users[n];
                 break;
             }
     if (!user)
