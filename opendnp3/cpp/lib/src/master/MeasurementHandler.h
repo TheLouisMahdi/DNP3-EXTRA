@@ -49,11 +49,7 @@ public:
                                            Logger& logger,
                                            ISOEHandler* pHandler);
 
-    // TODO
-    virtual bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override
-    {
-        return true;
-    };
+    bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override;
 
     /**
      * Creates a new ResponseLoader instance.
@@ -85,6 +81,7 @@ private:
     IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<AnalogOutputStatus>>& values) override;
     IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<OctetString>>& values) override;
     IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<TimeAndInterval>>& values) override;
+    IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<SecurityStat>>& values) override;
 
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<Binary>>& values) override;
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<BinaryOutputStatus>>& values) override;
@@ -96,6 +93,8 @@ private:
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<OctetString>>& values) override;
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<BinaryCommandEvent>>& values) override;
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogCommandEvent>>& values) override;
+    IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<SecurityStat>>& values) override;
+    IINField LoadSecurityStatistics(const HeaderRecord& header, const ICollection<Indexed<SecurityStat>>& values);
 
     template<class Target, class Source>
     IINField LoadValuesWithTransformTo(const HeaderRecord& record, const ICollection<Indexed<Source>>& values)

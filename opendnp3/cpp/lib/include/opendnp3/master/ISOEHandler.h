@@ -25,6 +25,7 @@
 #include "opendnp3/app/Indexed.h"
 #include "opendnp3/app/MeasurementTypes.h"
 #include "opendnp3/app/OctetString.h"
+#include "opendnp3/app/SecurityStat.h"
 #include "opendnp3/app/parsing/ICollection.h"
 #include "opendnp3/master/HeaderInfo.h"
 #include "opendnp3/master/ResponseInfo.h"
@@ -61,6 +62,13 @@ public:
     virtual void Process(const HeaderInfo& info, const ICollection<Indexed<BinaryCommandEvent>>& values) = 0;
     virtual void Process(const HeaderInfo& info, const ICollection<Indexed<AnalogCommandEvent>>& values) = 0;
     virtual void Process(const HeaderInfo& info, const ICollection<DNPTime>& values) = 0;
+
+    /// Security statistics retain their raw index and Association ID. Zero refers
+    /// to this Master association; nonzero IDs are not merged or renumbered.
+    /// G122V2 carries no clock-quality indication. Its timestamp is delivered
+    /// conservatively as UNSYNCHRONIZED (accuracy unknown), never inferred from IIN.
+    /// The default preserves source compatibility with existing handlers.
+    virtual void Process(const HeaderInfo&, const ICollection<Indexed<SecurityStat>>&) {}
 };
 
 } // namespace opendnp3

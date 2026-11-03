@@ -51,6 +51,25 @@ MeasurementHandler::~MeasurementHandler()
     }
 }
 
+bool MeasurementHandler::IsAllowed(uint32_t, GroupVariation gv, QualifierCode qc)
+{
+    // Table 12-63 response qualifiers. Keep request parsing and other types unchanged.
+    const bool prefix = qc == QualifierCode::UINT8_CNT_UINT8_INDEX || qc == QualifierCode::UINT16_CNT_UINT16_INDEX;
+    switch (gv)
+    {
+    case GroupVariation::Group121Var1:
+        return prefix || qc == QualifierCode::UINT8_START_STOP || qc == QualifierCode::UINT16_START_STOP;
+    case GroupVariation::Group122Var1:
+    case GroupVariation::Group122Var2:
+        return prefix;
+    case GroupVariation::Group121Var0:
+    case GroupVariation::Group122Var0:
+        return false;
+    default:
+        return true;
+    }
+}
+
 TimestampQuality MeasurementHandler::ModeFromType(GroupVariation gv)
 {
     return HasAbsoluteTime(gv) ? TimestampQuality::SYNCHRONIZED : TimestampQuality::INVALID;
@@ -215,6 +234,36 @@ IINField MeasurementHandler::ProcessHeader(const PrefixHeader& header,
                                            const ICollection<Indexed<AnalogCommandEvent>>& values)
 {
     return this->LoadValues(header, ModeFromType(header.enumeration), values);
+}
+
+IINField MeasurementHandler::ProcessHeader(const RangeHeader& header,
+                                           const ICollection<Indexed<SecurityStat>>& values)
+{
+    return LoadSecurityStatistics(header, values);
+}
+
+IINField MeasurementHandler::ProcessHeader(const PrefixHeader& header,
+                                           const ICollection<Indexed<SecurityStat>>& values)
+{
+    return LoadSecurityStatistics(header, values);
+}
+
+IINField MeasurementHandler::LoadSecurityStatistics(const HeaderRecord& header,
+                                                    const ICollection<Indexed<SecurityStat>>& values)
+{
+    if (header.enumeration != GroupVariation::Group122Var2)
+        return LoadValues(header, TimestampQuality::INVALID, values);
+
+    // Absolute time does not prove synchronization (4.5.5, A.47.2). G122 has
+    // no time-quality bit; preserve the raw occurrence value without promising
+    // accuracy or using the current fragment's NEED_TIME to reinterpret history.
+    auto transform = [](const Indexed<SecurityStat>& input) -> Indexed<SecurityStat> {
+        auto copy = input;
+        copy.value.time.quality = TimestampQuality::UNSYNCHRONIZED;
+        return copy;
+    };
+    auto collection = Map<Indexed<SecurityStat>, Indexed<SecurityStat>>(values, transform);
+    return LoadValues(header, TimestampQuality::UNSYNCHRONIZED, collection);
 }
 
 } // namespace opendnp3

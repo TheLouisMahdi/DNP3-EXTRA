@@ -22,6 +22,7 @@
 #include "app/parsing/BufferedCollection.h"
 #include "gen/objects/Group1.h"
 #include "gen/objects/Group10.h"
+#include "gen/objects/Group121.h"
 #include "gen/objects/Group20.h"
 #include "gen/objects/Group21.h"
 #include "gen/objects/Group3.h"
@@ -134,6 +135,7 @@ ParseResult RangeParser::ParseRangeOfObjects(
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group40Var4);
 
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group50Var4);
+        MACRO_PARSE_OBJECTS_WITH_RANGE(Group121Var1);
 
     case (GroupVariation::Group80Var1):
         return RangeParser::FromBitfieldType<IINValue>(range).Process(record, buffer, pHandler, pLogger);

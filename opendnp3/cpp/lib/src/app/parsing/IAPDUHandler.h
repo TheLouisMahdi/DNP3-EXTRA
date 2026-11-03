@@ -37,6 +37,7 @@
 #include "opendnp3/app/Indexed.h"
 #include "opendnp3/app/MeasurementTypes.h"
 #include "opendnp3/app/OctetString.h"
+#include "opendnp3/app/SecurityStat.h"
 #include "opendnp3/app/parsing/ICollection.h"
 #include "opendnp3/gen/QualifierCode.h"
 
@@ -91,6 +92,7 @@ public:
     void OnHeader(const RangeHeader& header, const ICollection<Indexed<AnalogOutputStatus>>& values);
     void OnHeader(const RangeHeader& header, const ICollection<Indexed<OctetString>>& values);
     void OnHeader(const RangeHeader& header, const ICollection<Indexed<TimeAndInterval>>& values);
+    void OnHeader(const RangeHeader& header, const ICollection<Indexed<SecurityStat>>& values);
 
     // events
 
@@ -105,6 +107,7 @@ public:
     void OnHeader(const PrefixHeader& header, const ICollection<Indexed<TimeAndInterval>>& values);
     void OnHeader(const PrefixHeader& header, const ICollection<Indexed<BinaryCommandEvent>>& values);
     void OnHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogCommandEvent>>& values);
+    void OnHeader(const PrefixHeader& header, const ICollection<Indexed<SecurityStat>>& values);
 
     // adhoc read by index
     void OnHeader(const PrefixHeader& header, const ICollection<uint16_t>& values);
@@ -172,6 +175,7 @@ protected:
     virtual IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<AnalogOutputStatus>>& values);
     virtual IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<OctetString>>& values);
     virtual IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<TimeAndInterval>>& values);
+    virtual IINField ProcessHeader(const RangeHeader& header, const ICollection<Indexed<SecurityStat>>& values);
 
     virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<Binary>>& values);
     virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<BinaryOutputStatus>>& values);
@@ -184,6 +188,7 @@ protected:
     virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<TimeAndInterval>>& values);
     virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<BinaryCommandEvent>>& values);
     virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogCommandEvent>>& values);
+    virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<SecurityStat>>& values);
 
     // adhoc read by index
     virtual IINField ProcessHeader(const PrefixHeader& header, const ICollection<uint16_t>& values);

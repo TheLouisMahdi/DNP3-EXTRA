@@ -13,6 +13,7 @@ The workspace root is the current Git repository; `opendnp3/` is its library sub
 ## Core
 Prefix: `opendnp3/cpp/lib/src/`
 - `master/` → polling, command tasks, scheduling; start at `MasterContext.cpp`.
+- `master/MeasurementHandler.*` → typed SOE delivery, including G121/G122 through shared RangeParser/CountIndexParser and the source-compatible SecurityStat callback. Raw index/Association ID are preserved; G122V2 accuracy is conservatively unknown/UNSYNCHRONIZED.
 - `outstation/` → request handling, responses, unsolicited reporting; start at `OutstationContext.cpp`.
 - `outstation/ReadHandler.h`, `outstation/WriteHandler.h` → object request dispatch.
 - `outstation/Database.cpp` → in-memory point selection, updates, static responses.
@@ -57,6 +58,7 @@ The outstation database is in memory; the apps simulate measurements and accept 
 ## Tests
 Prefix: `opendnp3/cpp/tests/`
 - `unit/` → protocol/state tests; `TestAPDUParsing.cpp`, `TestDatabase.cpp` are parser/database starting points.
+- `unit/TestMasterSecurityStatistics.cpp` → Master G121/G122 qualifiers, typed callbacks, association isolation, occurrence time, malformed fragments, native solicited/unsolicited paths and mixed-WRITE rejection protection.
 - `unit/TestSecurityStatEvents.cpp` → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation and secure-context accounting hooks.
 - `dnp3mocks/` → shared mocks and stack fixtures.
 - `asiotests/` → asynchronous I/O tests.

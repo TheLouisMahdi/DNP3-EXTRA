@@ -23,6 +23,8 @@
 #include "gen/objects/Group11.h"
 #include "gen/objects/Group12.h"
 #include "gen/objects/Group13.h"
+#include "gen/objects/Group121.h"
+#include "gen/objects/Group122.h"
 #include "gen/objects/Group2.h"
 #include "gen/objects/Group22.h"
 #include "gen/objects/Group23.h"
@@ -97,6 +99,13 @@ ParseResult CountIndexParser::ParseCountOfObjects(ser4cpp::rseq_t& buffer,
 {
     switch (record.enumeration)
     {
+    case GroupVariation::Group121Var1:
+        return CountIndexParser::From<Group121Var1>(count, numparser).Process(record, buffer, pHandler, pLogger);
+    case GroupVariation::Group122Var1:
+        return CountIndexParser::From<Group122Var1>(count, numparser).Process(record, buffer, pHandler, pLogger);
+    case GroupVariation::Group122Var2:
+        return CountIndexParser::From<Group122Var2>(count, numparser).Process(record, buffer, pHandler, pLogger);
+
     case (GroupVariation::Group2Var1):
         return CountIndexParser::From<Group2Var1>(count, numparser).Process(record, buffer, pHandler, pLogger);
     case (GroupVariation::Group2Var2):

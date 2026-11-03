@@ -145,6 +145,7 @@ public:
         binaryCommandEventSOE.clear();
         analogCommandEventSOE.clear();
         timeSOE.clear();
+        securityStatSOE.clear();
     }
 
     std::map<uint16_t, Record<opendnp3::Binary>> binarySOE;
@@ -159,6 +160,16 @@ public:
     std::map<uint16_t, Record<opendnp3::BinaryCommandEvent>> binaryCommandEventSOE;
     std::map<uint16_t, Record<opendnp3::AnalogCommandEvent>> analogCommandEventSOE;
     std::vector<opendnp3::DNPTime> timeSOE;
+    // Keep every observation; an index alone cannot identify a remote association.
+    std::vector<Record<opendnp3::Indexed<opendnp3::SecurityStat>>> securityStatSOE;
+
+    void Process(const opendnp3::HeaderInfo& info,
+                 const opendnp3::ICollection<opendnp3::Indexed<opendnp3::SecurityStat>>& values) final
+    {
+        values.ForeachItem([this, info](const opendnp3::Indexed<opendnp3::SecurityStat>& value) {
+            securityStatSOE.emplace_back(value, info, soeCount++);
+        });
+    }
 
 private:
     uint32_t soeCount;

@@ -45,6 +45,7 @@ set(unittests_src
     ./TestMasterMultidrop.cpp
     ./TestMasterUnsolBehaviors.cpp
     ./TestMeasurementHandler.cpp
+    ./TestMasterSecurityStatistics.cpp
     ./TestOutstation.cpp
     ./TestOutstationBroadcast.cpp
     ./TestOutstationAssignClass.cpp
