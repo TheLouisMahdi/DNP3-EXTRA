@@ -72,6 +72,11 @@ public:
         return *context.authentication->sessions->Find(user);
     }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
+    static IINField ResponseIIN(OContext& context) { return context.GetResponseIIN(); }
+    static rseq_t PendingBytes(OContext& context)
+    {
+        return rseq_t(context.authentication->pendingWire.data(), context.authentication->pendingWire.size());
+    }
     static bool MonitoringPending(OContext& context) { return context.authentication->monitoringPending; }
     static OutstationChallenger::State ChallengeState(OContext& context)
     {
@@ -1213,7 +1218,7 @@ TEST_CASE("ProductionAuthentication - monitoring timeout preserves key exchange 
 
 TEST_CASE("ProductionAuthentication - queued master Key Change cannot outlive its exchange", "[production-sa]")
 {
-    // Successful TX, serviced expiry, expiry at TX completion, reset, credential
+    // Successful TX, serviced expiry, expiry at TX completion, unowned Reply, credential
     // expiry, disconnect, session cancellation, and Update Key replacement.
     const auto scenario = GENERATE(0, 1, 2, 3, 4, 5, 6, 7);
     RuntimePair pair;
@@ -1250,9 +1255,17 @@ TEST_CASE("ProductionAuthentication - queued master Key Change cannot outlive it
     }
     else if (scenario == 3)
     {
+        const auto ksq = session.Sequence();
         REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
         pair.master.exe->run_many();
-        REQUIRE_FALSE(session.IsExchanging());
+        REQUIRE(session.IsExchanging()); // An unowned monitoring Reply cannot cancel this user's queued V6.
+        REQUIRE(session.Sequence() == ksq);
+        REQUIRE_FALSE(session.Ready(0));
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == pendingSize);
+        REQUIRE(pending.take(pendingSize).equals(oldChange.ToRSeq()));
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(pair.results.values.empty());
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
     }
     else if (scenario == 5)
     {
@@ -1289,20 +1302,8 @@ TEST_CASE("ProductionAuthentication - queued master Key Change cannot outlive it
             REQUIRE(pending[i] == 0);
         return;
     }
-    if (scenario != 0)
+    if (scenario != 0 && scenario != 3)
     {
-        if (scenario == 3)
-        {
-            // User 1's backoff must not block user 2's independent negotiation.
-            REQUIRE(pair.master.lower->NumWrites() == 1);
-            const auto independent = ProductionAuthenticationTestAccess::WireBytes(*pair.master.context, 8);
-            REQUIRE(independent[3] == 4);
-            REQUIRE(independent[6] == 2); // Little-endian G120V4 user number.
-            REQUIRE(independent[7] == 0);
-            pair.Pump();
-            REQUIRE_FALSE(session.IsExchanging());
-            REQUIRE_FALSE(session.Ready(0));
-        }
         if (!pair.master.lower->NumWrites())
         {
             pair.master.exe->advance_time(
@@ -1328,7 +1329,7 @@ TEST_CASE("ProductionAuthentication - queued master Key Change cannot outlive it
     const auto change = pair.master.lower->PopWriteAsHex();
     HexSequence v6(change);
     REQUIRE(v6.ToRSeq()[3] == 6);
-    if (scenario == 0)
+    if (scenario == 0 || scenario == 3)
         REQUIRE(change == queued);
     else
     {
@@ -1586,15 +1587,28 @@ TEST_CASE("ProductionAuthentication - embedded Challenge requires Aggressive Con
             REQUIRE(pair.master.context->confirmQueue.size() == (queueMode == 2 ? 1 : 3));
             if (queueMode == 4)
             {
+                const auto executions = pair.outstation.cmdHandler->NumInvocations();
                 REQUIRE(pair.master.context->OnLowerLayerDown());
                 REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
                 REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == 0);
-                REQUIRE(pair.master.context->confirmQueue.size() == 2);
-                REQUIRE(pair.master.context->confirmQueue.front().control.SEQ == (incoming[0] & 0x0F));
-                REQUIRE(pair.master.context->confirmQueue.back().control.SEQ == 7);
+                REQUIRE(pair.master.context->confirmQueue.empty()); // No CONFIRM ownership survives disconnect.
+                REQUIRE_FALSE(ProductionAuthenticationTestAccess::ControlAggressive(*pair.master.context).HasPendingConfirm());
+                REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
                 REQUIRE_FALSE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(encoded.data(), size))));
                 REQUIRE_FALSE(pair.master.context->OnTxReady());
                 REQUIRE(pair.master.lower->NumWrites() == 0);
+                REQUIRE(pair.master.context->OnLowerLayerUp());
+                pair.master.exe->run_many();
+                REQUIRE(pair.master.context->confirmQueue.empty());
+                REQUIRE_FALSE(ProductionAuthenticationTestAccess::Common(*pair.master.context).Ready(0));
+                REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(encoded.data(), size))));
+                REQUIRE(pair.master.context->confirmQueue.empty());
+                REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+                REQUIRE(pair.master.lower->NumWrites() == 1);
+                HexSequence fresh(pair.master.lower->PopWriteAsHex());
+                REQUIRE(fresh.ToRSeq()[1] == 0x20);
+                REQUIRE(fresh.ToRSeq()[3] == 4); // Reconnect negotiates keys instead of replaying old CONFIRMs.
+                REQUIRE(pair.outstation.cmdHandler->NumInvocations() == executions);
                 return;
             }
             if (queueMode == 3 || queueMode == 5)
@@ -1843,7 +1857,7 @@ TEST_CASE("ProductionAuthentication - normal verified response completes before 
 TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts on send and respects its lifetime", "[production-sa]")
 {
     const auto budget = GENERATE(1u, 3u);
-    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, disconnect, abort, key replacement, key expiry.
+    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, disconnect, unowned Reply, key replacement, key expiry.
     RuntimePair pair;
     pair.Pump();
     pair.SelectOperate();
@@ -1877,12 +1891,24 @@ TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts 
     REQUIRE(session.RemainingMessages() == budget - 1); // Only the received Challenge has been counted.
     REQUIRE(pair.master.context->solSeq.Get() == before);
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    const auto pendingSize = ProductionAuthenticationTestAccess::Pending(pair.outstation.context);
+    const auto queued = HexConversions::to_hex(
+        ProductionAuthenticationTestAccess::PendingBytes(pair.outstation.context).take(pendingSize));
+    const auto ksq = session.Sequence();
     if (scenario == 1)
         pair.outstation.AdvanceTime(TimeDuration::Milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
     else if (scenario == 2)
         pair.outstation.LowerLayerDown();
     else if (scenario == 3)
+    {
         pair.outstation.SendToOutstation("C0 20 78 02 5B 01 01 00 00");
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(pair.outstation.context) == pendingSize);
+        REQUIRE(HexConversions::to_hex(ProductionAuthenticationTestAccess::PendingBytes(pair.outstation.context)
+            .take(pendingSize)) == queued);
+        REQUIRE(session.Sequence() == ksq);
+        REQUIRE(session.RemainingMessages() == budget - 1);
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 1); // Only the previously authenticated SELECT.
+    }
     else if (scenario == 4)
         REQUIRE(session.Configure(rseq_t(pair.source->keys[0].data(), 32), 10000000, 0) == SessionKeys::Result::OK);
     else if (scenario == 5)
@@ -1892,12 +1918,12 @@ TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts 
     else
         REQUIRE(pair.outstation.context.OnTxReady());
     REQUIRE(ProductionAuthenticationTestAccess::Pending(pair.outstation.context) == 0);
-    if (scenario != 0)
+    if (scenario != 0 && scenario != 3)
     {
         REQUIRE(pair.outstation.lower->NumWrites() == 0); // No stale precomputed Reply after abort/expiry/rekey.
         REQUIRE(pair.master.context->solSeq.Get() == before);
         REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
-        if (scenario == 1 || scenario == 3)
+        if (scenario == 1)
             REQUIRE(session.RemainingMessages() == budget - 1); // An unsent Reply is never counted.
         if (scenario == 4 || scenario == 5)
             REQUIRE_FALSE(session.Ready(scenario == 5 ? expiry : 0));
@@ -1905,6 +1931,7 @@ TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts 
     }
     REQUIRE(pair.outstation.lower->NumWrites() == 1);
     const auto reply = pair.outstation.lower->PopWriteAsHex();
+    REQUIRE(reply == queued); // The independently owned monitoring Reply survives unchanged.
     HexSequence accepted(reply);
     REQUIRE(accepted.ToRSeq()[1] == 0x83);
     REQUIRE(accepted.ToRSeq()[5] == 2);
@@ -2014,13 +2041,17 @@ TEST_CASE("ProductionAuthentication - outstation common-user control accounting 
 
 TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives reset timeout and disconnect", "[production-sa]")
 {
-    const auto scenario = GENERATE(0, 1, 2, 3); // Normal completion, repeated reset, response timeout, disconnect.
+    const auto scenario = GENERATE(0, 1, 2, 3); // Normal completion, unowned Replies, response timeout, disconnect.
+    CAPTURE(scenario);
     RuntimePair pair(false, true);
     pair.Pump();
     pair.SelectOperate();
     pair.Pump();
     REQUIRE(pair.results.values.size() == 1);
     REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    const auto startTime = pair.master.exe->get_time();
+    const auto restartRekeys = ProductionAuthenticationTestAccess::Stats(*pair.master.context)
+        .Value(SecurityStatistic::RESTART_REKEYS);
     pair.SelectOperate();
     REQUIRE(pair.master.lower->NumWrites() == 1);
     const auto packet = pair.master.lower->PopWriteAsHex();
@@ -2038,18 +2069,45 @@ TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives res
             REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
             pair.master.exe->run_many();
             REQUIRE(borrowed.equals(request.ToRSeq()));
-            REQUIRE_FALSE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
-            REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+            REQUIRE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
+            REQUIRE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+            REQUIRE(pair.results.values.size() == 1);
+            REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
         }
-        // Retaining TX bytes must not retain authorization for a response to the reset exchange.
+        // An unauthenticated response still cannot complete this live command.
         const auto before = pair.master.context->solSeq.Get();
-        const uint8_t response[] = {static_cast<uint8_t>(0xC0 | (request.ToRSeq()[0] & 0x0F)), 0x81, 0, 0};
+        // Preserve the peer's IIN; clearing DEVICE_RESTART here would make its real response look like a new restart.
+        const auto iin = ProductionAuthenticationTestAccess::ResponseIIN(pair.outstation.context);
+        const uint8_t response[] = {static_cast<uint8_t>(0xC0 | (request.ToRSeq()[0] & 0x0F)), 0x81, iin.LSB, iin.MSB};
         REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(response, sizeof(response)))));
         pair.master.exe->run_many();
         REQUIRE(pair.master.context->solSeq.Get() == before);
         REQUIRE(pair.results.values.size() == 1);
         REQUIRE(pair.master.lower->NumWrites() == 0);
         REQUIRE(borrowed.equals(request.ToRSeq()));
+        REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+        const auto pendingSize = ProductionAuthenticationTestAccess::Pending(*pair.master.context);
+        HexSequence monitoring(HexConversions::to_hex(
+            ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context).take(pendingSize)));
+        Group120Var1 challenge;
+        REQUIRE(challenge.Read(monitoring.ToRSeq().skip(8)));
+        // Cancel only this independent monitoring Challenge with its correctly owned Error.
+        // The aggressive command and its transmission must survive.
+        std::array<uint8_t, 64> errorBytes{};
+        APDUResponse error(wseq_t(errorBytes.data(), errorBytes.size()));
+        error.SetFunction(FunctionCode::AUTH_RESPONSE);
+        error.SetControl(AppControlField::Request(monitoring.ToRSeq()[0] & 0x0F));
+        error.SetIIN(IINField::Empty());
+        Group120Var7 value(challenge.seqNum, 1, 7, 7, DNPTime(0), rseq_t());
+        auto writer = error.GetWriter();
+        REQUIRE(writer.WriteFreeFormat(&value, 1));
+        REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(error.ToRSeq())));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+        REQUIRE(ProductionAuthenticationTestAccess::ControlEligible(*pair.master.context));
+        REQUIRE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+        REQUIRE(borrowed.equals(request.ToRSeq()));
+        REQUIRE(pair.results.values.size() == 1);
     }
     else if (scenario == 2)
     {
@@ -2073,23 +2131,17 @@ TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives res
         REQUIRE(pair.master.context->OnTxReady());
     for (size_t i = 0; i < borrowed.length(); ++i)
         REQUIRE(borrowed[i] == 0);
-    if (scenario == 0)
+    if (scenario == 0 || scenario == 1)
     {
         // Lower-layer-owned bytes were copied above; normal authenticated processing still succeeds.
         pair.outstation.SendToOutstation(packet);
         pair.Pump();
+        REQUIRE(pair.master.exe->get_time() == startTime);
+        REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context)
+            .Value(SecurityStatistic::RESTART_REKEYS) == restartRekeys);
         REQUIRE(pair.results.values.size() == 2);
         REQUIRE(pair.results.values.back().summary == TaskCompletion::SUCCESS);
         REQUIRE(pair.outstation.cmdHandler->NumOperate() == 2);
-    }
-    else if (scenario == 1)
-    {
-        pair.master.exe->advance_time(pair.master.context->params.responseTimeout.value);
-        pair.master.exe->run_many();
-        REQUIRE(pair.results.values.size() == 2);
-        REQUIRE(pair.results.values.back().summary != TaskCompletion::SUCCESS);
-        REQUIRE(pair.master.lower->NumWrites() == 0);
-        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
     }
     else if (scenario == 3)
     {
@@ -2112,7 +2164,7 @@ TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives res
 TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply validates lifetime without deferred counts", "[production-sa]")
 {
     const bool deferred = GENERATE(false, true);
-    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, expiry, reset, new KSQ, reset during Reply TX.
+    const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, expiry, unowned Reply, new KSQ, unowned Reply during TX.
     RuntimePair pair(true);
     pair.Pump();
     pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
@@ -2147,6 +2199,8 @@ TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply valida
     REQUIRE((ProductionAuthenticationTestAccess::Deferred(*pair.master.context) != 0) == deferred);
     REQUIRE(pair.master.lower->NumWrites() == 0);
     auto& common = ProductionAuthenticationTestAccess::Common(*pair.master.context);
+    const auto queued = HexConversions::to_hex(ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context));
+    const auto ksq = common.Sequence();
     if (scenario == 1)
     {
         pair.master.exe->advance_time(std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
@@ -2163,14 +2217,19 @@ TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply valida
     {
         REQUIRE(pair.master.SendToMaster("C0 83 00 00 78 02 5B 01 01 00 00"));
         pair.master.exe->run_many();
-        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+        REQUIRE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+        REQUIRE(common.Sequence() == ksq);
+        REQUIRE(HexConversions::to_hex(ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context)) == queued);
+        REQUIRE((ProductionAuthenticationTestAccess::Deferred(*pair.master.context) != 0) == deferred);
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
     }
     else if (scenario == 4)
         REQUIRE(common.Configure(rseq_t(pair.source->keys[0].data(), 32), 10000000, 0) == SessionKeys::Result::OK);
     REQUIRE(pair.master.context->isSending);
     REQUIRE(pair.master.context->OnTxReady());
     REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
-    if (scenario >= 1 && scenario <= 4)
+    if (scenario == 1 || scenario == 2 || scenario == 4)
     {
         REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
         while (pair.master.lower->NumWrites())
@@ -2186,6 +2245,7 @@ TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply valida
     }
     REQUIRE(pair.master.lower->NumWrites() == 1);
     const auto reply = pair.master.lower->PopWriteAsHex();
+    REQUIRE(reply == queued);
     HexSequence packet(reply);
     REQUIRE(packet.ToRSeq()[1] == 0x20);
     REQUIRE(packet.ToRSeq()[3] == 2);
@@ -2201,6 +2261,9 @@ TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply valida
     }
     pair.outstation.SendToOutstation(reply); // The real peer verifies the Reply MAC and releases only this CONFIRM.
     REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    pair.outstation.SendToOutstation(reply); // Replaying it cannot authorize another CONFIRM or command.
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
     REQUIRE(pair.master.context->OnTxReady());
     for (size_t i = 0; i < borrowed.length(); ++i)
         REQUIRE(borrowed[i] == 0);

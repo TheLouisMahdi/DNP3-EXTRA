@@ -324,9 +324,27 @@ TEST_CASE("AuthenticationRuntime - timeout and disconnect discard authorization"
         REQUIRE(AuthenticationRuntimeTestAccess::OutstationHasNoKeys(pair.outstation.context));
         pair.outstation.LowerLayerUp();
         pair.outstation.SendToOutstation(pair.reply);
+        REQUIRE(pair.outstation.lower->HasNoData()); // The old Reply has no owning exchange after reconnect.
         pair.outstation.SendToOutstation(pair.original);
         REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        HexSequence fresh(pair.outstation.lower->PopWriteAsHex());
+        HexSequence previous(pair.challenge);
+        HexSequence request(pair.original);
+        REQUIRE(fresh.ToRSeq()[1] == 0x83);
+        REQUIRE((fresh.ToRSeq()[0] & 0x0F) == (request.ToRSeq()[0] & 0x0F));
+        Group120Var1 next, old;
+        REQUIRE(next.Read(fresh.ToRSeq().skip(10)));
+        REQUIRE(old.Read(previous.ToRSeq().skip(10)));
+        REQUIRE(next.seqNum == old.seqNum + 1u);
+        REQUIRE(next.userNum == 0);
+        REQUIRE(next.reason == 1);
+        REQUIRE_FALSE(next.challengeData.equals(old.challengeData));
+        pair.outstation.OnTxReady();
+        pair.outstation.SendToOutstation(pair.reply); // Old CSQ/MAC cannot satisfy the fresh Challenge.
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
         REQUIRE(pair.outstation.lower->HasNoData());
+        REQUIRE(AuthenticationRuntimeTestAccess::OutstationHasNoKeys(pair.outstation.context));
     }
     SECTION("Master disconnect drops keys and pending authentication")
     {
