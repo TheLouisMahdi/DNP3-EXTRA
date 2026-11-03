@@ -374,13 +374,12 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
     const auto appSequence = masterChallenger ? uint8_t{3} : uint8_t{0};
     const auto user = masterChallenger ? uint16_t{1} : uint16_t{0};
     Group120Var7 error(challenge.seqNum, user, 7, code, DNPTime(0), rseq_t());
-    const uint8_t privateText = 'E';
-    if (code >= 128) error.errorText = rseq_t(&privateText, 1);
-    const uint8_t invalidUTF8[] = {0xC0, 0xAF};
+    const uint8_t privateText[] = {'E', 'E'};
+    if (code >= 128) error.errorText = rseq_t(privateText, 1);
     if (fault == 14 || fault == 15)
     {
         error.errorCode = 128;
-        error.errorText = fault == 14 ? rseq_t() : rseq_t(invalidUTF8, sizeof(invalidUTF8));
+        error.errorText = rseq_t(privateText, sizeof(privateText));
     }
     if (fault == 1) error.associationId = 8;
     if (fault == 2) error.userNum = masterChallenger ? 2 : 1;
@@ -416,6 +415,18 @@ TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its
         errorSize = request.Size();
     }
     const size_t objectOffset = masterChallenger ? 4 : 2;
+    // Encode valid text first, then corrupt the incoming wire without bypassing writer validation.
+    if (fault == 14)
+    {
+        data[objectOffset + 4] = static_cast<uint8_t>(Group120Var7::MIN_SIZE);
+        data[objectOffset + 5] = 0;
+        errorSize = objectOffset + 6 + Group120Var7::MIN_SIZE; // Vendor code with empty text, not a truncated object.
+    }
+    if (fault == 15)
+    {
+        data[errorSize - 2] = 0xC0;
+        data[errorSize - 1] = 0xAF; // Overlong UTF-8 encoding.
+    }
     if (fault == 5) data[0] |= 0x20;
     if (fault == 6) data[0] |= 0x10;
     if (fault == 7) data[objectOffset + 2] = 0x07;
@@ -708,7 +719,8 @@ TEST_CASE("ProductionAuthentication - user critical transmission during non OK k
             REQUIRE_FALSE(pair.master.context->isSending);
             REQUIRE(pair.master.context->params.responseTimeout.value < pair.master.context->params.taskStartTimeout.value);
             const auto sequence = pair.master.context->solSeq.Get();
-            const auto delay = pair.master.context->params.responseTimeout.value;
+            const auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(
+                pair.master.context->params.responseTimeout.value);
             pair.master.exe->advance_time(delay);
             pair.outstation.AdvanceTime(TimeDuration::Milliseconds(delay.count()));
             pair.master.exe->run_many();
@@ -2203,6 +2215,8 @@ TEST_CASE("ProductionAuthentication - expired task Reply preserves independent m
     pair.SelectOperate();
     REQUIRE(pair.master.lower->NumWrites() == 1);
     const auto request = pair.master.lower->PopWriteAsHex();
+    HexSequence original(request);
+    const auto sequence = pair.master.context->solSeq.Get();
     // Outstation Challenge arrives before the Master receives TX completion for SELECT.
     pair.outstation.SendToOutstation(request);
     REQUIRE(pair.outstation.lower->NumWrites() == 1);
@@ -2231,10 +2245,22 @@ TEST_CASE("ProductionAuthentication - expired task Reply preserves independent m
         REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
         REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) != 0);
         REQUIRE(pair.master.context->confirmQueue.size() == 1);
+        REQUIRE_FALSE(pair.master.context->activeTask);
+        REQUIRE(pair.results.values.size() == 1);
+        REQUIRE(pair.results.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
     }
+    REQUIRE(pair.master.context->isSending);
+    REQUIRE(pair.master.context->txBuffer.as_rslice().take(original.ToRSeq().length()).equals(original.ToRSeq()));
     REQUIRE(pair.master.context->OnTxReady());
     REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
     REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    REQUIRE_FALSE(pair.master.context->activeTask);
+    REQUIRE(pair.master.context->solSeq.Get() == ((sequence + 1) & 0x0F));
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    const auto cancelled = ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context);
+    for (size_t i = 0; i < cancelled.length(); ++i)
+        REQUIRE(cancelled[i] == 0);
     REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
     REQUIRE(pair.master.context->confirmQueue.size() == 1);
     REQUIRE(pair.master.lower->NumWrites() == 1); // Rejection must fall through to servicing the queued monitoring Challenge.
@@ -2264,6 +2290,43 @@ TEST_CASE("ProductionAuthentication - expired task Reply preserves independent m
     REQUIRE(pair.master.context->OnTxReady());
     REQUIRE(pair.master.lower->NumWrites() == 1);
     REQUIRE(pair.master.lower->PopWriteAsHex() == "C7 00"); // Older unrelated CONFIRM keeps its place.
+    REQUIRE(pair.master.context->confirmQueue.size() == 1);
+    REQUIRE(pair.results.values.size() == 1); // Independent authentication never completes the expired task again.
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+
+    // Even a late SELECT echo with a valid monitoring MAC cannot revive the completed task.
+    std::array<uint8_t, 64> lateBytes{};
+    APDUResponse late(wseq_t(lateBytes.data(), lateBytes.size()));
+    late.SetFunction(FunctionCode::RESPONSE);
+    late.SetControl(AppControlField::Request(sequence));
+    late.SetIIN(IINField::Empty());
+    REQUIRE(late.AppendObjects(original.ToRSeq().skip(2)));
+    REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(late.ToRSeq())));
+    REQUIRE(pair.master.lower->NumWrites() == 0); // The older CONFIRM still owns TX.
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    HexSequence lateChallenge(pair.master.lower->PopWriteAsHex());
+    REQUIRE(lateChallenge.ToRSeq()[1] == 0x20);
+    REQUIRE(lateChallenge.ToRSeq()[3] == 1);
+    MasterResponder latePeer(7, 16, timeout, true);
+    REQUIRE(latePeer.SetSessionKey(1, common.MonitoringKey(timeout), common.ValidUntil(), timeout)
+        == MasterResponder::Result::OK);
+    REQUIRE(latePeer.RetainRequest(7, late.ToRSeq(), timeout) == MasterResponder::Result::OK);
+    REQUIRE(latePeer.Respond(7, lateChallenge.ToRSeq(), timeout, wseq_t(reply.data(), reply.size()), size)
+        == MasterResponder::Result::OK);
+    const auto authenticated = ProductionAuthenticationTestAccess::Stats(*pair.master.context)
+        .Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+    REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(reply.data(), size))));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context)
+        .Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == authenticated + 1);
+    REQUIRE_FALSE(pair.master.context->activeTask);
+    REQUIRE(pair.master.context->solSeq.Get() == before);
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
     REQUIRE(pair.master.context->confirmQueue.size() == 1);
 }
 
@@ -2392,6 +2455,22 @@ TEST_CASE("ProductionAuthentication - Code 1 recovers only a transmitted user cr
         return;
     }
     if (!aggressive) REQUIRE_FALSE(session.IsExchanging()); // A Reply still owns its session until TX completion.
+    if (!aggressive && fault == 9)
+    {
+        // Both sessions have expired. Neither a duplicate Error nor periodic service may
+        // start a new V4 before the transmitted Reply releases its ownership.
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::Common(*pair.master.context).IsExchanging());
+        REQUIRE(pair.master.SendToMaster(wire));
+        pair.master.exe->advance_time(std::chrono::milliseconds(100));
+        now += 100;
+        pair.master.exe->run_many();
+        REQUIRE_FALSE(session.IsExchanging());
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::Common(*pair.master.context).IsExchanging());
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+        REQUIRE(pair.master.lower->NumWrites() == previousWrites);
+        REQUIRE(borrowed.equals(attempt.ToRSeq()));
+    }
     if (fault != 10) REQUIRE(borrowed.equals(attempt.ToRSeq()));
     REQUIRE(pair.master.context->OnTxReady());
     if (fault == 10)
@@ -2587,7 +2666,8 @@ TEST_CASE("ProductionAuthentication - authorization Error suppression reopens on
         REQUIRE(ProductionAuthenticationTestAccess::Stats(pair.outstation.context)
             .Value(SecurityStatistic::AUTHENTICATION_FAILURES) == 0);
         REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
-        const auto delay = pair.master.context->params.responseTimeout.value;
+        const auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(
+            pair.master.context->params.responseTimeout.value);
         pair.master.exe->advance_time(delay);
         pair.outstation.AdvanceTime(TimeDuration::Milliseconds(delay.count()));
         now += static_cast<uint64_t>(delay.count());

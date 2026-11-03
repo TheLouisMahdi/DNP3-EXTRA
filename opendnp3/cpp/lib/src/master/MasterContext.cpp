@@ -549,7 +549,9 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
             auth.errorAttempt.user = user;
             auth.errorAttempt.appSequence = data[0] & 0x0F;
             auth.errorAttempt.deadline = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                executor->get_time().time_since_epoch()).count()) + params.responseTimeout.value.count();
+                executor->get_time().time_since_epoch()).count())
+                + static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    params.responseTimeout.value).count());
             auth.errorAttempt.valid = true;
         }
     }
@@ -1257,6 +1259,8 @@ void MContext::CancelAuthenticationReply()
     // A queued native CONFIRM can be independent of the task Reply being cancelled.
     const bool ownsConfirm = auth.protectedConfirm && !auth.nativeConfirmQueued
         && auth.responderUser == 1 && !auth.controlAggressive.HasPendingConfirm();
+    const bool ownsTask = !ownsConfirm && auth.protectedTask && activeTask
+        && tstate == TaskState::WAIT_FOR_RESPONSE && activeTask->AuthenticationUser() == auth.responderUser;
     auth.replyPending = false;
     auth.replySize = 0;
     auth.replyDeadline = auth.replyKSQ = 0;
@@ -1268,6 +1272,13 @@ void MContext::CancelAuthenticationReply()
     {
         auth.protectedConfirm = false;
         FinalizeAuthenticationCounts();
+    }
+    else if (ownsTask)
+    {
+        // This task cannot authenticate its response without the cancelled Reply.
+        // Complete only its timeout; monitoring, CONFIRMs and borrowed TX bytes have independent owners.
+        responseTimer.cancel();
+        tstate = OnResponseTimeout_WaitForResponse();
     }
 #endif
 }
@@ -1468,6 +1479,8 @@ void MContext::ServiceAuthentication()
         auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
     }
     if (!auth.pendingWireSize && auth.exchangeIndex == 2 && !auth.monitorWaiting && !auth.protectedConfirm
+        // Key expiry must not bypass the deferred Code 1 recovery above while its Reply still owns TX.
+        && !(auth.recoveringKeys && auth.errorAttempt.valid && (auth.replyPending || auth.replyInFlight))
         && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE && !auth.recoveringKeys))
     {
         const size_t first = auth.recoveringKeys && auth.errorAttempt.user == auth.sessions->config.users[1] ? 1 : 0;

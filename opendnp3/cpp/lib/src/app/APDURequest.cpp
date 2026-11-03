@@ -24,9 +24,9 @@ namespace opendnp3
 
 APDURequest::APDURequest(const ser4cpp::wseq_t& aBuffer) : APDUWrapper(aBuffer) {}
 
-void APDURequest::ConfigureHeader(FunctionCode /*code*/, uint8_t seq)
+void APDURequest::ConfigureHeader(FunctionCode code, uint8_t seq)
 {
-    this->SetFunction(FunctionCode::AUTH_REQUEST);
+    this->SetFunction(code);
     this->SetControl(AppControlField::Request(seq));
 }
 

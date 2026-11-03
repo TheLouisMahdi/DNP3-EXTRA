@@ -85,6 +85,18 @@ template<class T> void RoundTrip(const T& value, const std::string& expected)
 }
 }
 
+TEST_CASE("AuthWireCodec - authentication request function codes and sequence")
+{
+    uint8_t bytes[2] = {};
+    APDURequest request{wseq_t(bytes, sizeof(bytes))};
+    request.ConfigureHeader(FunctionCode::AUTH_REQUEST, 3);
+    REQUIRE(HexConversions::to_hex(request.ToRSeq()) == "C3 20");
+    request.ConfigureHeader(FunctionCode::AUTH_REQUEST_NO_ACK, 15);
+    REQUIRE(HexConversions::to_hex(request.ToRSeq()) == "CF 21");
+    request.ConfigureHeader(FunctionCode::AUTH_REQUEST, 0);
+    REQUIRE(HexConversions::to_hex(request.ToRSeq()) == "C0 20");
+}
+
 TEST_CASE("AuthWireCodec - exact layouts and round trips")
 {
     HexSequence challenge("AA BB CC DD");
