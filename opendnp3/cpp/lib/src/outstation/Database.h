@@ -23,6 +23,7 @@
 #include "app/MeasurementTypeSpecs.h"
 #include "auth/AuthenticationStatistics.h"
 #include "outstation/IClassAssigner.h"
+#include "outstation/DeviceAttributeSelection.h"
 #include "outstation/IEventReceiver.h"
 #include "outstation/IResponseLoader.h"
 #include "outstation/IStaticSelector.h"
@@ -89,6 +90,7 @@ private:
     const AuthenticationStatistics::StaticSnapshot* securityStatistics = nullptr;
     uint32_t securitySelection = 0;
     bool securityIndexed = false;
+    DeviceAttributeSelection attributes;
 
     StaticDataMap<BinarySpec> binary_input;
     StaticDataMap<DoubleBitBinarySpec> double_binary;

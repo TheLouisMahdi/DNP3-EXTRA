@@ -26,7 +26,7 @@ import com.automatak.render.dnp3.objects.GroupVariation
 object GroupVariationLines {
 
   def idDeclaration(gv: GroupVariation): Iterator[String] = Iterator(
-    "static GroupVariationID ID() { return GroupVariationID(%s,%s); }".format(gv.group, gv.variation)
+    "static GroupVariationID ID() { return GroupVariationID(%s,%s); }".format(gv.group & 0xFF, gv.variation & 0xFF)
   )
 
   def implComments(gv: GroupVariation)(implicit i : Indentation) : Iterator[String] = comment("------- %s -------".format(gv.name)) ++ space

@@ -35,6 +35,10 @@ package com.automatak.dnp3.enums;
 */
 public enum GroupVariation
 {
+  Group0Var209(0xD1),
+  Group0Var210(0xD2),
+  Group0Var254(0xFE),
+  Group0Var255(0xFF),
   Group1Var0(0x100),
   Group1Var1(0x101),
   Group1Var2(0x102),
@@ -166,6 +170,14 @@ public enum GroupVariation
   {
     switch(arg)
     {
+      case(0xD1):
+        return Group0Var209;
+      case(0xD2):
+        return Group0Var210;
+      case(0xFE):
+        return Group0Var254;
+      case(0xFF):
+        return Group0Var255;
       case(0x100):
         return Group1Var0;
       case(0x101):

@@ -24,6 +24,7 @@ import com.automatak.render.dnp3.objects.groups._
 object ObjectGroup {
 
  val all = List(
+    Group0,
     Group1,
     Group2,
     Group3,

@@ -20,6 +20,8 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `outstation/event/` → event buffering and response serialization.
 - `outstation/UpdateBuilder.cpp` → application measurement update batches.
 - `app/` → APDU construction, object headers, measurement serialization.
+- `app/parsing/DeviceAttributeParser.*`, `app/DeviceAttribute.h` (public include), `app/HeaderWriter.*` → native G0V209/V210 UINTn and V255 list parsing/writing; attribute-set indexes remain separate from security associations.
+- `outstation/DeviceAttributeSelection.*` → bounded standard-set V210 capability and mandatory V254/V255 discovery. V209 remains unadvertised until a complete SA version is supported.
 - `app/parsing/APDUParser.cpp` → object/qualifier parsing and handler dispatch.
 - `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
@@ -58,6 +60,7 @@ The outstation database is in memory; the apps simulate measurements and accept 
 ## Tests
 Prefix: `opendnp3/cpp/tests/`
 - `unit/` → protocol/state tests; `TestAPDUParsing.cpp`, `TestDatabase.cpp` are parser/database starting points.
+- `unit/TestDeviceAttributes.cpp` → G0 security attribute wire formats, actual per-association count, discovery, malformed data, typed Master delivery and native fragmentation/WRITE protection.
 - `unit/TestMasterSecurityStatistics.cpp` → Master G121/G122 qualifiers, typed callbacks, association isolation, occurrence time, malformed fragments, native solicited/unsolicited paths and mixed-WRITE rejection protection.
 - `unit/TestSecurityStatEvents.cpp` → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation and secure-context accounting hooks.
 - `dnp3mocks/` → shared mocks and stack fixtures.

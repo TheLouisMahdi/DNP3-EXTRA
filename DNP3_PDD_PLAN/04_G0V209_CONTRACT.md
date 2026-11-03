@@ -1,5 +1,7 @@
 # First implementation slice: G0V209
 
+P6c status: Master parsing and typed delivery are implemented for received G0V209 UINTn. The current Outstation still has no complete supported SA version to advertise, so G0V209 READ returns OBJECT_UNKNOWN and V255 omits it. No version 0 or 5 is fabricated. P6c separately supplies G0V210 and the IEEE-required V254/V255 discovery dependency; see `P6c_REPORT.md` for current validation status. The original first-slice scope below is retained as historical contract context.
+
 **Decision:** Start with **Object Group 0 / Variation 209** (decimal), named **Secure Authentication Version**. This is a device attribute, **not** Group 209 and **not** an SA v5 authentication exchange.
 
 ## Normative traceability

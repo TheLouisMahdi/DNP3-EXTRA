@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "RangeParser.h"
+#include "app/parsing/DeviceAttributeParser.h"
 
 #include "app/parsing/BufferedCollection.h"
 #include "gen/objects/Group1.h"
@@ -59,6 +60,9 @@ ParseResult RangeParser::ParseHeader(ser4cpp::rseq_t& buffer,
 
     if (settings.ExpectsContents())
     {
+        if (record.group == 0)
+            return DeviceAttributeParser::Parse(buffer, record, static_cast<uint16_t>(range.Count()),
+                                                false, range.start, pHandler);
         return ParseRangeOfObjects(buffer, record, range, pLogger, pHandler);
     }
 

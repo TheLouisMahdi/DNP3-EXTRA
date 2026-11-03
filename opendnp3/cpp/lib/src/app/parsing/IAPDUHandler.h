@@ -31,6 +31,7 @@
 
 #include "opendnp3/app/AnalogCommandEvent.h"
 #include "opendnp3/app/AnalogOutput.h"
+#include "opendnp3/app/DeviceAttribute.h"
 #include "opendnp3/app/BinaryCommandEvent.h"
 #include "opendnp3/app/ControlRelayOutputBlock.h"
 #include "opendnp3/app/IINField.h"
@@ -51,6 +52,9 @@ class IAPDUHandler : public IWhiteList
 {
 public:
     IAPDUHandler();
+
+    void OnHeader(const RangeHeader& header, const ICollection<Indexed<DeviceAttribute>>& values);
+    void OnHeader(const PrefixHeader& header, const ICollection<Indexed<DeviceAttribute>>& values);
 
     // read any accumulated errors
     IINField Errors() const;
@@ -121,6 +125,9 @@ public:
     void OnHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogOutputDouble64>>& values);
 
 protected:
+    virtual IINField ProcessHeader(const RangeHeader&, const ICollection<Indexed<DeviceAttribute>>&);
+    virtual IINField ProcessHeader(const PrefixHeader&, const ICollection<Indexed<DeviceAttribute>>&);
+
     void Reset();
 
     uint32_t NumIgnoredHeaders() const

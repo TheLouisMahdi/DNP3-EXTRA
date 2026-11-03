@@ -37,9 +37,9 @@ trait GroupVariation {
 
   final def group: Byte = parent.group
   final def id: Id = Id(group, variation)
-  final def name: String = "%sVar%s".format(parent.name, variation)
+  final def name: String = "%sVar%s".format(parent.name, variation & 0xFF)
   final def fullDesc: String = "%s - %s".format(parent.desc, desc)
-  final def shortValue : Int = group*256 + variation
+  final def shortValue : Int = (group & 0xFF)*256 + (variation & 0xFF)
 
   def variation: Byte
   def parent: ObjectGroup

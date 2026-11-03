@@ -118,6 +118,15 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
                                        const ParserSettings& settings,
                                        IAPDUHandler* pHandler)
 {
+    if (record.group == 0)
+    {
+        const auto q = record.GetQualifierCode();
+        const bool discovery = record.variation == 254 || record.variation == 255;
+        const bool valid = settings.ExpectsContents()
+            ? record.variation != 254 && (q == QualifierCode::UINT8_START_STOP || q == QualifierCode::UINT8_CNT_UINT8_INDEX)
+            : q == QualifierCode::UINT8_START_STOP || (discovery && q == QualifierCode::ALL_OBJECTS);
+        if (!valid) return ParseResult::INVALID_OBJECT_QUALIFIER;
+    }
     if (record.group == 122 && !settings.ExpectsContents())
     {
         const auto q = record.GetQualifierCode();

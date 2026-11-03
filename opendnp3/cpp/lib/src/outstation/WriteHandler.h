@@ -45,6 +45,8 @@ public:
         // These response-only bodies were rejected by the shared parsers before
         // Master G121/G122 decoding existed. Preserve first-pass WRITE rejection
         // so a mixed invalid fragment cannot perform any earlier writes.
+        if (gv == GroupVariation::Group0Var209 || gv == GroupVariation::Group0Var210
+            || gv == GroupVariation::Group0Var254 || gv == GroupVariation::Group0Var255) return false;
         const bool prefix = qc == QualifierCode::UINT8_CNT_UINT8_INDEX || qc == QualifierCode::UINT16_CNT_UINT16_INDEX;
         if (gv == GroupVariation::Group121Var1
             && (prefix || qc == QualifierCode::UINT8_START_STOP || qc == QualifierCode::UINT16_START_STOP))

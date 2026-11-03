@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "CountIndexParser.h"
+#include "app/parsing/DeviceAttributeParser.h"
 
 #include "app/parsing/BufferedCollection.h"
 #include "gen/objects/Group11.h"
@@ -60,6 +61,8 @@ ParseResult CountIndexParser::ParseHeader(ser4cpp::rseq_t& buffer,
 
         if (settings.ExpectsContents())
         {
+            if (record.group == 0)
+                return DeviceAttributeParser::Parse(buffer, record, count, true, 0, pHandler);
             return ParseCountOfObjects(buffer, record, numparser, count, pLogger, pHandler);
         }
         else

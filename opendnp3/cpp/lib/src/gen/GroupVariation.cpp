@@ -43,6 +43,14 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
 {
   switch(arg)
   {
+    case(0xD1):
+      return GroupVariation::Group0Var209;
+    case(0xD2):
+      return GroupVariation::Group0Var210;
+    case(0xFE):
+      return GroupVariation::Group0Var254;
+    case(0xFF):
+      return GroupVariation::Group0Var255;
     case(0x100):
       return GroupVariation::Group1Var0;
     case(0x101):
@@ -318,6 +326,14 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
 {
   switch(arg)
   {
+    case(GroupVariation::Group0Var209):
+      return "Group0Var209";
+    case(GroupVariation::Group0Var210):
+      return "Group0Var210";
+    case(GroupVariation::Group0Var254):
+      return "Group0Var254";
+    case(GroupVariation::Group0Var255):
+      return "Group0Var255";
     case(GroupVariation::Group1Var0):
       return "Group1Var0";
     case(GroupVariation::Group1Var1):
@@ -593,6 +609,14 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
 {
   switch(arg)
   {
+    case(GroupVariation::Group0Var209):
+      return "Device Attributes - Secure Authentication Version";
+    case(GroupVariation::Group0Var210):
+      return "Device Attributes - Security Statistics Per Association";
+    case(GroupVariation::Group0Var254):
+      return "Device Attributes - All Attributes Request";
+    case(GroupVariation::Group0Var255):
+      return "Device Attributes - List Of Attribute Variations";
     case(GroupVariation::Group1Var0):
       return "Binary Input - Any Variation";
     case(GroupVariation::Group1Var1):
@@ -866,6 +890,10 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
 
 GroupVariation GroupVariationSpec::from_string(const std::string& arg)
 {
+  if(arg == "Group0Var209") return GroupVariation::Group0Var209;
+  if(arg == "Group0Var210") return GroupVariation::Group0Var210;
+  if(arg == "Group0Var254") return GroupVariation::Group0Var254;
+  if(arg == "Group0Var255") return GroupVariation::Group0Var255;
   if(arg == "Group1Var0") return GroupVariation::Group1Var0;
   if(arg == "Group1Var1") return GroupVariation::Group1Var1;
   if(arg == "Group1Var2") return GroupVariation::Group1Var2;

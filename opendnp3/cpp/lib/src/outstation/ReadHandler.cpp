@@ -29,6 +29,7 @@ ReadHandler::ReadHandler(IStaticSelector& staticSelector, IEventSelector& eventS
 
 IINField ReadHandler::ProcessHeader(const AllObjectsHeader& header)
 {
+    if (header.group == 0) return pStaticSelector->SelectAll(header.enumeration);
     switch (header.type)
     {
     case (GroupVariationType::STATIC):

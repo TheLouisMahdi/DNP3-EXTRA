@@ -94,6 +94,8 @@ private:
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<BinaryCommandEvent>>& values) override;
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogCommandEvent>>& values) override;
     IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<SecurityStat>>& values) override;
+    IINField ProcessHeader(const RangeHeader&, const ICollection<Indexed<DeviceAttribute>>&) override;
+    IINField ProcessHeader(const PrefixHeader&, const ICollection<Indexed<DeviceAttribute>>&) override;
     IINField LoadSecurityStatistics(const HeaderRecord& header, const ICollection<Indexed<SecurityStat>>& values);
 
     template<class Target, class Source>

@@ -30,6 +30,7 @@
 #include "app/RangeWriteIterator.h"
 
 #include "opendnp3/app/GroupVariationID.h"
+#include "opendnp3/app/DeviceAttribute.h"
 #include "opendnp3/gen/QualifierCode.h"
 #include "app/AuthObjectValidation.h"
 
@@ -46,6 +47,10 @@ class HeaderWriter
 
 public:
     bool WriteHeader(GroupVariationID id, QualifierCode qc);
+
+    // Atomic variable-length Group 0 value, with an attribute-set index.
+    bool WriteAttribute(uint8_t variation, uint8_t set, const DeviceAttribute& value,
+                        QualifierCode qc = QualifierCode::UINT8_START_STOP);
 
     // Borrowed objects; no allocation. Failure leaves the writer position unchanged.
     template<class T> bool WriteFreeFormat(const T* values, uint8_t count)

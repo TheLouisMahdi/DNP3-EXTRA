@@ -99,6 +99,9 @@ Database::Database(const DatabaseConfig& config,
 
 IINField Database::SelectAll(GroupVariation gv)
 {
+    if (gv == GroupVariation::Group0Var254 || gv == GroupVariation::Group0Var255)
+        return attributes.Select(gv == GroupVariation::Group0Var254 ? 254 : 255,
+                                 securityStatistics ? static_cast<uint32_t>(securityStatistics->values.size()) : 0);
     if (gv == GroupVariation::Group60Var1)
     {
         // Table 5-1: security statistics cannot be excluded from Class 0.
@@ -212,6 +215,16 @@ IINField Database::SelectAll(GroupVariation gv)
 
 IINField Database::SelectRange(GroupVariation gv, const Range& range)
 {
+    if (gv == GroupVariation::Group0Var209 || gv == GroupVariation::Group0Var210
+        || gv == GroupVariation::Group0Var254 || gv == GroupVariation::Group0Var255)
+    {
+        if (!range.IsValid() || range.start != 0) return IINBit::PARAM_ERROR;
+        const auto variation = static_cast<uint8_t>(GroupVariationSpec::to_type(gv));
+        auto result = attributes.Select(variation,
+                                        securityStatistics ? static_cast<uint32_t>(securityStatistics->values.size()) : 0);
+        if (range.stop != 0) result.SetBit(IINBit::PARAM_ERROR);
+        return result;
+    }
     if (gv == GroupVariation::Group121Var0 || gv == GroupVariation::Group121Var1)
     {
         if (!securityStatistics) return IINBit::FUNC_NOT_SUPPORTED;
@@ -417,6 +430,7 @@ IINField Database::SelectIndices(GroupVariation gv, const ICollection<uint16_t>&
 
 void Database::Unselect()
 {
+    attributes.Reset();
     securitySelection = 0;
     securityIndexed = false;
     securityStatistics = nullptr;
@@ -494,7 +508,8 @@ bool Database::HasAnySelection() const
     return binary_input.has_any_selection() || double_binary.has_any_selection() || analog_input.has_any_selection()
         || counter.has_any_selection() || frozen_counter.has_any_selection() || binary_output_status.has_any_selection()
         || analog_output_status.has_any_selection() || time_and_interval.has_any_selection()
-        || octet_string.has_any_selection() || this->time_selected || this->read_iin_range.IsValid() || securitySelection;
+        || octet_string.has_any_selection() || this->time_selected || this->read_iin_range.IsValid()
+        || securitySelection || attributes.HasSelection();
 }
 
 bool Database::Load(HeaderWriter& writer)
@@ -504,6 +519,8 @@ bool Database::Load(HeaderWriter& writer)
         && load_type(this->frozen_counter, writer) && load_type(this->binary_output_status, writer)
         && load_type(this->analog_output_status, writer) && load_type(this->time_and_interval, writer)
         && load_type(this->octet_string, writer);
+
+    if (complete && !attributes.Load(writer)) return false;
 
     if (complete && securitySelection && !StaticWriters::WriteSecurityStatistics(
             *securityStatistics, securitySelection, writer,

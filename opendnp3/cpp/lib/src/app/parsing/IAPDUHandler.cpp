@@ -596,4 +596,24 @@ IINField IAPDUHandler::ProcessHeader(const PrefixHeader&, const ICollection<Inde
     return ProcessUnsupportedHeader();
 }
 
+void IAPDUHandler::OnHeader(const RangeHeader& header, const ICollection<Indexed<DeviceAttribute>>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const RangeHeader&, const ICollection<Indexed<DeviceAttribute>>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const PrefixHeader& header, const ICollection<Indexed<DeviceAttribute>>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const PrefixHeader&, const ICollection<Indexed<DeviceAttribute>>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
 } // namespace opendnp3

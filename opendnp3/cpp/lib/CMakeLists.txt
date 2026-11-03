@@ -2,6 +2,7 @@ set(opendnp3_public_headers
     ./include/opendnp3/auth/AuthenticationConfig.h
     ./include/opendnp3/auth/SecurityStatistic.h
     ./include/opendnp3/app/SecurityStat.h
+    ./include/opendnp3/app/DeviceAttribute.h
     ./include/opendnp3/auth/WindowsAuthenticationCredentials.h
     
     ./include/opendnp3/ConsoleLogger.h
@@ -217,6 +218,7 @@ set(opendnp3_private_headers
     ./src/app/parsing/CountParser.h
     ./src/app/parsing/DNPTimeParsing.h
     ./src/app/parsing/Functions.h
+    ./src/app/parsing/DeviceAttributeParser.h
     ./src/app/parsing/IAPDUHandler.h
     ./src/app/parsing/IWhiteList.h
     ./src/app/parsing/NumParser.h
@@ -281,6 +283,7 @@ set(opendnp3_private_headers
     ./src/gen/objects/Group43.h
     ./src/gen/objects/Group50.h
     ./src/gen/objects/Group122.h
+    ./src/gen/objects/Group0.h
     ./src/gen/objects/Group121.h
     ./src/gen/objects/Group51.h
     ./src/gen/objects/Group52.h
@@ -360,6 +363,7 @@ set(opendnp3_private_headers
     ./src/outstation/CommandResponseHandler.h
     ./src/outstation/ConstantCommandAction.h
     ./src/outstation/ControlState.h
+    ./src/outstation/DeviceAttributeSelection.h
     ./src/outstation/Database.h
     ./src/outstation/SecurityStatEventPublisher.h
     ./src/outstation/DeferredRequest.h
@@ -449,6 +453,7 @@ set(opendnp3_src
     ./src/app/parsing/BitReader.cpp
     ./src/app/parsing/CountIndexParser.cpp
     ./src/app/parsing/CountParser.cpp
+    ./src/app/parsing/DeviceAttributeParser.cpp
     ./src/app/parsing/IAPDUHandler.cpp
     ./src/app/parsing/NumParser.cpp
     ./src/app/parsing/ObjectHeaderParser.cpp
@@ -610,6 +615,7 @@ set(opendnp3_src
     ./src/outstation/ClassBasedRequestHandler.cpp
     ./src/outstation/CommandActionAdapter.cpp
     ./src/outstation/CommandResponseHandler.cpp
+    ./src/outstation/DeviceAttributeSelection.cpp
     ./src/outstation/Database.cpp
     ./src/outstation/DatabaseConfig.cpp
     ./src/outstation/DefaultOutstationApplication.cpp

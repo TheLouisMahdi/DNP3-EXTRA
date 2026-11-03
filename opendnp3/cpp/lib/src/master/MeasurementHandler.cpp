@@ -266,4 +266,16 @@ IINField MeasurementHandler::LoadSecurityStatistics(const HeaderRecord& header,
     return LoadValues(header, TimestampQuality::UNSYNCHRONIZED, collection);
 }
 
+IINField MeasurementHandler::ProcessHeader(const RangeHeader& header,
+                                           const ICollection<Indexed<DeviceAttribute>>& values)
+{
+    return LoadValues(header, TimestampQuality::INVALID, values);
+}
+
+IINField MeasurementHandler::ProcessHeader(const PrefixHeader& header,
+                                           const ICollection<Indexed<DeviceAttribute>>& values)
+{
+    return LoadValues(header, TimestampQuality::INVALID, values);
+}
+
 } // namespace opendnp3

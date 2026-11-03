@@ -26,6 +26,7 @@
 #include "opendnp3/app/MeasurementTypes.h"
 #include "opendnp3/app/OctetString.h"
 #include "opendnp3/app/SecurityStat.h"
+#include "opendnp3/app/DeviceAttribute.h"
 #include "opendnp3/app/parsing/ICollection.h"
 #include "opendnp3/master/HeaderInfo.h"
 #include "opendnp3/master/ResponseInfo.h"
@@ -69,6 +70,10 @@ public:
     /// conservatively as UNSYNCHRONIZED (accuracy unknown), never inferred from IIN.
     /// The default preserves source compatibility with existing handlers.
     virtual void Process(const HeaderInfo&, const ICollection<Indexed<SecurityStat>>&) {}
+
+    /// Optional attribute delivery. Index denotes the attribute set (0 = standard).
+    /// Attribute value bytes borrow the APDU; copy them before returning.
+    virtual void Process(const HeaderInfo&, const ICollection<Indexed<DeviceAttribute>>&) {}
 };
 
 } // namespace opendnp3

@@ -68,4 +68,22 @@ bool HeaderWriter::WriteHeaderWithReserve(GroupVariationID id, QualifierCode qc,
     return (position->length() < (3 + reserve)) ? false : WriteHeader(id, qc);
 }
 
+bool HeaderWriter::WriteAttribute(uint8_t variation, uint8_t set, const DeviceAttribute& value, QualifierCode qc)
+{
+    const bool supportedQualifier = qc == QualifierCode::UINT8_START_STOP
+        || qc == QualifierCode::UINT8_CNT_UINT8_INDEX;
+    if (!value.IsValid(variation) || !supportedQualifier || Remaining() < 7 + value.value.length()) return false;
+    auto copy = *position;
+    ser4cpp::UInt8::write_to(copy, 0);
+    ser4cpp::UInt8::write_to(copy, variation);
+    ser4cpp::UInt8::write_to(copy, QualifierCodeSpec::to_type(qc));
+    ser4cpp::UInt8::write_to(copy, qc == QualifierCode::UINT8_START_STOP ? set : 1);
+    ser4cpp::UInt8::write_to(copy, set);
+    ser4cpp::UInt8::write_to(copy, value.dataType);
+    ser4cpp::UInt8::write_to(copy, static_cast<uint8_t>(value.value.length()));
+    if (value.value.is_not_empty()) copy.copy_from(value.value);
+    *position = copy;
+    return true;
+}
+
 } // namespace opendnp3
