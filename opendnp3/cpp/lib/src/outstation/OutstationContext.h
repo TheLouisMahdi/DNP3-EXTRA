@@ -35,6 +35,7 @@
 #include "outstation/ParsedRequest.h"
 #include "outstation/RequestHistory.h"
 #include "outstation/ResponseContext.h"
+#include "outstation/SecurityStatEventPublisher.h"
 #include "outstation/TimeSyncState.h"
 #include "outstation/event/EventBuffer.h"
 
@@ -72,6 +73,7 @@ public:
              std::shared_ptr<ILowerLayer> lower,
              std::shared_ptr<ICommandHandler> commandHandler,
              std::shared_ptr<IOutstationApplication> application);
+    ~OContext();
 
     /// ----- Implement IUpperLayer ------
 
@@ -96,6 +98,7 @@ private:
     // state through configured credentials and the normal protocol exchange.
     friend class AuthenticationRuntimeTestAccess;
     friend class ProductionAuthenticationTestAccess;
+    friend class SecurityStatEventTestAccess;
     friend class OutstationStack;
     struct AuthenticationState
     {
@@ -152,6 +155,10 @@ private:
         exe4cpp::Timer replyTimer;
     };
     std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
+    std::unique_ptr<SecurityStatEventPublisher> securityStatPublisher;
+    std::shared_ptr<bool> securityEventLifetime = std::make_shared<bool>(true);
+    bool securityEventNotificationPosted = false;
+    void ScheduleSecurityEvents();
     void CountControlAuthentication(uint16_t user, uint8_t count, uint64_t now);
     void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();

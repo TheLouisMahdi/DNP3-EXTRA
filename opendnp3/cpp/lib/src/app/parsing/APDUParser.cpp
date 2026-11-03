@@ -118,6 +118,15 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
                                        const ParserSettings& settings,
                                        IAPDUHandler* pHandler)
 {
+    if (record.group == 122 && !settings.ExpectsContents())
+    {
+        const auto q = record.GetQualifierCode();
+        const bool indexed = q == QualifierCode::UINT8_CNT_UINT8_INDEX || q == QualifierCode::UINT16_CNT_UINT16_INDEX;
+        const bool range = q == QualifierCode::UINT8_START_STOP || q == QualifierCode::UINT16_START_STOP;
+        const bool count = q == QualifierCode::UINT8_CNT || q == QualifierCode::UINT16_CNT;
+        if (q != QualifierCode::ALL_OBJECTS && !(record.variation == 0 ? (indexed || range) : count))
+            return ParseResult::INVALID_OBJECT_QUALIFIER;
+    }
     const bool fixedAuth = record.enumeration == GroupVariation::Group120Var3 ||
                            record.enumeration == GroupVariation::Group120Var4;
     if (record.group == 120 && record.GetQualifierCode() !=

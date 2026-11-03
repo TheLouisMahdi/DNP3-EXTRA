@@ -23,6 +23,7 @@
 #include "EventLists.h"
 #include "IEventWriteHandler.h"
 #include "outstation/Event.h"
+#include "app/Range.h"
 
 #include "opendnp3/app/ClassField.h"
 
@@ -71,6 +72,8 @@ public:
     bool Update(const Event<BinaryOutputStatusSpec>& evt);
     bool Update(const Event<AnalogOutputStatusSpec>& evt);
     bool Update(const Event<OctetStringSpec>& evt);
+    bool Update(const Event<SecurityStatSpec>& evt);
+    uint32_t SelectSecurityRange(const Range& range);
 
     // ---- function used to select distinct types ----
 
@@ -82,6 +85,7 @@ public:
     uint32_t SelectByType(EventBinaryOutputStatusVariation variation, uint32_t max);
     uint32_t SelectByType(EventAnalogOutputStatusVariation variation, uint32_t max);
     uint32_t SelectByType(EventOctetStringVariation variation, uint32_t max);
+    uint32_t SelectByType(EventSecurityStatVariation variation, uint32_t max);
 
     uint32_t SelectByType(EventType type, uint32_t max);
 

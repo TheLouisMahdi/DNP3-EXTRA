@@ -22,6 +22,8 @@
 
 #include "opendnp3/app/MeasurementTypes.h"
 #include "opendnp3/app/OctetString.h"
+#include "opendnp3/app/SecurityStat.h"
+#include "opendnp3/gen/EventSecurityStatVariation.h"
 #include "opendnp3/gen/EventAnalogOutputStatusVariation.h"
 #include "opendnp3/gen/EventAnalogVariation.h"
 #include "opendnp3/gen/EventBinaryOutputStatusVariation.h"
@@ -49,6 +51,10 @@ public:
 class IEventWriteHandler
 {
 public:
+    virtual uint16_t Write(EventSecurityStatVariation, const SecurityStat&, IEventCollection<SecurityStat>&)
+    {
+        return 0;
+    }
     virtual uint16_t Write(EventBinaryVariation variation, const Binary& first, IEventCollection<Binary>& items) = 0;
     virtual uint16_t Write(EventDoubleBinaryVariation variation,
                            const DoubleBitBinary& first,

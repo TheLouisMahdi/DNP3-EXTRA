@@ -9,6 +9,14 @@
 namespace opendnp3
 {
 class Logger;
+class IAuthenticationStatisticsReporter
+{
+public:
+    virtual ~IAuthenticationStatisticsReporter() = default;
+    // Synchronous occurrence notification. Copy into bounded storage only;
+    // never transmit or reenter authentication. True means event accepted.
+    virtual bool Report(SecurityStatistic statistic, uint32_t value, uint8_t flags) = 0;
+};
 // One bounded, serialized runtime per association. No protocol engine, wire
 // publication, remote configuration, counter clearing or freezing.
 class AuthenticationStatistics final
@@ -25,6 +33,7 @@ public:
     AuthenticationStatistics(const AuthenticationStatistics&) = delete;
     AuthenticationStatistics& operator=(const AuthenticationStatistics&) = delete;
     void SetLogger(Logger* value) { logger = value; }
+    void SetReporter(IAuthenticationStatisticsReporter* value, const SecurityStatisticThresholds& reportingThresholds);
     void Increment(SecurityStatistic statistic);
     void Unexpected(); // Table 7-8: unexpected input discarded, not pending ASDU.
     // owner must come from legitimate local protocol state, NEVER an unverified Reply USR.
@@ -51,10 +60,13 @@ public:
 
 private:
     static bool HasMaximum(SecurityStatistic statistic);
+    void Publish(SecurityStatistic statistic);
     void Persist();
     const uint16_t association;
     const bool master;
     const SecurityStatisticThresholds thresholds;
+    SecurityStatisticThresholds reportingThresholds;
+    IAuthenticationStatisticsReporter* reporter = nullptr;
     const std::shared_ptr<IAuthenticationStatisticsStore> store;
     Logger* logger = nullptr;
     SecurityStatisticValues values{}, reported{}, maximumBases{}, maximumDistances{};

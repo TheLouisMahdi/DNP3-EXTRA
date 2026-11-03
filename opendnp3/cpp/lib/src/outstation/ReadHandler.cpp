@@ -42,6 +42,8 @@ IINField ReadHandler::ProcessHeader(const AllObjectsHeader& header)
 
 IINField ReadHandler::ProcessHeader(const RangeHeader& header)
 {
+    if (header.enumeration == GroupVariation::Group122Var0)
+        return pEventSelector->SelectRange(header.enumeration, header.range);
     return pStaticSelector->SelectRange(header.enumeration, header.range);
 }
 
@@ -61,6 +63,8 @@ IINField ReadHandler::ProcessHeader(const CountHeader& header)
 
 IINField ReadHandler::ProcessHeader(const PrefixHeader& header, const ICollection<uint16_t>& indices)
 {
+    if (header.enumeration == GroupVariation::Group122Var0)
+        return pEventSelector->SelectIndices(header.enumeration, indices);
     return pStaticSelector->SelectIndices(header.enumeration, indices);
 }
 

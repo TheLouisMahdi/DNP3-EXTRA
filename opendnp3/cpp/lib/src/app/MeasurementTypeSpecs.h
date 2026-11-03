@@ -153,6 +153,11 @@ struct TimeAndIntervalSpec : public TimeAndIntervalInfo
     typedef EmptyEventCell event_cell_t;
 };
 
+// Security events are generated only by AuthenticationStatistics, never by database updates.
+struct SecurityStatSpec : public SecurityStatInfo
+{
+};
+
 } // namespace opendnp3
 
 #endif

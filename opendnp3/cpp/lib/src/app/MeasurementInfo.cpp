@@ -77,4 +77,10 @@ const StaticTypeBitmask TimeAndIntervalInfo::StaticTypeEnum = StaticTypeBitmask:
 const StaticTimeAndIntervalVariation TimeAndIntervalInfo::DefaultStaticVariation
     = StaticTimeAndIntervalVariation::Group50Var4;
 
+const EventType SecurityStatInfo::EventTypeEnum = EventType::SecurityStat;
+const SecurityStatInfo::event_variation_t SecurityStatInfo::DefaultEventVariation
+    = EventSecurityStatVariation::Group122Var1;
+const SecurityStatInfo::static_variation_t SecurityStatInfo::DefaultStaticVariation
+    = StaticSecurityStatVariation::Group121Var1;
+
 } // namespace opendnp3

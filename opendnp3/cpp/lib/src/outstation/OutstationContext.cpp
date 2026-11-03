@@ -90,6 +90,34 @@ OContext::OContext(const Addresses& addresses,
         throw std::invalid_argument("SA required but cryptography was disabled at build time");
 #endif
     }
+    securityStatPublisher.reset(new SecurityStatEventPublisher(config.securityStatConfig, *this->application,
+                                                              eventBuffer, [this] { ScheduleSecurityEvents(); }));
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+        authentication->sessions->statistics.SetReporter(securityStatPublisher.get(), config.securityStatThresholds);
+#endif
+}
+
+OContext::~OContext()
+{
+    securityEventLifetime.reset();
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions)
+        authentication->sessions->statistics.SetReporter(nullptr, DefaultSecurityStatisticThresholds());
+#endif
+}
+
+void OContext::ScheduleSecurityEvents()
+{
+    if (securityEventNotificationPosted) return;
+    const std::weak_ptr<bool> lifetime = securityEventLifetime;
+    executor->post([this, lifetime] {
+        if (!lifetime.lock()) return;
+        securityEventNotificationPosted = false;
+        // Native task scheduling only, outside the accounting/authentication stack.
+        HandleNewEvents();
+    });
+    securityEventNotificationPosted = true;
 }
 
 bool OContext::OnLowerLayerUp()

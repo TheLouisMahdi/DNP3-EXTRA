@@ -57,6 +57,9 @@ public:
     virtual void Update(const Event<BinaryOutputStatusSpec>& evt) override;
     virtual void Update(const Event<AnalogOutputStatusSpec>& evt) override;
     virtual void Update(const Event<OctetStringSpec>& evt) override;
+    bool Update(const Event<SecurityStatSpec>& evt) override;
+    IINField SelectRange(GroupVariation gv, const Range& range) override;
+    IINField SelectIndices(GroupVariation gv, const ICollection<uint16_t>& indices) override;
 
     // ------- IEventSelector ------
 
@@ -88,6 +91,7 @@ public:
 private:
     bool overflow = false;
     EventStorage storage;
+    const uint16_t securityCapacity;
 
     IINField SelectMaxCount(GroupVariation gv, uint32_t maximum);
 

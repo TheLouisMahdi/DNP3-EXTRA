@@ -303,6 +303,12 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
       return GroupVariation::Group121Var0;
     case(0x7901):
       return GroupVariation::Group121Var1;
+    case(0x7A00):
+      return GroupVariation::Group122Var0;
+    case(0x7A01):
+      return GroupVariation::Group122Var1;
+    case(0x7A02):
+      return GroupVariation::Group122Var2;
     default:
       return GroupVariation::UNKNOWN;
   }
@@ -572,6 +578,12 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
       return "Group121Var0";
     case(GroupVariation::Group121Var1):
       return "Group121Var1";
+    case(GroupVariation::Group122Var0):
+      return "Group122Var0";
+    case(GroupVariation::Group122Var1):
+      return "Group122Var1";
+    case(GroupVariation::Group122Var2):
+      return "Group122Var2";
     default:
       return "UNKNOWN";
   }
@@ -841,6 +853,12 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
       return "Security Statistic - Any Variation";
     case(GroupVariation::Group121Var1):
       return "Security Statistic - 32-bit With Flag";
+    case(GroupVariation::Group122Var0):
+      return "Security Statistic Event - Any Variation";
+    case(GroupVariation::Group122Var1):
+      return "Security Statistic Event - 32-bit With Flag";
+    case(GroupVariation::Group122Var2):
+      return "Security Statistic Event - 32-bit With Flag and Time";
     default:
       return "UNKNOWN";
   }
@@ -978,6 +996,9 @@ GroupVariation GroupVariationSpec::from_string(const std::string& arg)
   if(arg == "Group120Var15") return GroupVariation::Group120Var15;
   if(arg == "Group121Var0") return GroupVariation::Group121Var0;
   if(arg == "Group121Var1") return GroupVariation::Group121Var1;
+  if(arg == "Group122Var0") return GroupVariation::Group122Var0;
+  if(arg == "Group122Var1") return GroupVariation::Group122Var1;
+  if(arg == "Group122Var2") return GroupVariation::Group122Var2;
   else return GroupVariation::UNKNOWN;
 }
 

@@ -60,6 +60,8 @@ public:
                            const OctetString& first,
                            IEventCollection<OctetString>& items) override;
 
+    uint16_t Write(EventSecurityStatVariation variation, const SecurityStat& first,
+                   IEventCollection<SecurityStat>& items) override;
 private:
     HeaderWriter writer;
 };

@@ -15,7 +15,8 @@ namespace
 }
 AuthenticationStatistics::AuthenticationStatistics(uint16_t association_, bool master_,
     const SecurityStatisticThresholds& thresholds_, std::shared_ptr<IAuthenticationStatisticsStore> store_)
-    : association(association_), master(master_), thresholds(thresholds_), store(std::move(store_))
+    : association(association_), master(master_), thresholds(thresholds_), reportingThresholds(thresholds_),
+      store(std::move(store_))
 {
     if (store)
     {
@@ -57,9 +58,10 @@ void AuthenticationStatistics::Increment(SecurityStatistic statistic)
     if (n >= values.size() || (!master && statistic == SecurityStatistic::RESTART_REKEYS)) return;
     ++values[n]; // Table 11-19: rollover to zero, no saturation/clearing.
     // P6-OPEN-01: provisionally use 7.6.1.4.2's >= for reporting only.
-    if (values[n] - reported[n] >= thresholds[n]) pendingReports |= uint32_t(1) << n;
+    if (values[n] - reported[n] >= reportingThresholds[n]) pendingReports |= uint32_t(1) << n;
     // Capped distance keeps an exceeded Max latched through uint32 rollover.
     if (HasMaximum(statistic) && maximumDistances[n] <= thresholds[n]) ++maximumDistances[n];
+    Publish(statistic); // Capture UTC before a potentially slow retention backend.
     Persist();
     if (logger && (statistic == SecurityStatistic::UNEXPECTED_MESSAGES
                    || statistic == SecurityStatistic::AUTHORIZATION_FAILURES))
@@ -126,7 +128,27 @@ bool AuthenticationStatistics::ReportPending(SecurityStatistic statistic) const
 void AuthenticationStatistics::RequireReport(SecurityStatistic statistic)
 {
     const auto n = Index(statistic);
-    if (n < values.size()) pendingReports |= uint32_t(1) << n;
+    if (n >= values.size()) return;
+    pendingReports |= uint32_t(1) << n;
+    Publish(statistic);
+}
+void AuthenticationStatistics::SetReporter(IAuthenticationStatisticsReporter* value,
+                                            const SecurityStatisticThresholds& reportingThresholds_)
+{
+    reporter = value;
+    reportingThresholds = reportingThresholds_;
+    // Do not poll old pending conditions or assign a new time to past occurrences.
+}
+void AuthenticationStatistics::Publish(SecurityStatistic statistic)
+{
+    if (!reporter || !ReportPending(statistic)) return;
+    const auto snapshot = Value(statistic);
+    try
+    {
+        if (reporter->Report(statistic, snapshot, loaded ? 0x01 : 0x41))
+            ReportGenerated(statistic, snapshot);
+    }
+    catch (...) {} // Reporting cannot interrupt security accounting or rejection.
 }
 void AuthenticationStatistics::ReportGenerated(SecurityStatistic statistic, uint32_t snapshot)
 {
@@ -135,7 +157,7 @@ void AuthenticationStatistics::ReportGenerated(SecurityStatistic statistic, uint
     if (n >= values.size() || !ReportPending(statistic) || snapshot - reported[n] > values[n] - reported[n]) return;
     reported[n] = snapshot;
     pendingReports &= ~(uint32_t(1) << n);
-    if (values[n] != snapshot && values[n] - snapshot >= thresholds[n]) pendingReports |= uint32_t(1) << n;
+    if (values[n] != snapshot && values[n] - snapshot >= reportingThresholds[n]) pendingReports |= uint32_t(1) << n;
 }
 bool AuthenticationStatistics::Exceeded(SecurityStatistic statistic) const
 {

@@ -24,7 +24,9 @@ namespace opendnp3
 
 EventBufferConfig EventBufferConfig::AllTypes(uint16_t sizes)
 {
-    return EventBufferConfig(sizes, sizes, sizes, sizes, sizes, sizes, sizes, sizes);
+    auto config = EventBufferConfig(sizes, sizes, sizes, sizes, sizes, sizes, sizes, sizes);
+    config.maxSecurityStatEvents = sizes;
+    return config;
 }
 
 EventBufferConfig::EventBufferConfig(uint16_t maxBinaryEvents,
@@ -51,7 +53,7 @@ EventBufferConfig::EventBufferConfig(uint16_t maxBinaryEvents,
 uint32_t EventBufferConfig::TotalEvents() const
 {
     return maxBinaryEvents + maxDoubleBinaryEvents + maxAnalogEvents + maxCounterEvents + maxFrozenCounterEvents
-        + maxBinaryOutputStatusEvents + maxAnalogOutputStatusEvents + maxOctetStringEvents;
+        + maxBinaryOutputStatusEvents + maxAnalogOutputStatusEvents + maxOctetStringEvents + maxSecurityStatEvents;
 }
 
 } // namespace opendnp3

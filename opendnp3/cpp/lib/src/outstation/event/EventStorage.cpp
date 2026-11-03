@@ -143,6 +143,8 @@ uint32_t EventStorage::SelectByType(EventType type, uint32_t max)
         return EventSelection::SelectByType<BinaryOutputStatusSpec>(this->state, max);
     case (EventType::AnalogOutputStatus):
         return EventSelection::SelectByType<AnalogOutputStatusSpec>(this->state, max);
+    case (EventType::SecurityStat):
+        return EventSelection::SelectByType<SecurityStatSpec>(this->state, max);
     case (EventType::OctetString):
         return EventSelection::SelectByType<OctetStringSpec>(this->state, max);
     default:
@@ -193,12 +195,61 @@ uint32_t EventStorage::ClearWritten()
 
 void EventStorage::Unselect()
 {
-    auto clear = [](EventRecord& record) -> void { record.state = EventState::unselected; };
+    auto clear = [](EventRecord& record) -> void {
+        record.state = EventState::unselected;
+        // Class polls must restore G122's configured default after an explicit
+        // variation READ. Preserve all other types' existing selection behavior.
+        if (record.type->IsEqual(EventType::SecurityStat)) record.type->SelectDefaultVariation(record);
+    };
 
     this->state.events.Foreach(clear);
 
     // keep the total, but clear the selected/written
     this->state.counters.ResetOnFail();
+}
+
+bool EventStorage::Update(const Event<SecurityStatSpec>& evt)
+{
+    return EventUpdate::Update(state, evt);
+}
+uint32_t EventStorage::SelectByType(EventSecurityStatVariation variation, uint32_t max)
+{
+    if (variation != EventSecurityStatVariation::Group122Var2)
+        return EventSelection::SelectByType<SecurityStatSpec>(state, variation, max);
+
+    uint32_t count = 0;
+    auto select = [&](TypedEventRecord<SecurityStatSpec>& node) -> bool {
+        if (count == max) return false;
+        if (node.record->value.state == EventState::unselected)
+        {
+            // Do not fabricate V2 time or pass an older untimed event to report
+            // a newer event first (5.1.5.1.2). Class/V0/V1 can drain this prefix.
+            if (!node.value.HasTime()) return false;
+            node.record->value.state = EventState::selected;
+            node.selectedVariation = variation;
+            state.counters.OnSelect();
+            ++count;
+        }
+        return true;
+    };
+    state.GetList<SecurityStatSpec>().ForeachWhile(select);
+    return count;
+}
+uint32_t EventStorage::SelectSecurityRange(const Range& range)
+{
+    uint32_t count = 0;
+    auto select = [&](TypedEventRecord<SecurityStatSpec>& node) {
+        auto& record = node.record->value;
+        if (record.state == EventState::unselected && record.index >= range.start && record.index <= range.stop)
+        {
+            record.state = EventState::selected;
+            node.selectedVariation = node.defaultVariation;
+            state.counters.OnSelect();
+            ++count;
+        }
+    };
+    state.GetList<SecurityStatSpec>().Foreach(select);
+    return count;
 }
 
 } // namespace opendnp3

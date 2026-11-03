@@ -21,6 +21,8 @@
 #define OPENDNP3_OUTSTATIONCONFIG_H
 
 #include "opendnp3/outstation/EventBufferConfig.h"
+#include "opendnp3/outstation/MeasurementConfig.h"
+#include "opendnp3/auth/SecurityStatistic.h"
 #include "opendnp3/outstation/OutstationParams.h"
 #include "opendnp3/util/TimeDuration.h"
 
@@ -43,6 +45,12 @@ struct OutstationConfig
 
     /// Describes the sizes in the event buffer
     EventBufferConfig eventBufferConfig;
+
+    /// Local-only G122 configuration for the reporting association's 18 points.
+    std::array<SecurityStatConfig, 18> securityStatConfig{};
+    /// Reporting deadbands are independent of authentication protocol maxima.
+    SecurityStatisticThresholds securityStatThresholds = DefaultSecurityStatisticThresholds();
+
 };
 
 } // namespace opendnp3

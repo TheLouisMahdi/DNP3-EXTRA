@@ -53,7 +53,8 @@ object ObjectGroup {
     Group112,
     Group113,
     Group120,
-    Group121
+    Group121,
+    Group122
   )
 
 }

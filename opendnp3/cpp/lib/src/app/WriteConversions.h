@@ -27,6 +27,7 @@
 #include "gen/objects/Group12.h"
 #include "gen/objects/Group13.h"
 #include "gen/objects/Group121.h"
+#include "gen/objects/Group122.h"
 #include "gen/objects/Group2.h"
 #include "gen/objects/Group20.h"
 #include "gen/objects/Group21.h"
@@ -254,6 +255,31 @@ struct ConvertGroup50Var4 : private StaticOnly
         ret.interval = value.interval;
         ret.units = value.units;
         return ret;
+    }
+};
+
+// Annex A.47: bits 5 and 7 are reserved in both event variations.
+struct ConvertGroup122Var1 : private StaticOnly
+{
+    static Group122Var1 Apply(const SecurityStat& value)
+    {
+        Group122Var1 result;
+        result.flags = value.flags.value & 0x5F;
+        result.associationId = value.associationId;
+        result.value = value.value;
+        return result;
+    }
+};
+struct ConvertGroup122Var2 : private StaticOnly
+{
+    static Group122Var2 Apply(const SecurityStat& value)
+    {
+        Group122Var2 result;
+        result.flags = value.flags.value & 0x5F;
+        result.associationId = value.associationId;
+        result.value = value.value;
+        result.time = value.time;
+        return result;
     }
 };
 

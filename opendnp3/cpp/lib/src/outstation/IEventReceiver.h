@@ -49,6 +49,9 @@ public:
     virtual void Update(const Event<AnalogOutputStatusSpec>& evt) = 0;
 
     virtual void Update(const Event<OctetStringSpec>& evt) = 0;
+
+    // Unlike legacy void Update overloads, return true only after acceptance.
+    virtual bool Update(const Event<SecurityStatSpec>&) { return false; }
 };
 
 } // namespace opendnp3

@@ -117,9 +117,9 @@ struct FrozenCounterFactory : private StaticOnly
 
 struct SecurityStatFactory : private StaticOnly
 {
-    inline static SecurityStat From(uint8_t flags, uint16_t associationId, uint32_t value)
+    inline static SecurityStat From(uint8_t flags, uint16_t associationId, uint32_t value, DNPTime time = DNPTime())
     {
-        return SecurityStat(value, Flags(flags), associationId);
+        return SecurityStat(value, Flags(flags), associationId, time);
     }
 };
 

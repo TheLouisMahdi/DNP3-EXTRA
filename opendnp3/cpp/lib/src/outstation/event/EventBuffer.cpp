@@ -24,7 +24,8 @@
 namespace opendnp3
 {
 
-EventBuffer::EventBuffer(const EventBufferConfig& config) : storage(config) {}
+EventBuffer::EventBuffer(const EventBufferConfig& config)
+    : storage(config), securityCapacity(config.maxSecurityStatEvents) {}
 
 void EventBuffer::Update(const Event<BinarySpec>& evt)
 {
@@ -177,6 +178,13 @@ IINField EventBuffer::SelectMaxCount(GroupVariation gv, uint32_t maximum)
     case (GroupVariation::Group60Var4):
         return this->SelectByClass(maximum, EventClass::EC3);
 
+    case GroupVariation::Group122Var0:
+        return this->SelectByType(maximum, EventType::SecurityStat);
+    case GroupVariation::Group122Var1:
+        return this->SelectByType(maximum, EventSecurityStatVariation::Group122Var1);
+    case GroupVariation::Group122Var2:
+        return this->SelectByType(maximum, EventSecurityStatVariation::Group122Var2);
+
     case (GroupVariation::Group111Var0):
         return this->SelectByType(maximum, EventOctetStringVariation::Group111Var0);
 
@@ -228,6 +236,38 @@ void EventBuffer::ClearWritten()
 uint32_t EventBuffer::NumEvents(EventClass ec) const
 {
     return this->storage.NumUnwritten(ec);
+}
+
+bool EventBuffer::Update(const Event<SecurityStatSpec>& evt)
+{
+    // Native storage returns overflow, including false for zero-capacity rejection.
+    // V1 needs no clock. V2 requires a captured, representable absolute time,
+    // but 4.5.5 prohibits inhibiting functions solely for lack of synchronization.
+    if (!securityCapacity || evt.index >= 18 || (evt.index == 17 && evt.value.value != 0)
+        || evt.value.associationId != 0
+        || static_cast<uint8_t>(evt.clazz) > static_cast<uint8_t>(EventClass::EC3)
+        || (evt.variation != EventSecurityStatVariation::Group122Var1
+            && evt.variation != EventSecurityStatVariation::Group122Var2)
+        || (evt.variation == EventSecurityStatVariation::Group122Var2 && !evt.value.HasTime()))
+        return false;
+    UpdateAny(evt);
+    return true;
+}
+IINField EventBuffer::SelectRange(GroupVariation gv, const Range& range)
+{
+    if (gv != GroupVariation::Group122Var0) return IINBit::FUNC_NOT_SUPPORTED;
+    if (range.start > range.stop || range.stop >= 18) return IINBit::PARAM_ERROR;
+    storage.SelectSecurityRange(range);
+    return IINField::Empty();
+}
+IINField EventBuffer::SelectIndices(GroupVariation gv, const ICollection<uint16_t>& indices)
+{
+    if (gv != GroupVariation::Group122Var0) return IINBit::FUNC_NOT_SUPPORTED;
+    bool valid = true;
+    indices.ForeachItem([&](uint16_t index) { if (index >= 18) valid = false; });
+    if (!valid) return IINBit::PARAM_ERROR;
+    indices.ForeachItem([&](uint16_t index) { storage.SelectSecurityRange(Range::From(index, index)); });
+    return IINField::Empty();
 }
 
 } // namespace opendnp3

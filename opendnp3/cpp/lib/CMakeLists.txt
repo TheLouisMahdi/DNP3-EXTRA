@@ -280,6 +280,7 @@ set(opendnp3_private_headers
     ./src/gen/objects/Group42.h
     ./src/gen/objects/Group43.h
     ./src/gen/objects/Group50.h
+    ./src/gen/objects/Group122.h
     ./src/gen/objects/Group121.h
     ./src/gen/objects/Group51.h
     ./src/gen/objects/Group52.h
@@ -360,6 +361,7 @@ set(opendnp3_private_headers
     ./src/outstation/ConstantCommandAction.h
     ./src/outstation/ControlState.h
     ./src/outstation/Database.h
+    ./src/outstation/SecurityStatEventPublisher.h
     ./src/outstation/DeferredRequest.h
     ./src/outstation/Event.h
     ./src/outstation/FreezeRequestHandler.h
@@ -548,6 +550,7 @@ set(opendnp3_src
     ./src/gen/objects/Group43.cpp
     ./src/gen/objects/Group120.cpp
     ./src/gen/objects/Group121.cpp
+    ./src/gen/objects/Group122.cpp
     ./src/app/parsing/FreeFormatParser.cpp
     ./src/gen/objects/Group50.cpp
     ./src/gen/objects/Group51.cpp
@@ -612,6 +615,7 @@ set(opendnp3_src
     ./src/outstation/DefaultOutstationApplication.cpp
     ./src/outstation/DeferredRequest.cpp
     ./src/outstation/EventBufferConfig.cpp
+    ./src/outstation/SecurityStatEventPublisher.cpp
     ./src/outstation/FreezeRequestHandler.cpp
     ./src/outstation/IINHelpers.cpp
     ./src/outstation/IOutstationApplication.cpp

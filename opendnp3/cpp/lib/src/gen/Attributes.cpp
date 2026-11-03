@@ -91,6 +91,8 @@ bool HasAbsoluteTime(GroupVariation gv)
         return true;
     case(GroupVariation::Group51Var2):
         return true;
+    case(GroupVariation::Group122Var2):
+        return true;
     default:
       return false;
   }
@@ -219,6 +221,10 @@ bool HasFlags(GroupVariation gv)
         return true;
     case(GroupVariation::Group121Var1):
         return true;
+    case(GroupVariation::Group122Var1):
+        return true;
+    case(GroupVariation::Group122Var2):
+        return true;
     default:
       return false;
   }
@@ -310,6 +316,10 @@ bool IsEvent(GroupVariation gv)
     case(GroupVariation::Group43Var7):
         return true;
     case(GroupVariation::Group43Var8):
+        return true;
+    case(GroupVariation::Group122Var1):
+        return true;
+    case(GroupVariation::Group122Var2):
         return true;
     default:
       return false;

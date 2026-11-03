@@ -23,8 +23,9 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
 - `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
-- `auth/AuthenticationStatistics.*` → bounded association security counters, reporting baselines and five protocol maxima; frozen G121 READ snapshots, no G122 publication.
+- `auth/AuthenticationStatistics.*` → bounded association security counters, reporting baselines and five protocol maxima; frozen G121 READ snapshots and synchronous G122 occurrence notifications; reporting thresholds remain separate from protocol maxima.
 - G121 continuity limitation: without a successful initial retention load, snapshots conservatively retain DISCONTINUITY. Per-point acquisition/transmission rearming is not implemented; a platform retention backend is still required for restart persistence. Normal UINT32 rollover does not set DISCONTINUITY.
+- `outstation/SecurityStatEventPublisher.*` → copies G122 occurrence snapshots into the native bounded event buffer, using application DNP time and Class 1/2/3 configuration. Usable absolute occurrence time may be synchronized or unsynchronized; unavailable time produces V1 snapshots. Explicit V2 selection retains the untimed prefix without substitution or re-timestamping; application-owned NEED_TIME is preserved.
 - `auth/AggressiveMode.*` → authenticated V3/V9 envelopes, separate solicited/unsolicited challenge histories and replay checks.
 - `auth/WindowsAuthenticationCredentials.cpp` → read-only Windows Credential Manager adapter.
 - `master/MasterResponder.*`, `outstation/OutstationChallenger.*` → Control/Monitoring challenge-response cores.
@@ -56,6 +57,7 @@ The outstation database is in memory; the apps simulate measurements and accept 
 ## Tests
 Prefix: `opendnp3/cpp/tests/`
 - `unit/` → protocol/state tests; `TestAPDUParsing.cpp`, `TestDatabase.cpp` are parser/database starting points.
+- `unit/TestSecurityStatEvents.cpp` → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation and secure-context accounting hooks.
 - `dnp3mocks/` → shared mocks and stack fixtures.
 - `asiotests/` → asynchronous I/O tests.
 - `integration/` → stack integration tests.

@@ -22,6 +22,7 @@
 
 #include "EventWriters.h"
 #include "gen/objects/Group11.h"
+#include "gen/objects/Group122.h"
 #include "gen/objects/Group2.h"
 #include "gen/objects/Group22.h"
 #include "gen/objects/Group23.h"
@@ -177,6 +178,20 @@ uint16_t ASDUEventWriteHandler::Write(EventOctetStringVariation /*variation*/,
                                       IEventCollection<OctetString>& items)
 {
     return EventWriters::Write(first.Size(), this->writer, items);
+}
+
+uint16_t ASDUEventWriteHandler::Write(EventSecurityStatVariation variation, const SecurityStat&,
+                                      IEventCollection<SecurityStat>& items)
+{
+    switch (variation)
+    {
+    case EventSecurityStatVariation::Group122Var1:
+        return EventWriters::Write(writer, items, Group122Var1::Inst());
+    case EventSecurityStatVariation::Group122Var2:
+        return EventWriters::Write(writer, items, Group122Var2::Inst());
+    default:
+        return 0;
+    }
 }
 
 } // namespace opendnp3

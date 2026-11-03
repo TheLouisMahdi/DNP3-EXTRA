@@ -60,6 +60,8 @@ struct EventBufferConfig
     // Returns the sum of all event count maximums (number of elements in preallocated buffer)
     uint32_t TotalEvents() const;
 
+    uint16_t maxSecurityStatEvents = 0;
+
     // The number of binary events the outstation will buffer before overflowing
     uint16_t maxBinaryEvents;
 
