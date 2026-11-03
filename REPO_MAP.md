@@ -60,6 +60,7 @@ The outstation database is in memory; the apps simulate measurements and accept 
 ## Tests
 Prefix: `opendnp3/cpp/tests/`
 - `unit/` → protocol/state tests; `TestAPDUParsing.cpp`, `TestDatabase.cpp` are parser/database starting points.
+- `unit/TestProfileMeasurements.cpp` → G2V3/G4V3 CTO validation, typed time quality, malformed-fragment rejection and native confirmations for the selected measurement/event profile.
 - `unit/TestDeviceAttributes.cpp` → G0 security attribute wire formats, actual per-association count, discovery, malformed data, typed Master delivery and native fragmentation/WRITE protection.
 - `unit/TestMasterSecurityStatistics.cpp` → Master G121/G122 qualifiers, typed callbacks, association isolation, occurrence time, malformed fragments, native solicited/unsolicited paths and mixed-WRITE rejection protection.
 - `unit/TestSecurityStatEvents.cpp` → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation and secure-context accounting hooks.

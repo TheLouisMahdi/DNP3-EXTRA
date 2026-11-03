@@ -92,6 +92,13 @@ ParseResult CountParser::ParseHeader(ser4cpp::rseq_t& buffer,
 ParseResult CountParser::ParseCountOfObjects(
     ser4cpp::rseq_t& buffer, const HeaderRecord& record, uint16_t count, Logger* pLogger, IAPDUHandler* pHandler)
 {
+    // G2V3/G4V3 use the preceding CTO. Table 12-23 requires a single CTO
+    // with qualifier 07; reject malformed headers on the first validation pass
+    // so MeasurementHandler cannot silently keep an earlier time reference.
+    if ((record.enumeration == GroupVariation::Group51Var1 || record.enumeration == GroupVariation::Group51Var2)
+        && count != 1)
+        return ParseResult::INVALID_OBJECT_QUALIFIER;
+
     switch (record.enumeration)
     {
     case (GroupVariation::Group120Var3):

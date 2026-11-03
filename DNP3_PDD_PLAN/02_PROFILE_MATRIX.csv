@@ -1,38 +1,38 @@
 ﻿requirement_id,profile_pdf_page,group_decimal,variation_decimal,description,request_function_codes_decimal,request_qualifiers_hex,response_function_codes_decimal,response_qualifiers_hex,family,notes,local_code_status
 PROFILE-001,4,0,209,Secure authentication version,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; read-only,NOT_AUDITED
 PROFILE-002,4,0,210,Security statistics per association,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; count must reflect real statistics,NOT_AUDITED
-PROFILE-003,4,1,0,Binary input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment,NOT_AUDITED
-PROFILE-004,4,1,1,Binary input packed,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-005,5,1,2,Binary input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-006,5,2,0,Binary input event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed,NOT_AUDITED
-PROFILE-007,5,2,1,Binary event without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-008,5,2,2,Binary event absolute time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-009,5,2,3,Binary event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-010,5,3,0,Double-bit input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment,NOT_AUDITED
-PROFILE-011,5,3,1,Double-bit input packed,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-012,5,3,2,Double-bit input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-013,5,4,0,Double-bit event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed,NOT_AUDITED
-PROFILE-014,6,4,1,Double-bit event without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-015,6,4,2,Double-bit event absolute time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-016,6,4,3,Double-bit event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-017,6,10,0,Binary output status any,1,00|01|06,-,-,MEASUREMENT,Status not a control command,NOT_AUDITED
-PROFILE-018,6,10,2,Binary output status with flags,1,00|01|06,129,00|01,MEASUREMENT,Status not a control command,NOT_AUDITED
+PROFILE-003,4,1,0,Binary input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-004,4,1,1,Binary input packed,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-005,5,1,2,Binary input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-006,5,2,0,Binary input event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-007,5,2,1,Binary event without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-008,5,2,2,Binary event absolute time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-009,5,2,3,Binary event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-010,5,3,0,Double-bit input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-011,5,3,1,Double-bit input packed,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-012,5,3,2,Double-bit input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-013,5,4,0,Double-bit event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-014,6,4,1,Double-bit event without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-015,6,4,2,Double-bit event absolute time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-016,6,4,3,Double-bit event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-017,6,10,0,Binary output status any,1,00|01|06,-,-,MEASUREMENT,Status not a control command; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-018,6,10,2,Binary output status with flags,1,00|01|06,129,00|01,MEASUREMENT,Status not a control command; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-019,6,12,1,CROB,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; response field applies when response exists,NOT_AUDITED
-PROFILE-020,6,30,0,Analog input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment,NOT_AUDITED
-PROFILE-021,6,30,1,Analog input 32-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-022,7,30,2,Analog input 16-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-023,7,30,3,Analog input 32-bit without flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-024,7,30,4,Analog input 16-bit without flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-025,7,30,5,Analog input float32 with flags,1,00|01|06,129,00|01,MEASUREMENT,Static,NOT_AUDITED
-PROFILE-026,7,32,0,Analog input event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed,NOT_AUDITED
-PROFILE-027,7,32,1,Analog event 32-bit without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-028,7,32,2,Analog event 16-bit without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-029,7,32,4,Analog event 16-bit with time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-030,7,32,5,Analog event float32 without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited,NOT_AUDITED
-PROFILE-031,7,40,0,Analog output status any,1,00|01|06,-,-,MEASUREMENT,Status,NOT_AUDITED
-PROFILE-032,8,40,1,Analog output status 32-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status,NOT_AUDITED
-PROFILE-033,8,40,2,Analog output status 16-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status,NOT_AUDITED
-PROFILE-034,8,40,3,Analog output status float32 with flag,1,00|01|06,129,00|01,MEASUREMENT,Status,NOT_AUDITED
+PROFILE-020,6,30,0,Analog input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-021,6,30,1,Analog input 32-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-022,7,30,2,Analog input 16-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-023,7,30,3,Analog input 32-bit without flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-024,7,30,4,Analog input 16-bit without flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-025,7,30,5,Analog input float32 with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-026,7,32,0,Analog input event any,1,06|07|08,-,-,EVENT,Limited quantity requests allowed; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-027,7,32,1,Analog event 32-bit without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-028,7,32,2,Analog event 16-bit without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-029,7,32,4,Analog event 16-bit with time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-030,7,32,5,Analog event float32 without time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-031,7,40,0,Analog output status any,1,00|01|06,-,-,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-032,8,40,1,Analog output status 32-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-033,8,40,2,Analog output status 16-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
+PROFILE-034,8,40,3,Analog output status float32 with flag,1,00|01|06,129,00|01,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-035,8,41,1,Analog output 32-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
 PROFILE-036,8,41,2,Analog output 16-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
 PROFILE-037,8,41,3,Analog output float32 command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
