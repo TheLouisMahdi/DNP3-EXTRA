@@ -4,7 +4,7 @@ C++ DNP3 workspace: three console apps + local OpenDNP3 3.1.2 source.
 Paths are relative to this root; section prefixes apply where stated.
 Read this map first; open only relevant files. Update after structural changes.
 The workspace root is the current Git repository; `opendnp3/` is its library subtree.
-Map baseline: branch `develop`, commit `e7a8df596ff39b37f789f0ada28aefd940135b02`.
+Map baseline: branch `develop`, commit `77980d5a68a1e58e854ed9e6787585a2a75774cb`.
 
 Status labels: IMPLEMENTED = the native vertical slice exists here and has been reviewed;
 VERIFIED = a report in `DNP3_PDD_PLAN/` records executed passing tests for that slice.
@@ -50,7 +50,7 @@ Prefix: `opendnp3/cpp/lib/src/`
 - G122V1/V2 events: Outstation selection/publication/CONFIRM IMPLEMENTED and VERIFIED (`P6b-O2_REPORT.md`); Master prefix/range decode IMPLEMENTED and VERIFIED (`P6b-M1_REPORT.md`).
 - G0V210 plus V254/V255 discovery: IMPLEMENTED and VERIFIED on both roles (`P6c_REPORT.md`). G0V209: Master decode VERIFIED; Outstation deliberately unsupported.
 - Measurements/events G1/G2/G3/G4/G10/G30/G32/G40 (31 profile rows): IMPLEMENTED, not VERIFIED per row (`DEVICE_PROFILE_MEASUREMENTS_REPORT.md`). G2V3/G4V3 relative CTO validation has focused passing tests.
-- Controls G12V1/G41V1-V3: IMPLEMENTED on the native path (`DEVICE_PROFILE_MEASUREMENTS_REPORT.md`). The control-profile corrections currently in the working tree (selection lifecycle, retry identity, Master echo guard) are uncommitted and NOT BUILT / NOT TESTED.
+- Controls G12V1/G41V1-V3: IMPLEMENTED and committed at `77980d5` — selection lifecycle, exact retry identity and Master SELECT echo guard included; `[profile-controls]` 21 cases/588 assertions plus 50 command-regression cases PASS (user-run, `DEVICE_PROFILE_MEASUREMENTS_REPORT.md`). Not VERIFIED: no interoperability, Test Harness or full profile/IEEE conformance run.
 
 ## Interfaces and Configuration
 Prefix: `opendnp3/cpp/lib/include/opendnp3/`
@@ -78,7 +78,7 @@ Adding `ISOEHandler` virtuals and G121/G122/G0 typed overloads is source-compati
 Prefix: `opendnp3/cpp/tests/`
 - `unit/` → protocol/state tests; `TestAPDUParsing.cpp`, `TestDatabase.cpp` are parser/database starting points.
 - `unit/TestProfileMeasurements.cpp` (`[profile-measurements]`) → G2V3/G4V3 CTO validation, typed time quality, malformed-fragment rejection, native confirmations.
-- `unit/TestProfileControls.cpp` (`[profile-controls]`) → G12/G41 wire controls, exact SBO/retry identity, selection cancellation, malformed commands, statuses, Master echo/IIN checks. Uncommitted working-tree test: written, NOT RUN.
+- `unit/TestProfileControls.cpp` (`[profile-controls]`) → G12/G41 wire controls, exact SBO/retry identity, selection cancellation, malformed commands, statuses, Master echo/IIN checks; 21 cases PASS (user-run, 588 assertions).
 - `unit/TestDeviceAttributes.cpp` (`[device-attributes]`) → G0 wire formats, actual per-association count, discovery, malformed data, typed Master delivery, fragmentation/WRITE protection.
 - `unit/TestMasterSecurityStatistics.cpp` (`[master-security-statistics]`) → Master G121/G122 qualifiers, typed callbacks, association isolation, occurrence time, malformed fragments, mixed-WRITE rejection.
 - `unit/TestSecurityStatEvents.cpp` (`[security-stat-events]`) → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation, clock-state cases.
@@ -100,7 +100,6 @@ Unresolved or deliberately deferred work; details live in the linked reports, no
 - G122 explicit V2 → untimed historical events are retained unchanged (V1/Class/V0 only); case-C representation limit in `P6b-O2_REPORT.md`.
 - G0V209 → Outstation cannot advertise any SA version yet; discovery excludes it.
 - Master commands → typed function 6 (no-response) API intentionally absent; generic `PerformFunction` awaits a response.
-- Uncommitted local control-profile work (G12/G41 selection lifecycle, exact retry identity, Master SELECT echo guard) is present in the working tree and NOT BUILT / NOT TESTED.
 
 ## Build and Optional Components
 - `CMakeLists.txt` → builds local library, `master`, `outstation`, and `cli/`.

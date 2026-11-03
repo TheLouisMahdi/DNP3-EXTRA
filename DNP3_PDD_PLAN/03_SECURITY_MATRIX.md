@@ -63,9 +63,9 @@ This table distinguishes *acceptable minimum* from *recommendation*: do not recl
 
 ## Dependencies and boundary
 
-- **G0V209 (first slice):** reports actual negotiated/implemented SA version capability; its return value must not advertise unimplemented SAv5.
-- **G0V210, G121, G122:** represent actual supported security-statistic points and events; these cannot be replaced by made-up counters.
-- **G120V1-V15:** are protocol structures that participate in a security state machine; merely serializing them is insufficient.
+- **G0V209 (first slice):** reports actual negotiated/implemented SA version capability; its return value must not advertise unimplemented SAv5. Status PARTIAL: the Master decodes an external device's real UINTn value; the Outstation returns OBJECT_UNKNOWN and omits the attribute from discovery because no complete SA v5 version is supported (`P6c_REPORT.md`).
+- **G0V210, G121, G122:** represent actual supported security-statistic points and events; these cannot be replaced by made-up counters. Status IMPLEMENTED from real per-association statistics: G0V210 with mandatory V254/V255 discovery (`P6c_REPORT.md`), G121 READ/Class 0 and G122V1/V2 publication (`P6b-O2_REPORT.md`), Master typed decode and delivery (`P6b-M1_REPORT.md`).
+- **G120V1-V15:** are protocol structures that participate in a security state machine; merely serializing them is insufficient. Status: V1/V2 challenge-reply, V3/V9 aggressive, V4/V5/V6 session-key and V7 error objects participate in the implemented exchanges; V11-V15 update-key objects remain codec-only with no operational procedure.
 - **TLS:** a separate secure transport feature; not a substitute for DNP3 SAv5.
 - **Platform:** key storage, RNG, time and TLS configuration require Windows vs STM32 adapters later; no new platform interface is prescribed in this planning phase.
 
@@ -86,7 +86,7 @@ Implementation verification remains static only (NOT BUILT / NOT TESTED). Error 
 
 ## P6a security-statistics implementation gate
 
-**Status: PARTIAL. Independently implementable P6a source/test changes retained. NOT BUILT / NOT TESTED.**
+**Status: PARTIAL. Compile-ready P6a source/test changes are committed and user-validated; P6-OPEN-03 and indexes 15/16 remain open.**
 
 Normative sources: IEEE 1815-2012 sections 7.5.2.1-7.5.2.2, Table 7-6
 (printed pp206-207), Table 7-8 (pp215-222), Table 7-13 (pp231-233),
@@ -241,9 +241,7 @@ and resetting the restart Max on reconnect. No second authentication engine exis
 - Indexes 15/16 require actual Update Key procedure success/failure sources.
   Credential loading and G120 serialization are not Update Key changes. Do not
   fabricate increments while the corresponding operational procedure is absent.
-- P6b must consume real reporting-threshold state for G121/G122 publication and
-  G0V210, including retention/discontinuity quality and event snapshots. No wire
-  object support or full SA compliance is advertised by the runtime index enum.
+- P6b consumes real reporting-threshold state for G121/G122 publication and G0V210, including retention/discontinuity quality and event snapshots; that wire support is implemented and user-validated (`P6b-O2_REPORT.md`, `P6b-M1_REPORT.md`, `P6c_REPORT.md`). No full SA compliance is advertised by the runtime index enum, and G0V209 remains unavailable on the Outstation.
 - Permanent tests: TestAuthenticationStatistics, TestSessionKeys and
   TestProductionAuthentication cover defaults/indexes, reporting versus Max
   boundaries, rollover/retention failures, real C/R/Aggressive accounting, native
@@ -255,5 +253,4 @@ and resetting the restart Max on reconnect. No second authentication engine exis
   exchange retained), and FIX-03 (unowned Outstation Error = 11/0/9) are preserved.
   Master unowned Error reception now has the same 11/0/9 boundary.
 
-COMMIT READY for the completed static subset: YES (not build-tested).
-Full P6a completion: NO. Commit/push: NOT PERFORMED; explicit approval required.
+COMMIT READY for the completed static subset: YES. Full P6a completion: NO (P6-OPEN-03 unowned recovery; indexes 15/16 absent). Statistics and G0 wire support is committed and user-validated as recorded in the P6b/P6c reports; no push was performed by the agent.

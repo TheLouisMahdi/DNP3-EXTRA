@@ -1,6 +1,6 @@
 ﻿requirement_id,profile_pdf_page,group_decimal,variation_decimal,description,request_function_codes_decimal,request_qualifiers_hex,response_function_codes_decimal,response_qualifiers_hex,family,notes,local_code_status
-PROFILE-001,4,0,209,Secure authentication version,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; read-only,NOT_AUDITED
-PROFILE-002,4,0,210,Security statistics per association,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; count must reflect real statistics,NOT_AUDITED
+PROFILE-001,4,0,209,Secure authentication version,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; Outstation cannot advertise any complete SA v5 version (OBJECT_UNKNOWN and excluded from discovery); Master decode of an external UINTn value only; source evidence: P6c_REPORT.md,PARTIAL
+PROFILE-002,4,0,210,Security statistics per association,1,00,129,00|17,ATTRIBUTE,Standard attribute set index 0; bounded standard-set count from real per-association statistics plus mandatory V254/V255 discovery; source evidence: P6c_REPORT.md / P6b-O2_REPORT.md; not full SA v5,IMPLEMENTED
 PROFILE-003,4,1,0,Binary input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-004,4,1,1,Binary input packed,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-005,5,1,2,Binary input with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
@@ -17,7 +17,7 @@ PROFILE-015,6,4,2,Double-bit event absolute time,1,06|07|08,129|130,17|28,EVENT,
 PROFILE-016,6,4,3,Double-bit event relative time,1,06|07|08,129|130,17|28,EVENT,Solicited or unsolicited; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-017,6,10,0,Binary output status any,1,00|01|06,-,-,MEASUREMENT,Status not a control command; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-018,6,10,2,Binary output status with flags,1,00|01|06,129,00|01,MEASUREMENT,Status not a control command; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
-PROFILE-019,6,12,1,CROB,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; response field applies when response exists,NOT_AUDITED
+PROFILE-019,6,12,1,CROB,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; response field applies when response exists; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Control command completion; Master FC6 API optional and not exposed,IMPLEMENTED
 PROFILE-020,6,30,0,Analog input any,1|22,00|01|06,-,-,MEASUREMENT,Function 22 applies to class assignment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-021,6,30,1,Analog input 32-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-022,7,30,2,Analog input 16-bit with flags,1,00|01|06,129,00|01,MEASUREMENT,Static; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
@@ -33,9 +33,9 @@ PROFILE-031,7,40,0,Analog output status any,1,00|01|06,-,-,MEASUREMENT,Status; s
 PROFILE-032,8,40,1,Analog output status 32-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-033,8,40,2,Analog output status 16-bit with flag,1,00|01|06,129,00|01,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
 PROFILE-034,8,40,3,Analog output status float32 with flag,1,00|01|06,129,00|01,MEASUREMENT,Status; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Coverage,IMPLEMENTED
-PROFILE-035,8,41,1,Analog output 32-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
-PROFILE-036,8,41,2,Analog output 16-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
-PROFILE-037,8,41,3,Analog output float32 command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment,NOT_AUDITED
+PROFILE-035,8,41,1,Analog output 32-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Control command completion; Master FC6 API optional and not exposed,IMPLEMENTED
+PROFILE-036,8,41,2,Analog output 16-bit command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Control command completion; Master FC6 API optional and not exposed,IMPLEMENTED
+PROFILE-037,8,41,3,Analog output float32 command,3|4|5|6,17|28,129,ECHO,CONTROL,Function 6 has no acknowledgment; source evidence: DEVICE_PROFILE_MEASUREMENTS_REPORT.md / Control command completion; Master FC6 API optional and not exposed,IMPLEMENTED
 PROFILE-038,8|9,50,1,Absolute time and date,1|2,07,129,07,TIME,READ and WRITE contexts differ; response to READ only,NOT_AUDITED
 PROFILE-039,9,51,1,CTO absolute synchronized,-,-,129|130,07,TIME,Response only; quantity 1,NOT_AUDITED
 PROFILE-040,9,51,2,CTO absolute unsynchronized,-,-,129|130,07,TIME,Response only; quantity 1,NOT_AUDITED
@@ -61,10 +61,10 @@ PROFILE-059,11,120,12,Update key change reply,-,-,131,5B,SECURITY,Free format,NO
 PROFILE-060,11,120,13,Update key change,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
 PROFILE-061,11,120,14,Update key change signature,32,5B,-,-,SECURITY,Free format,NOT_AUDITED
 PROFILE-062,12,120,15,Update key change confirmation,32,5B,131,5B,SECURITY,Free format,NOT_AUDITED
-PROFILE-063,12,121,1,Security statistics 32-bit with flag,1,00|01|06|17|28,129,00|01|17|28,STATISTICS,Read semantics by association and index,NOT_AUDITED
-PROFILE-064,12,122,0,Security statistics event any,1,00|01|06|17|28,-,-,STATISTICS,As specified in supplied profile,NOT_AUDITED
-PROFILE-065,12,122,1,Security statistics event with flag,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited,NOT_AUDITED
-PROFILE-066,12,122,2,Security statistics event with flag and time,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited,NOT_AUDITED
+PROFILE-063,12,121,1,Security statistics 32-bit with flag,1,00|01|06|17|28,129,00|01|17|28,STATISTICS,Read semantics by association and index; Outstation READ/Class 0 and Master typed decode; source evidence: P6b-O2_REPORT.md / P6b-M1_REPORT.md,IMPLEMENTED
+PROFILE-064,12,122,0,Security statistics event any,1,00|01|06|17|28,-,-,STATISTICS,Event selector for configured variations; Outstation selection/publication and Master prefix/range decode; source evidence: P6b-O2_REPORT.md / P6b-M1_REPORT.md,IMPLEMENTED
+PROFILE-065,12,122,1,Security statistics event with flag,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited; untimed representation retained unchanged; source evidence: P6b-O2_REPORT.md / P6b-M1_REPORT.md,IMPLEMENTED
+PROFILE-066,12,122,2,Security statistics event with flag and time,1,06|07|08,129|130,17|28,STATISTICS,Solicited or unsolicited; an explicit V2 request cannot time an untimed historical event (case-C limit in P6b-O2_REPORT.md),IMPLEMENTED
 PROFILE-067,12,-,-,No-object CONFIRM,0,-,-,-,FUNCTION,No object header,NOT_AUDITED
 PROFILE-068,12,-,-,No-object COLD_RESTART,13,-,-,-,FUNCTION,No object header,NOT_AUDITED
 PROFILE-069,12,-,-,No-object DELAY_MEASURE,23,-,-,-,FUNCTION,No object header,NOT_AUDITED
