@@ -47,6 +47,7 @@ set(unittests_src
     ./TestMeasurementHandler.cpp
     ./TestProfileMeasurements.cpp
     ./TestProfileControls.cpp
+    ./TestProfileTime.cpp
     ./TestMasterSecurityStatistics.cpp
     ./TestDeviceAttributes.cpp
     ./TestOutstation.cpp
