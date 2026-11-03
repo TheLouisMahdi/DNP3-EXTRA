@@ -113,6 +113,7 @@ OutstationStackConfig PerformanceStackPair::GetOutstationStackConfig(uint16_t nu
                                                                      TimeDuration timeout)
 {
     OutstationStackConfig config(configure::by_count_of::all_types(numPointsPerType));
+    config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
 
     config.outstation.params.unsolConfirmTimeout = timeout;
     config.outstation.eventBufferConfig = EventBufferConfig::AllTypes(eventBufferSize);
@@ -124,6 +125,7 @@ OutstationStackConfig PerformanceStackPair::GetOutstationStackConfig(uint16_t nu
 MasterStackConfig PerformanceStackPair::GetMasterStackConfig(TimeDuration timeout)
 {
     MasterStackConfig config;
+    config.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
 
     config.master.responseTimeout = timeout;
     config.master.taskRetryPeriod = timeout;

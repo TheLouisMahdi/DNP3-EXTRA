@@ -9,6 +9,25 @@
 
 namespace opendnp3
 {
+AuthenticationStatus AuthenticationSession::GetStatus(uint64_t now) const
+{
+    AuthenticationStatus result;
+    result.available = true;
+    result.association = config.association;
+    result.updateKeyBusy = remote && remote->Busy();
+    result.updateKeyOwner = remote ? remote->Owner() : 0;
+    result.statistics = statistics.Values();
+    result.size = sessions.size();
+    for (size_t n = 0; n < sessions.size(); ++n)
+    {
+        auto& user = result.users[n];
+        user.number = sessions[n]->User();
+        user.ready = sessions[n]->IsReady(now);
+        user.exchanging = sessions[n]->IsExchanging();
+        user.remainingMessages = user.ready ? sessions[n]->RemainingMessages() : 0;
+    }
+    return result;
+}
 namespace
 {
     SecurityStatisticThresholds StatisticThresholds(const AuthenticationConfig& config)

@@ -152,7 +152,16 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
     switch (record.GetQualifierCode())
     {
     case (QualifierCode::FREE_FORMAT):
-        return FreeFormatParser::Parse(buffer, record, settings, pHandler);
+    {
+        const auto result = FreeFormatParser::Parse(buffer, record, settings, pHandler);
+        if (result == ParseResult::OK)
+        {
+            // Like other qualifier paths, log only object metadata. Never log
+            // the contents of a free-format authentication object.
+            FORMAT_LOGGER_BLOCK(pLogger, settings.LoggingLevel(), "%03u,%03u - free format", record.group, record.variation);
+        }
+        return result;
+    }
 
     case (QualifierCode::ALL_OBJECTS):
         return HandleAllObjectsHeader(pLogger, record, settings, pHandler);

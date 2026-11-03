@@ -178,6 +178,12 @@ std::shared_ptr<IChannel> DNP3ManagerImpl::AddTLSClient(const std::string& id,
     auto create = [&]() -> std::shared_ptr<IChannel> {
         auto clogger = this->logger.detach(id, levels);
         auto executor = exe4cpp::StrandExecutor::create(this->io);
+        // Reject invalid local credentials/ciphers at channel creation instead
+        // of leaving a permanently OPENING client after Enable(). Reconnects
+        // still load the current files through the existing TLS client path.
+        std::error_code ec;
+        SSLContext validation(clogger, false, config, ec);
+        if (ec) throw std::system_error(ec, "Invalid TLS client configuration");
         auto iohandler = TLSClientIOHandler::Create(clogger, listener, executor, config, retry, hosts, local);
         return DNP3Channel::Create(clogger, executor, iohandler, this->resources);
     };

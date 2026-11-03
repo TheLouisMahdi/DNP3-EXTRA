@@ -43,9 +43,11 @@ void start_outstation(DNP3Manager& manager)
 {
     const auto channel
         = manager.AddTCPServer("server", FILTERS, ServerAcceptMode::CloseNew, IPEndpoint("127.0.0.1", 20000), nullptr);
+    OutstationStackConfig config(configure::by_count_of::all_types(0));
+    config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
     const auto outstation
         = channel->AddOutstation("outstation", SuccessCommandHandler::Create(), DefaultOutstationApplication::Create(),
-                                 OutstationStackConfig(configure::by_count_of::all_types(0)));
+                                 config);
     outstation->Enable();
 }
 
@@ -55,8 +57,9 @@ void start_master(DNP3Manager& manager)
     const auto channel
         = manager.AddTCPClient("client", FILTERS, ChannelRetry(TimeDuration::Seconds(0), TimeDuration::Seconds(0)),
                                {IPEndpoint("127.0.0.1", 20000)}, "127.0.0.1", nullptr);
-    const auto master
-        = channel->AddMaster("master", soeHandler, DefaultMasterApplication::Create(), MasterStackConfig());
+    MasterStackConfig config;
+    config.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    const auto master = channel->AddMaster("master", soeHandler, DefaultMasterApplication::Create(), config);
     const auto scan = master->AddClassScan(ClassField::AllClasses(), TimeDuration::Milliseconds(1), soeHandler);
     master->Enable();
 }
@@ -96,6 +99,7 @@ TEST_CASE("TestDeadlock2")
         auto channel2 = manager2->AddTCPServer("server", FILTERS, ServerAcceptMode::CloseNew,
                                                IPEndpoint("127.0.0.1", 20000), nullptr);
         OutstationStackConfig config(DatabaseConfig(1));
+        config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
         config.link.LocalAddr = 10;
         config.link.RemoteAddr = 1;
         auto outstation = channel2->AddOutstation("outstation", SuccessCommandHandler::Create(),
@@ -107,6 +111,7 @@ TEST_CASE("TestDeadlock2")
                                              ChannelRetry(TimeDuration::Seconds(0), TimeDuration::Seconds(0)),
                                              {IPEndpoint("127.0.0.1", 20000)}, "127.0.0.1", nullptr);
         MasterStackConfig stackConfig;
+        stackConfig.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
         stackConfig.link.LocalAddr = 1;
         stackConfig.link.RemoteAddr = 10;
 

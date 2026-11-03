@@ -96,6 +96,10 @@ public:
     void Reset();                   // wipes credentials and all owned secrets
     void Revoke();                  // same erasure, retaining the association-local KSQ source
     bool Ready(uint64_t now);
+    bool IsReady(uint64_t now) const
+    {
+        return configured && valid && now >= lastTime && now < validUntil && now < credentialExpiry;
+    }
     ser4cpp::rseq_t ControlKey(uint64_t now);
     ser4cpp::rseq_t MonitoringKey(uint64_t now);
     uint64_t ValidUntil() const

@@ -13,7 +13,8 @@ Neither label asserts IEEE 1815, Level 4, SA v5 or Test Harness conformance.
 ## Entry Points
 - `apps/master/main.cpp` → TCP client, polls, commands, measurement callbacks.
 - `apps/outstation/main.cpp` → TCP server, point configuration, simulated updates.
-- `cli/main.cpp` → interactive diagnostic Master/Outstation CLI (`cli/README.md`); no SA.
+- `cli/main.cpp` → Windows diagnostic Master/Outstation over TCP or mutual TLS; compatibility and explicit SA Methods 4/68. See `cli/README.md` for commands and validation.
+- `cli/Security.*`, `cli/TestTLS.cpp` → isolated TEST credentials/authority process, runtime configuration and short-lived TLS fixtures; native protocol code is reused.
 - `opendnp3/cpp/lib/src/DNP3Manager.cpp` → library startup and channel creation.
 
 ## Core
@@ -46,7 +47,7 @@ Prefix: `opendnp3/cpp/lib/src/`
 
 ## Feature Status (Outstation / Master)
 
-- G120 SA v5 (`auth/`, `app/parsing/APDUParser.cpp`): IMPLEMENTED only as challenge-response, session-key and aggressive-mode exchanges. Full SA v5 is incomplete and never advertised; G0V209 is therefore unavailable (OBJECT_UNKNOWN, omitted from discovery).
+- G120 SA v5 (`auth/`, `app/parsing/APDUParser.cpp`): native challenge-response, session-key, aggressive and remote Update Key Methods 4/68. G120V8 is codec only. G0V209 remains unavailable (OBJECT_UNKNOWN, omitted from discovery).
 - G121 statistics: Outstation READ/Class 0 IMPLEMENTED and VERIFIED (`P6b-O2_REPORT.md`); Master typed decode/delivery IMPLEMENTED and VERIFIED (`P6b-M1_REPORT.md`).
 - G122V1/V2 events: Outstation selection/publication/CONFIRM IMPLEMENTED and VERIFIED (`P6b-O2_REPORT.md`); Master prefix/range decode IMPLEMENTED and VERIFIED (`P6b-M1_REPORT.md`).
 - G0V210 plus V254/V255 discovery: IMPLEMENTED and VERIFIED on both roles (`P6c_REPORT.md`). G0V209: Master decode VERIFIED; Outstation deliberately unsupported.
@@ -62,6 +63,7 @@ Prefix: `opendnp3/cpp/lib/include/opendnp3/`
 - `outstation/UpdateBuilder.h` → measurement update API.
 - `channel/`, `link/LinkConfig.h` → endpoint, serial, TLS, retry and addressing settings.
 - `auth/AuthenticationConfig.h` → explicit secure/compatibility modes, users, credential retrieval and APDU authorization.
+- `IStack::GetAuthenticationStatus` → strand-serialized read-only session and security-statistics snapshot with no key material.
 - `auth/SecurityStatistic.h` → IEEE indexes/default thresholds and portable durable-retention interface.
 - `auth/WindowsAuthenticationCredentials.h` → Windows credential format and expiry contract.
 - `auth/UpdateKeyConfig.h` → durable users, Outstation-only authority trust and Master authority-material boundary; no production authority keys or external distribution protocol.
@@ -75,6 +77,7 @@ Adding `ISOEHandler` virtuals and G121/G122/G0 typed overloads is source-compati
 - `opendnp3/cpp/lib/src/channel/DNP3Channel.cpp` → channel-to-stack assembly.
 - `opendnp3/cpp/lib/src/channel/` → TCP, UDP, serial I/O handlers.
 - `opendnp3/cpp/lib/src/channel/tls/` → optional OpenSSL transport.
+- `TLSConfig.h` → separate TLS 1.2 cipher list and TLS 1.3 suites, optional exact DNS/IP SAN verification with existing chain checks.
 
 ## Tests
 Prefix: `opendnp3/cpp/tests/`
@@ -88,6 +91,10 @@ Prefix: `opendnp3/cpp/tests/`
 - `dnp3mocks/` → shared mocks and stack fixtures (`MockSOEHandler` implements the new overloads).
 - `asiotests/` → asynchronous I/O tests. `integration/` → stack integration tests. `fuzz/` → parser fuzz targets.
 Enable C++ tests with `DNP3_TESTS`; fuzz targets use `DNP3_FUZZING`.
+`cli/tests/ProcessSmoke.py` drives two real Windows processes through CTest
+(`pc-compat`, `pc-method4`, `pc-method68`, `pc-negative`, `pc-tls`). The
+Windows CLI/native build uses `DNP3_DIAGNOSTIC_CLI=ON`; the test driver uses
+the installed Python interpreter and the original Catch unit/integration suites.
 `DNP3_SA_CRYPTO` enables SA cryptographic and runtime components independently of TLS.
 Stacks require credentials and an authorization policy by default; legacy operation must explicitly
 select `AuthenticationConfig::Mode::COMPATIBILITY`. Required SA fails closed when crypto or credentials

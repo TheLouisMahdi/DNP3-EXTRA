@@ -19,6 +19,7 @@
  */
 
 #include "channel/tls/SSLContext.h"
+#include <openssl/x509v3.h>
 
 #include "logging/LogMacros.h"
 
@@ -42,32 +43,33 @@ std::error_code SSLContext::ApplyConfig(const TLSConfig& config, bool server, st
     // turn off session caching completely
     SSL_CTX_set_session_cache_mode(value.native_handle(), SSL_SESS_CACHE_OFF);
 
-    auto OPTIONS = asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 | asio::ssl::context::no_sslv3
-        | SSL_OP_NO_TICKET;
+    auto options = SSL_OP_ALL | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TICKET;
 
     if (!config.allowTLSv10)
     {
-        OPTIONS |= asio::ssl::context::no_tlsv1;
+        options |= SSL_OP_NO_TLSv1;
     }
 
     if (!config.allowTLSv11)
     {
-        OPTIONS |= asio::ssl::context::no_tlsv1_1;
+        options |= SSL_OP_NO_TLSv1_1;
     }
 
     if (!config.allowTLSv12)
     {
-        OPTIONS |= asio::ssl::context::no_tlsv1_2;
+        options |= SSL_OP_NO_TLSv1_2;
     }
 
     if (!config.allowTLSv13)
     {
-        OPTIONS |= asio::ssl::context::no_tlsv1_3;
+        options |= SSL_OP_NO_TLSv1_3;
     }
 
-    if (value.set_options(OPTIONS, ec))
+    // Avoid narrowing OpenSSL's option mask through old Asio's Windows long.
+    if ((SSL_CTX_set_options(value.native_handle(), options) & options) != options)
     {
-        FORMAT_LOG_BLOCK(logger, flags::ERR, "Error calling ssl::context::set_options(..): %s", ec.message().c_str());
+        ec = std::make_error_code(std::errc::invalid_argument);
+        SIMPLE_LOG_BLOCK(logger, flags::ERR, "Unable to set TLS protocol options");
         return ec;
     }
 
@@ -76,11 +78,28 @@ std::error_code SSLContext::ApplyConfig(const TLSConfig& config, bool server, st
     {
         if (SSL_CTX_set_cipher_list(value.native_handle(), config.cipherList.c_str()) == 0)
         {
-            ec = asio::error_code();
+            ec = std::make_error_code(std::errc::invalid_argument);
             FORMAT_LOG_BLOCK(logger, flags::ERR, "Error calling ssl::context::set_cipher_list(..): %s",
                              ec.message().c_str());
             return ec;
         }
+    }
+
+    if ((!config.cipherSuites.empty() && SSL_CTX_set_ciphersuites(value.native_handle(), config.cipherSuites.c_str()) != 1)
+        || (!config.allowTLSv10 && !config.allowTLSv11 && !config.allowTLSv12 && !config.allowTLSv13))
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return ec;
+    }
+    if (!config.peerName.empty())
+    {
+        auto* parameters = SSL_CTX_get0_param(value.native_handle());
+        asio::error_code addressError;
+        asio::ip::address::from_string(config.peerName, addressError);
+        const int ok = addressError ? X509_VERIFY_PARAM_set1_host(parameters, config.peerName.c_str(), config.peerName.size())
+                                    : X509_VERIFY_PARAM_set1_ip_asc(parameters, config.peerName.c_str());
+        X509_VERIFY_PARAM_set_hostflags(parameters, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_WILDCARDS);
+        if (ok != 1) { ec = std::make_error_code(std::errc::invalid_argument); return ec; }
     }
 
     // verify the peer certificate
@@ -113,6 +132,8 @@ std::error_code SSLContext::ApplyConfig(const TLSConfig& config, bool server, st
                          ec.message().c_str());
     }
 
+    if (!ec && SSL_CTX_check_private_key(value.native_handle()) != 1)
+        ec = std::make_error_code(std::errc::invalid_argument);
     return ec;
 }
 } // namespace opendnp3

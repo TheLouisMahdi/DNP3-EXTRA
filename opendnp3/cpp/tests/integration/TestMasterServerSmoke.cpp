@@ -23,7 +23,7 @@
 #include <opendnp3/ConsoleLogger.h>
 #include <opendnp3/DNP3Manager.h>
 #include <opendnp3/logging/LogLevels.h>
-#include <opendnp3/master/DefaultListenCallbacks.h>
+#include <opendnp3/master/IListenCallbacks.h>
 #include <opendnp3/master/DefaultMasterApplication.h>
 #include <opendnp3/master/ISOEHandler.h>
 #include <opendnp3/master/PrintingSOEHandler.h>
@@ -35,17 +35,75 @@
 #include <catch.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <thread>
 
 using namespace opendnp3;
 
 #define SUITE(name) "MasterServerSmokeTestSuite - " name
 
+class CompatibilityListenCallbacks final : public IListenCallbacks
+{
+public:
+    explicit CompatibilityListenCallbacks(bool doubleShutdown = false) : doubleShutdown(doubleShutdown), hasDoubleShutdown(false) {}
+
+    bool AcceptConnection(uint64_t /*sessionid*/, const std::string& /*ipaddress*/) override
+    {
+        return true;
+    }
+
+    bool AcceptCertificate(uint64_t /*sessionid*/, const X509Info& /*info*/) override
+    {
+        return true;
+    }
+
+    TimeDuration GetFirstFrameTimeout() override
+    {
+        return TimeDuration::Seconds(30);
+    }
+
+    void OnFirstFrame(uint64_t sessionid, const opendnp3::LinkHeaderFields& header, ISessionAcceptor& acceptor) override
+    {
+        MasterStackConfig config;
+        config.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+        config.link.LocalAddr = header.addresses.destination;
+        config.link.RemoteAddr = header.addresses.source;
+        auto soe = std::make_shared<PrintingSOEHandler>();
+        auto app = std::make_shared<DefaultMasterApplication>();
+
+        auto masterSession = acceptor.AcceptSession(std::to_string(sessionid), soe, app, config);
+
+        if (doubleShutdown)
+        {
+            masterSession->BeginShutdown();
+            masterSession->BeginShutdown();
+            hasDoubleShutdown = true;
+        }
+    }
+
+    void OnConnectionClose(uint64_t sessionid, const std::shared_ptr<IMasterSession>& session) override {}
+    void OnCertificateError(uint64_t sessionid, const X509Info& info, int error) override {}
+
+    bool WaitForDoubleShutdown()
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!hasDoubleShutdown && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return hasDoubleShutdown;
+    }
+
+private:
+    const bool doubleShutdown;
+    std::atomic<bool> hasDoubleShutdown;
+};
+
 struct TestComponents
 {
     TestComponents(DNP3Manager& manager, int numOutstations)
         : listener(manager.CreateListener(
-              "listener", levels::ALL, IPEndpoint::Localhost(20000), std::make_shared<DefaultListenCallbacks>()))
+              "listener", levels::ALL, IPEndpoint::Localhost(20000), std::make_shared<CompatibilityListenCallbacks>()))
     {
         for (int i = 0; i < numOutstations; ++i)
         {
@@ -70,6 +128,7 @@ struct TestComponents
     static OutstationStackConfig GetConfig()
     {
         OutstationStackConfig config(configure::by_count_of::all_types(0));
+        config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
         config.outstation.params.allowUnsolicited = true;
         return config;
     }
@@ -92,67 +151,17 @@ TEST_CASE(SUITE("ConstructionDestruction"))
     }
 }
 
-class DoubleShutdownListenCallbacks final : public IListenCallbacks
-{
-public:
-    DoubleShutdownListenCallbacks() : hasDoubleShutdown(false) {}
-
-    bool AcceptConnection(uint64_t /*sessionid*/, const std::string& /*ipaddress*/) override
-    {
-        return true;
-    }
-
-    bool AcceptCertificate(uint64_t /*sessionid*/, const X509Info& /*info*/) override
-    {
-        return true;
-    }
-
-    TimeDuration GetFirstFrameTimeout() override
-    {
-        return TimeDuration::Seconds(30);
-    }
-
-    void OnFirstFrame(uint64_t sessionid, const opendnp3::LinkHeaderFields& header, ISessionAcceptor& acceptor) override
-    {
-        MasterStackConfig config;
-        config.link.LocalAddr = header.addresses.destination;
-        config.link.RemoteAddr = header.addresses.source;
-        auto soe = std::make_shared<PrintingSOEHandler>();
-        auto app = std::make_shared<DefaultMasterApplication>();
-
-        auto masterSession = acceptor.AcceptSession(std::to_string(sessionid), soe, app, config);
-
-        // Double shutdown behaviour here
-        hasDoubleShutdown = true;
-        masterSession->BeginShutdown();
-        masterSession->BeginShutdown();
-    }
-
-    void OnConnectionClose(uint64_t sessionid, const std::shared_ptr<IMasterSession>& session) override {}
-    void OnCertificateError(uint64_t sessionid, const X509Info& info, int error) override {}
-
-    void waitForDoubleShutdown()
-    {
-        while (!hasDoubleShutdown)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
-
-private:
-    std::atomic<bool> hasDoubleShutdown;
-};
-
 TEST_CASE(SUITE("Double BeginShutdown"))
 {
     DNP3Manager manager(std::thread::hardware_concurrency());
 
     // Master listener creation
-    auto listenCallbacks = std::make_shared<DoubleShutdownListenCallbacks>();
+    auto listenCallbacks = std::make_shared<CompatibilityListenCallbacks>(true);
     auto listener = manager.CreateListener("listener", levels::ALL, IPEndpoint::Localhost(20000), listenCallbacks);
 
     // Outstation
     OutstationStackConfig outstationConfig(configure::by_count_of::all_types(0));
+    outstationConfig.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
     outstationConfig.outstation.params.allowUnsolicited = true;
     auto channel = manager.AddTCPClient("client", levels::ALL, ChannelRetry::Default(),
                                         {IPEndpoint("127.0.0.1", 20000)}, "", nullptr);
@@ -161,5 +170,5 @@ TEST_CASE(SUITE("Double BeginShutdown"))
 
     outstation->Enable();
 
-    listenCallbacks->waitForDoubleShutdown();
+    REQUIRE(listenCallbacks->WaitForDoubleShutdown());
 }

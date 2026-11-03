@@ -74,6 +74,7 @@ public:
     void Shutdown() override;
 
     StackStatistics GetStackStatistics() override;
+    AuthenticationStatus GetAuthenticationStatus() override;
 
     // --------- Implement ILinkSession ---------
 

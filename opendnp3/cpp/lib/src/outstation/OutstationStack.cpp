@@ -79,6 +79,18 @@ StackStatistics OutstationStack::GetStackStatistics()
     return this->executor->return_from<StackStatistics>(get);
 }
 
+AuthenticationStatus OutstationStack::GetAuthenticationStatus()
+{
+    auto get = [self = shared_from_this()] {
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(self->executor->get_time().time_since_epoch()).count();
+        if (self->ocontext.authentication) return self->ocontext.authentication->sessions->GetStatus(static_cast<uint64_t>(now));
+#endif
+        return AuthenticationStatus{};
+    };
+    return executor->return_from<AuthenticationStatus>(get);
+}
+
 void OutstationStack::SetLogFilters(const LogLevels& filters)
 {
     auto set = [self = this->shared_from_this(), filters]() { self->logger.set_levels(filters); };

@@ -56,14 +56,26 @@ struct Channels
 
 struct Components : Channels
 {
+    static OutstationStackConfig PlainOutstation()
+    {
+        OutstationStackConfig config(configure::by_count_of::all_types(0));
+        config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+        return config;
+    }
+    static MasterStackConfig PlainMaster()
+    {
+        MasterStackConfig config;
+        config.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+        return config;
+    }
     explicit Components(DNP3Manager& manager)
         : Channels(manager),
           outstation(server->AddOutstation("outstation",
                                            SuccessCommandHandler::Create(),
                                            DefaultOutstationApplication::Create(),
-                                           OutstationStackConfig(configure::by_count_of::all_types(0)))),
+                                           PlainOutstation())),
           master(client->AddMaster(
-              "master", NullSOEHandler::Create(), DefaultMasterApplication::Create(), MasterStackConfig()))
+              "master", NullSOEHandler::Create(), DefaultMasterApplication::Create(), PlainMaster()))
     {
     }
 

@@ -5,6 +5,7 @@
 #include "auth/AuthenticationStatistics.h"
 
 #include "opendnp3/auth/AuthenticationConfig.h"
+#include "opendnp3/auth/AuthenticationStatus.h"
 
 #include <memory>
 #include <vector>
@@ -19,6 +20,7 @@ public:
     AuthenticationSession(SessionKeys::Role role, const AuthenticationConfig& config);
     ~AuthenticationSession();
     bool Load(uint64_t now);
+    AuthenticationStatus GetStatus(uint64_t now) const;
     SessionKeys* Find(uint16_t user);
     SessionKeys* At(size_t index);
     size_t Size() const { return sessions.size(); }

@@ -93,6 +93,10 @@ struct TLSConfig
 
     /// openssl format cipher list
     std::string cipherList;
+    // Optional exact peer DNS name or IP SAN; never disables chain verification.
+    std::string peerName;
+    // TLS 1.3 uses its own cipher-suite namespace (RFC 8446).
+    std::string cipherSuites;
 };
 
 } // namespace opendnp3

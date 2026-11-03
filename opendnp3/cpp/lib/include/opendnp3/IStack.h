@@ -23,6 +23,8 @@
 #include "opendnp3/IResource.h"
 #include "opendnp3/StackStatistics.h"
 
+#include "opendnp3/auth/AuthenticationStatus.h"
+
 namespace opendnp3
 {
 
@@ -48,6 +50,9 @@ public:
      * @return stack statistics counters
      */
     virtual StackStatistics GetStackStatistics() = 0;
+    // Like GetStackStatistics, call from the application thread, not a stack callback.
+    // Default preserves source compatibility for existing stack implementations.
+    virtual AuthenticationStatus GetAuthenticationStatus() { return {}; }
 };
 
 } // namespace opendnp3

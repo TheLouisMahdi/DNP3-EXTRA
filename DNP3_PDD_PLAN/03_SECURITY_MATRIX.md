@@ -30,6 +30,14 @@
 
 SEC p3 presents names of the `TLS_ECDHE_*_WITH_*` form under TLS 1.3. Those are TLS 1.2-style cipher-suite identifiers; TLS 1.3 has different cipher suite naming and cipher-suite negotiation. This is a **source inconsistency**, not permission to weaken TLS. Resolve using RFC 8446 and requirement-owner approval before implementation. Note that the table also repeats some entries.
 
+Windows diagnostic evidence: mutual TLS 1.2 and 1.3 on port 19999, expected
+DNS/IP SAN and trust-chain enforcement, reconnect, rejected peer identities,
+untrusted client/server, expired certificates and invalid cipher settings are
+locally verified (see `cli/README.md`, `pc-tls`). TLS 1.2 and TLS 1.3 settings
+are separate; this does not resolve SEC-T1-11's product naming conflict.
+Multiple-CA capacity, automated revocation/rotation and cipher-change timing
+remain outside this verified diagnostic slice.
+
 ## Table 2 - RTU security requirements (SEC PDF p5)
 
 | ID | Subject | Level or statement |

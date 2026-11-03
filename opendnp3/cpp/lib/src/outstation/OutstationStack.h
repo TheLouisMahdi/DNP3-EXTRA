@@ -76,6 +76,7 @@ public:
     void Shutdown() final;
 
     StackStatistics GetStackStatistics() final;
+    AuthenticationStatus GetAuthenticationStatus() final;
 
     // --------- Implement ILinkSession ---------
 

@@ -44,21 +44,28 @@ target_compile_features(asiotests PRIVATE cxx_std_14)
 target_link_libraries(asiotests PRIVATE catch dnp3mocks opendnp3 ser4cpp exe4cpp asio)
 target_include_directories(asiotests PRIVATE ./ ../../lib/src)
 set_target_properties(asiotests PROPERTIES FOLDER cpp/tests)
-add_test(NAME asiotests COMMAND asiotests)
+if(WIN32 AND DNP3_TLS AND DNP3_SA_CRYPTO AND DNP3_DIAGNOSTIC_CLI)
+    add_test(NAME asiotests COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cli/tests/ProcessSmoke.py"
+        --exe $<TARGET_FILE:dnp3-cli> --asio $<TARGET_FILE:asiotests> --work-dir "${CMAKE_CURRENT_BINARY_DIR}" --only asio)
+else()
+    add_test(NAME asiotests COMMAND asiotests)
+endif()
 
 if(DNP3_TLS)
     target_link_libraries(asiotests PRIVATE OpenSSL::SSL)
     target_compile_definitions(asiotests PRIVATE OPENDNP3_USE_TLS)
     
-    configure_file(./certs/self_signed/entity1_cert.pem ./certs/self_signed/entity1_cert.pem COPYONLY)
-    configure_file(./certs/self_signed/entity1_key.pem ./certs/self_signed/entity1_key.pem COPYONLY)
-    configure_file(./certs/self_signed/entity2_cert.pem ./certs/self_signed/entity2_cert.pem COPYONLY)
-    configure_file(./certs/self_signed/entity2_key.pem ./certs/self_signed/entity2_key.pem COPYONLY)
-    configure_file(./certs/ca_chain/entity1_cert.pem ./certs/ca_chain/entity1_cert.pem COPYONLY)
-    configure_file(./certs/ca_chain/entity1_key.pem ./certs/ca_chain/entity1_key.pem COPYONLY)
-    configure_file(./certs/ca_chain/entity2_cert.pem ./certs/ca_chain/entity2_cert.pem COPYONLY)
-    configure_file(./certs/ca_chain/entity2_key.pem ./certs/ca_chain/entity2_key.pem COPYONLY)
-    configure_file(./certs/ca_chain/ca_cert.pem ./certs/ca_chain/ca_cert.pem COPYONLY)
+    # Private test keys are intentionally not tracked. Keep the original tests
+    # enabled; CLI process validation provisions fresh fixtures in the build
+    # tree when the source checkout has none.
+    foreach(cert self_signed/entity1_cert.pem self_signed/entity1_key.pem
+                 self_signed/entity2_cert.pem self_signed/entity2_key.pem
+                 ca_chain/entity1_cert.pem ca_chain/entity1_key.pem
+                 ca_chain/entity2_cert.pem ca_chain/entity2_key.pem ca_chain/ca_cert.pem)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certs/${cert}")
+            configure_file("certs/${cert}" "certs/${cert}" COPYONLY)
+        endif()
+    endforeach()
 endif()
 
 clang_format(asiotests)

@@ -108,6 +108,11 @@ endif()
 # Library
 add_subdirectory(./cpp/lib)
 
+option(DNP3_DIAGNOSTIC_CLI "Build the workspace diagnostic CLI" OFF)
+if(WIN32 AND DNP3_DIAGNOSTIC_CLI AND DNP3_TESTS AND DNP3_SA_CRYPTO)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+endif()
+
 # Tests
 if(DNP3_TESTS)
     enable_testing()
@@ -124,6 +129,10 @@ if(DNP3_TESTS)
             TARGETS unittests asiotests integrationtests
         )
     endif()
+endif()
+
+if(DNP3_DIAGNOSTIC_CLI)
+    add_subdirectory(../cli ${CMAKE_BINARY_DIR}/cli)
 endif()
 
 # Examples
