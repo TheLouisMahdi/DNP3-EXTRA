@@ -60,9 +60,9 @@ TEST_CASE(SUITE("disconnect discards queued confirms before sequence reuse"), "[
     const bool unsolicited = GENERATE(false, true);
     const bool confirmInFlight = GENERATE(false, true);
     auto params = NoStartupTasks();
-    params.startupIntegrityClassMask = ClassField::AllClasses();
     MasterTestFixture t(params);
     REQUIRE(t.context->OnLowerLayerUp());
+    t.context->ScanClasses(ClassField::AllClasses(), t.meas);
     t.exe->run_many();
     REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
     // Receive CON=1 before the poll TX completes, so its CONFIRM must queue.
@@ -85,6 +85,8 @@ TEST_CASE(SUITE("disconnect discards queued confirms before sequence reuse"), "[
     REQUIRE(t.lower->NumWrites() == 0);
 
     REQUIRE(t.context->OnLowerLayerUp());
+    // Explicitly request a new poll; reconnect does not re-arm a completed startup task.
+    t.context->ScanClasses(ClassField::AllClasses(), t.meas);
     t.exe->run_many();
     REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0)); // Sequence reused by the new association.
     REQUIRE(t.context->OnTxReady());

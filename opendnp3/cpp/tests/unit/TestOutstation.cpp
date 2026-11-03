@@ -497,7 +497,21 @@ TEST_CASE(SUITE("ReadGrp30Var1ViaIntegrity"))
 
 TEST_CASE(SUITE("ReadGrp30Var3ViaIntegrity"))
 {
-    NewTestStaticRead("C0 01 1E 03 06", "C0 81 80 00 1E 03 00 00 00 00 00 00 00"); // 1 byte start/stop, RESTART quality
+    OutstationTestObject t(OutstationConfig(), configure::by_count_of::analog_input(1));
+    t.LowerLayerUp();
+
+    SECTION("online data uses the requested flagless variation")
+    {
+        t.Transaction([](IUpdateHandler& db) { db.Update(Analog(0), 0); });
+        t.SendToOutstation("C0 01 1E 03 06");
+        REQUIRE(t.lower->PopWriteAsHex() == "C0 81 80 00 1E 03 00 00 00 00 00 00 00");
+    }
+    SECTION("restart quality is preserved by promotion to variation 1")
+    {
+        // IEEE A.14.3.2.3 requires flags for abnormal conditions; the default point has RESTART quality.
+        t.SendToOutstation("C0 01 1E 03 06");
+        REQUIRE(t.lower->PopWriteAsHex() == "C0 81 80 00 1E 01 00 00 00 02 00 00 00 00");
+    }
 }
 
 TEST_CASE(SUITE("ReadGrp40Var0ViaIntegrity"))
