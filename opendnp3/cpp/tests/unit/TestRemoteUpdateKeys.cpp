@@ -7,10 +7,14 @@
 #include "utils/OutstationTestObject.h"
 #include "dnp3mocks/MockTaskCallback.h"
 #include "dnp3mocks/RemoteUpdateKeyCredentials.h"
+#include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
 #include "utils/BufferHelpers.h"
 
 #include <ser4cpp/util/HexConversions.h>
 #include <catch.hpp>
+#include <openssl/param_build.h>
+#include <openssl/provider.h>
+#include <openssl/err.h>
 
 #include <array>
 #include <algorithm>
@@ -79,8 +83,10 @@ struct RemotePair
         if (!common) value->users[0] = UpdateKeyUser();
         return value;
     }
-    RemotePair(size_t capacity = 2, bool common = true)
+    RemotePair(size_t capacity = 2, bool common = true,
+               std::shared_ptr<RemoteAuthority> authority_ = std::make_shared<RemoteAuthority>())
         : masterCredentials(Credentials(common)), outCredentials(Credentials(common)),
+          authority(std::move(authority_)),
           master(RemoteMasterSettings(RemoteSettings(masterCredentials, policy, authority, capacity)), Addresses()),
           out(RemoteOutSettings(RemoteSettings(outCredentials, policy, authority, capacity)))
     {
@@ -120,6 +126,8 @@ struct RemotePair
                     case 4: bytes[12] ^= 3; break;
                     case 5: bytes[8] ^= 1; break;
                     case 6: bytes[0] ^= 1; break;
+                    case 7: bytes.back() ^= 1; break;
+                    case 8: bytes[16] ^= 1; break; // G13's encrypted-data UINT16 length precedes the ciphertext.
                     }
                     finalFault = -1;
                     hex = HexConversions::to_hex({bytes.data(), bytes.size()});
@@ -187,6 +195,213 @@ TEST_CASE("RemoteUpdateKeys - Table A-10 certification excludes envelope and cer
     value.userRole = 1;
     value.keyChangeMethod = 3;
     REQUIRE_FALSE(updatekeys::CertificationData(value, wseq_t(bytes.data(), bytes.size()), size));
+}
+
+TEST_CASE("RemoteUpdateKeys - Method 68 provider enforces exact algorithms and authenticated outputs", "[remote-update-keys][remote-update-crypto]")
+{
+    const auto m = Method68Material();
+    const rseq_t dsa(m->userPublic.data(), m->userPublicSize), rsa(m->outstationPublic.data(), m->outstationPublicSize);
+    REQUIRE(crypto::ValidateMethod68PublicKey(dsa, false));
+    REQUIRE_FALSE(crypto::ValidateMethod68PublicKey(dsa, true));
+    REQUIRE(crypto::ValidateMethod68PublicKey(rsa, true));
+    REQUIRE_FALSE(crypto::ValidateMethod68PublicKey(rsa, false));
+    std::array<uint8_t, 190> message{}, recovered{};
+    std::array<uint8_t, 256> encrypted{};
+    std::array<uint8_t, 73> signature{};
+    size_t size = 0;
+    REQUIRE(crypto::RSAOAEP2048Encrypt(rsa, R(message), W(encrypted)) == crypto::Result::OK);
+    REQUIRE(crypto::RSAOAEP2048Decrypt({m->outstationPrivate.data(), m->outstationPrivateSize}, R(encrypted), W(recovered), size) == crypto::Result::OK);
+    REQUIRE(size == message.size()); REQUIRE(recovered == message);
+    encrypted[0] ^= 1;
+    recovered.fill(0xAA);
+    REQUIRE(crypto::RSAOAEP2048Decrypt({m->outstationPrivate.data(), m->outstationPrivateSize}, R(encrypted), W(recovered), size) != crypto::Result::OK);
+    REQUIRE(size == 0);
+    REQUIRE(std::all_of(recovered.begin(), recovered.end(), [](uint8_t b) { return b == 0; }));
+    REQUIRE(crypto::DSASHA256Sign({m->userPrivate.data(), m->userPrivateSize}, R(message), W(signature), size) == crypto::Result::OK);
+    REQUIRE(size <= 72);
+    REQUIRE(crypto::DSASHA256Verify(dsa, R(message), {signature.data(), size}) == crypto::Result::OK);
+    REQUIRE(crypto::DSASHA256Verify({m->authorityPublic.data(), m->authorityPublicSize}, R(message), {signature.data(), size}) != crypto::Result::OK);
+    signature[size] = 0;
+    REQUIRE(crypto::DSASHA256Verify(dsa, R(message), {signature.data(), size + 1}) != crypto::Result::OK);
+    signature[size - 1] ^= 1;
+    REQUIRE(crypto::DSASHA256Verify(dsa, R(message), {signature.data(), size}) != crypto::Result::OK);
+}
+
+TEST_CASE("RemoteUpdateKeys - Method 68 provider absence cannot publish partial secret outputs", "[remote-update-keys][remote-update-crypto]")
+{
+    auto material = Method68Material();
+    struct Unavailable
+    {
+        std::unique_ptr<OSSL_LIB_CTX, decltype(&OSSL_LIB_CTX_free)> context{OSSL_LIB_CTX_new(), OSSL_LIB_CTX_free};
+        std::unique_ptr<OSSL_PROVIDER, decltype(&OSSL_PROVIDER_unload)> provider{
+            context ? OSSL_PROVIDER_load(context.get(), "null") : nullptr, OSSL_PROVIDER_unload};
+        OSSL_LIB_CTX* previous = nullptr;
+        Unavailable()
+        {
+            REQUIRE(context); REQUIRE(provider);
+            previous = OSSL_LIB_CTX_set0_default(context.get()); REQUIRE(previous);
+        }
+        ~Unavailable()
+        {
+            OSSL_LIB_CTX_set0_default(previous); OPENSSL_thread_stop_ex(context.get()); ERR_clear_error();
+        }
+    } unavailable;
+    std::array<uint8_t, 256> encrypted{};
+    std::array<uint8_t, 200> plain{};
+    std::array<uint8_t, 72> signature{};
+    size_t size = 0;
+    encrypted.fill(0xCC); plain.fill(0xAA); signature.fill(0xBB);
+    REQUIRE(crypto::RSAOAEP2048Encrypt({material->outstationPublic.data(), material->outstationPublicSize},
+        {plain.data(), 32}, W(encrypted)) != crypto::Result::OK);
+    REQUIRE(std::all_of(encrypted.begin(), encrypted.end(), [](uint8_t b) { return b == 0; }));
+    REQUIRE(crypto::RSAOAEP2048Decrypt({material->outstationPrivate.data(), material->outstationPrivateSize},
+        R(encrypted), W(plain), size) != crypto::Result::OK);
+    REQUIRE(size == 0); REQUIRE(std::all_of(plain.begin(), plain.end(), [](uint8_t b) { return b == 0; }));
+    REQUIRE(crypto::DSASHA256Sign({material->userPrivate.data(), material->userPrivateSize}, R(plain), W(signature), size) != crypto::Result::OK);
+    REQUIRE(size == 0); REQUIRE(std::all_of(signature.begin(), signature.end(), [](uint8_t b) { return b == 0; }));
+    REQUIRE_FALSE(crypto::ValidateMethod68PublicKey({material->userPublic.data(), material->userPublicSize}, false));
+}
+
+TEST_CASE("RemoteUpdateKeys - Method 68 DSA verifies independent RFC6979 Appendix A.2.2 vector", "[remote-update-keys][remote-update-crypto]")
+{
+    // Published DSA2048/N256/SHA256 vector, message="sample". Only verification
+    // is deterministic; production signing uses the provider's secure nonce.
+    const char* values[] = {
+        "9DB6FB5951B66BB6FE1E140F1D2CE5502374161FD6538DF1648218642F0B5C48"
+        "C8F7A41AADFA187324B87674FA1822B00F1ECF8136943D7C55757264E5A1A44F"
+        "FE012E9936E00C1D3E9310B01C7D179805D3058B2A9F4BB6F9716BFE6117C6B5"
+        "B3CC4D9BE341104AD4A80AD6C94E005F4B993E14F091EB51743BF33050C38DE2"
+        "35567E1B34C3D6A5C0CEAA1A0F368213C3D19843D0B4B09DCB9FC72D39C8DE41"
+        "F1BF14D4BB4563CA28371621CAD3324B6A2D392145BEBFAC748805236F5CA2FE"
+        "92B871CD8F9C36D3292B5509CA8CAA77A2ADFC7BFD77DDA6F71125A7456FEA15"
+        "3E433256A2261C6A06ED3693797E7995FAD5AABBCFBE3EDA2741E375404AE25B",
+        "F2C3119374CE76C9356990B465374A17F23F9ED35089BD969F61C6DDE9998C1F",
+        "5C7FF6B06F8F143FE8288433493E4769C4D988ACE5BE25A0E24809670716C613"
+        "D7B0CEE6932F8FAA7C44D2CB24523DA53FBE4F6EC3595892D1AA58C4328A06C4"
+        "6A15662E7EAA703A1DECF8BBB2D05DBE2EB956C142A338661D10461C0D135472"
+        "085057F3494309FFA73C611F78B32ADBB5740C361C9F35BE90997DB2014E2EF5"
+        "AA61782F52ABEB8BD6432C4DD097BC5423B285DAFB60DC364E8161F4A2A35ACA"
+        "3A10B1C4D203CC76A470A33AFDCBDD92959859ABD8B56E1725252D78EAC66E71"
+        "BA9AE3F1DD2487199874393CD4D832186800654760E1E34C09E4D155179F9EC0"
+        "DC4473F996BDCE6EED1CABED8B6F116F7AD9CF505DF0F998E34AB27514B0FFE7",
+        "667098C654426C78D7F8201EAC6C203EF030D43605032C2F1FA937E5237DBD94"
+        "9F34A0A2564FE126DC8B715C5141802CE0979C8246463C40E6B6BDAA2513FA61"
+        "1728716C2E4FD53BC95B89E69949D96512E873B9C8F8DFD499CC312882561ADE"
+        "CB31F658E934C0C197F2C4D96B05CBAD67381E7B768891E4DA3843D24D94CDFB"
+        "5126E9B8BF21E8358EE0E0A30EF13FD6A664C0DCE3731F7FB49A4845A4FD8254"
+        "687972A2D382599C9BAC4E0ED7998193078913032558134976410B89D2C171D1"
+        "23AC35FD977219597AA7D15C1A9A428E59194F75C721EBCBCFAE44696A499AFA"
+        "74E04299F132026601638CB87AB79190D4A0986315DA8EEC6561C938996BEADF"};
+    const char* names[] = {OSSL_PKEY_PARAM_FFC_P, OSSL_PKEY_PARAM_FFC_Q, OSSL_PKEY_PARAM_FFC_G, OSSL_PKEY_PARAM_PUB_KEY};
+    std::unique_ptr<OSSL_PARAM_BLD, decltype(&OSSL_PARAM_BLD_free)> builder(OSSL_PARAM_BLD_new(), OSSL_PARAM_BLD_free);
+    REQUIRE(builder);
+    std::vector<std::unique_ptr<BIGNUM, decltype(&BN_free)>> numbers;
+    for (size_t n = 0; n < 4; ++n)
+    {
+        BIGNUM* raw = nullptr;
+        REQUIRE(BN_hex2bn(&raw, values[n]) > 0);
+        numbers.emplace_back(raw, BN_free);
+        REQUIRE(OSSL_PARAM_BLD_push_BN(builder.get(), names[n], raw) > 0);
+    }
+    std::unique_ptr<OSSL_PARAM, decltype(&OSSL_PARAM_free)> params(OSSL_PARAM_BLD_to_param(builder.get()), OSSL_PARAM_free);
+    AsymmetricMaterial::Context context(EVP_PKEY_CTX_new_from_name(nullptr, "DSA", nullptr), EVP_PKEY_CTX_free);
+    REQUIRE(params); REQUIRE(context); REQUIRE(EVP_PKEY_fromdata_init(context.get()) > 0);
+    EVP_PKEY* raw = nullptr;
+    REQUIRE(EVP_PKEY_fromdata(context.get(), &raw, EVP_PKEY_PUBLIC_KEY, params.get()) > 0);
+    AsymmetricMaterial::Key key(raw, EVP_PKEY_free);
+    std::array<uint8_t, 1024> publicKey{};
+    auto* dest = publicKey.data();
+    const int length = i2d_PUBKEY(key.get(), &dest);
+    REQUIRE(length > 0); REQUIRE(length <= publicKey.size());
+    HexSequence signature("30 45 02 21 00 EA CE 8B DB BE 35 3C 43 2A 79 5D 9E C5 56 C6 D0 21 F7 A0 3F 42 C3 6E 9B C8 7E 4A C7 93 2C C8 09 02 20 70 81 E1 75 45 5F 92 47 B8 12 B7 45 83 E9 E9 4F 9E A7 9B D6 40 DC 96 25 33 B0 68 07 93 A3 8D 53");
+    const uint8_t message[] = {'s','a','m','p','l','e'};
+    REQUIRE(crypto::DSASHA256Verify({publicKey.data(), static_cast<size_t>(length)}, {message, sizeof(message)}, signature.ToRSeq()) == crypto::Result::OK);
+}
+
+TEST_CASE("RemoteUpdateKeys - Method 68 native mutual proof installs the key and preserves independent users", "[remote-update-keys][remote-update-runtime]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    RemotePair pair(2, true, authority);
+    const auto independent = pair.Master().Find(1)->Sequence();
+    const auto lost = GENERATE(uint8_t(0), uint8_t(12), uint8_t(15));
+    pair.dropOutVariation = lost;
+    auto completed = pair.Start(authority->Status(3, 1, "A"));
+    pair.Pump();
+    if (lost)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+        pair.master.exe->run_many();
+        pair.Pump();
+    }
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    REQUIRE(pair.masterCredentials->users[1].updateKey == authority->nextKey);
+    REQUIRE(pair.outCredentials->users[1].updateKey == authority->nextKey);
+    REQUIRE(pair.Master().Find(1)->Sequence() == independent);
+    const uint64_t now = lost ? 2000 : 0;
+    REQUIRE(pair.Master().Find(1)->Ready(now));
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+    pair.master.exe->advance_time(std::chrono::milliseconds(100));
+    pair.master.exe->run_many(); pair.Pump();
+    REQUIRE(pair.Master().Find(2)->ControlKey(now + 100).equals(pair.Out().Find(2)->ControlKey(0)));
+    UpdateKeyRequest verify;
+    verify.name[0] = 'A'; verify.nameSize = 1; verify.method = 68; verify.verifyOnly = true;
+    auto verified = pair.Start(verify); pair.Pump();
+    REQUIRE(verified->results.size() == 1);
+    REQUIRE(verified->results.front() == TaskCompletion::SUCCESS);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+}
+
+TEST_CASE("RemoteUpdateKeys - Method 68 remains disabled without explicit configuration", "[remote-update-keys][remote-update-runtime]")
+{
+    RemotePair pair;
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    auto request = authority->Status(3, 1, "A");
+    const auto before = pair.masterWire.size();
+    auto completed = pair.Start(request); pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.masterWire.size() == before);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 0);
+    std::array<uint8_t, 2048> bytes{};
+    APDURequest apdu(W(bytes)); apdu.ConfigureHeader(FunctionCode::AUTH_REQUEST, 9);
+    auto writer = apdu.GetWriter();
+    Group120Var10 status(68, 3, 1, 1, 5, {request.name.data(), request.nameSize},
+        {request.publicKey.data(), request.publicKeySize}, {request.certification.data(), request.certificationSize});
+    REQUIRE(writer.WriteFreeFormat(&status, 1));
+    pair.out.SendToOutstation(HexConversions::to_hex(apdu.ToRSeq()));
+    REQUIRE(pair.out.lower->NumWrites() == 1);
+    HexSequence response(pair.out.lower->PopWriteAsHex()); pair.out.OnTxReady();
+    const auto parsed = APDUHeaderParser::ParseResponse(response.ToRSeq());
+    REQUIRE(parsed.success); REQUIRE(parsed.header.function == FunctionCode::AUTH_RESPONSE);
+    Group120Var7 error;
+    REQUIRE(error.Read(parsed.objects.skip(6))); REQUIRE(error.errorCode == 8);
+    REQUIRE(pair.outCredentials->users[1].method == 4); REQUIRE_FALSE(pair.outCredentials->users[1].pending);
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - Method 68 rejects tampered proof and unrelated authority or user keys", "[remote-update-keys][remote-update-runtime]")
+{
+    const int fault = GENERATE(0, 1, 2, 3);
+    CAPTURE(fault);
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    RemotePair pair(2, true, authority);
+    const auto old = pair.outCredentials->users[1].updateKey;
+    auto request = authority->Status(3, 1, "A", 0);
+    if (fault == 0) authority->wrongAuthority = true;
+    if (fault == 1) authority->wrongUser = true;
+    if (fault == 2) pair.finalFault = 7;
+    if (fault == 3) pair.finalFault = 8;
+    auto completed = pair.Start(request); pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].updateKey == old);
+    REQUIRE(pair.outCredentials->users[1].role == 1);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
 }
 
 TEST_CASE("RemoteUpdateKeys - FIPS186-2 challenge expansion matches RFC4186 Appendix A", "[remote-update-keys]")
@@ -266,10 +481,37 @@ TEST_CASE("RemoteUpdateKeys - Windows credential journal recovers committed stat
     REQUIRE(storage.ReadUpdateKey(7, 2, key.data(), key.size(), remaining));
     REQUIRE(key == fixture.users[1].updateKey);
     REQUIRE(remaining == user.expiresUnixMs - now);
+    // Migrate a checkpoint-v1 record. The first 51 header bytes and fixed
+    // fields are unchanged; v2 expands Certification and appends Method/SPKI.
+    const auto activeTarget = target + L"/remote" + std::to_wstring(marker[8]);
+    PCREDENTIALW snapshot = nullptr;
+    REQUIRE(CredReadW(activeTarget.c_str(), CRED_TYPE_GENERIC, 0, &snapshot));
+    REQUIRE(snapshot->CredentialBlobSize == 1374);
+    std::vector<uint8_t> legacy(snapshot->CredentialBlob, snapshot->CredentialBlob + 67);
+    legacy.insert(legacy.end(), snapshot->CredentialBlob + 123, snapshot->CredentialBlob + 347);
+    SecureZeroMemory(snapshot->CredentialBlob, snapshot->CredentialBlobSize); CredFree(snapshot);
+    REQUIRE(legacy.size() == 291);
+    legacy[7] = '1';
+    CREDENTIALW oldRecord{};
+    oldRecord.Type = CRED_TYPE_GENERIC; oldRecord.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    oldRecord.TargetName = const_cast<wchar_t*>(activeTarget.c_str());
+    oldRecord.CredentialBlob = legacy.data(); oldRecord.CredentialBlobSize = static_cast<DWORD>(legacy.size());
+    REQUIRE(CredWriteW(&oldRecord, 0));
+    std::array<uint8_t, 32> digest{};
+    REQUIRE(crypto::SHA256({legacy.data(), legacy.size()}, W(digest)) == crypto::Result::OK);
+    std::copy(digest.begin(), digest.end(), marker.begin() + 17);
+    REQUIRE(CredWriteW(&previous, 0));
+    REQUIRE(storage.ReadUser(7, 1, loaded));
+    REQUIRE(loaded.method == 4); REQUIRE(loaded.publicKeySize == 0);
+    REQUIRE(loaded.updateKey == fixture.users[1].updateKey);
+    REQUIRE(storage.WriteUser(7, 1, loaded)); // Next verified commit upgrades the record.
+    REQUIRE(storage.ReadUser(7, 1, loaded));
+    // Restore the v1 commit marker before testing its missing referenced record.
+    REQUIRE(CredWriteW(&previous, 0));
+    crypto::Clear({legacy.data(), legacy.size()});
     // A valid marker pointing to a missing/corrupt record fails closed; never
     // fall back to the other snapshot, even if it contains a well-formed key.
     REQUIRE(marker.size() == 49);
-    const auto activeTarget = target + L"/remote" + std::to_wstring(marker[8]);
     REQUIRE(CredDeleteW(activeTarget.c_str(), CRED_TYPE_GENERIC, 0));
     REQUIRE_FALSE(storage.ReadUser(7, 1, loaded));
     REQUIRE_FALSE(loaded.active);
@@ -379,6 +621,92 @@ TEST_CASE("RemoteUpdateKeys - configurable capacity adds and deletes an associat
     REQUIRE(pair.Out().Find(2)->Ready(0));
 }
 
+TEST_CASE("RemoteUpdateKeys - certified DELETE revokes immediately when trusted time is unavailable", "[remote-update-keys][remote-update-runtime]")
+{
+    const bool asymmetric = GENERATE(false, true);
+    const bool common = GENERATE(false, true);
+    std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority);
+    pair.masterCredentials->trustedTime = pair.outCredentials->trustedTime = false;
+    const std::string name = common ? std::string("Common\0", 7) : "A";
+    auto completed = pair.Start(authority->Status(2, 1, name)); pair.Pump();
+    REQUIRE(completed->results.size() == 1); REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    const size_t slot = common ? 0 : 1;
+    REQUIRE_FALSE(pair.outCredentials->users[slot].active); REQUIRE_FALSE(pair.masterCredentials->users[slot].active);
+    REQUIRE(pair.Out().Find(static_cast<uint16_t>(slot + 1))->UpdateKey(0).is_empty());
+    REQUIRE(pair.Master().Find(static_cast<uint16_t>(slot + 1))->UpdateKey(0).is_empty());
+    REQUIRE_FALSE(pair.Out().Find(static_cast<uint16_t>(2 - slot))->UpdateKey(0).is_empty());
+    REQUIRE_FALSE(pair.Out().Authorize(static_cast<uint16_t>(slot + 1), 5, 0));
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - certified standard roles gate native operations before application policy", "[remote-update-keys][remote-update-runtime]")
+{
+    const uint16_t role = GENERATE(uint16_t(0), uint16_t(1), uint16_t(2), uint16_t(3), uint16_t(4),
+        uint16_t(5), uint16_t(6), uint16_t(32768), uint16_t(65000));
+    CAPTURE(role);
+    RemotePair pair;
+    auto completed = pair.Start(pair.authority->Status(3, 1, "A", role)); pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    pair.master.exe->advance_time(std::chrono::milliseconds(100)); pair.master.exe->run_many(); pair.Pump();
+    REQUIRE(pair.Out().Find(2)->Ready(0));
+    REQUIRE(pair.Out().Authorize(2, 1, 0) == (role != 4));
+    REQUIRE(pair.Out().Authorize(2, 5, 0) == (role == 1 || role >= 32768));
+    REQUIRE(pair.Out().Authorize(2, 2, 0) == (role == 2 || role == 3 || role == 6 || role >= 32768));
+    if (role < 32768)
+    {
+        REQUIRE_FALSE(pair.Out().Authorize(2, 25, 0)); // No native file-mode authorization API.
+        REQUIRE_FALSE(pair.Out().Authorize(2, 29, 0));
+    }
+    pair.policy->allow = false;
+    REQUIRE_FALSE(pair.Out().Authorize(2, 1, 0)); REQUIRE_FALSE(pair.Out().Authorize(2, 5, 0));
+}
+
+TEST_CASE("RemoteUpdateKeys - independent Common renewal survives while another user's remote exchange owns KSQ", "[remote-update-keys][remote-update-runtime]")
+{
+    const bool asymmetric = GENERATE(false, true);
+    std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority);
+    pair.dropOutVariation = 12;
+    auto completed = pair.Start(authority->Status(3, 1, "A")); pair.Pump();
+    REQUIRE(pair.Out().remote->Busy()); REQUIRE(pair.Out().remote->Owner() == 2);
+    const auto sequence = pair.Out().Find(2)->Sequence();
+    std::array<uint8_t, 2048> a{}, b{};
+    APDURequest wrong(W(a)); wrong.ConfigureHeader(FunctionCode::AUTH_REQUEST, 7);
+    auto writer = wrong.GetWriter();
+    Group120Var4 statusRequest;
+    statusRequest.userNum = 2;
+    REQUIRE(writer.WriteSingleValue<ser4cpp::UInt8>(QualifierCode::UINT8_CNT, statusRequest));
+    pair.out.SendToOutstation(HexConversions::to_hex(wrong.ToRSeq()));
+    REQUIRE(pair.out.lower->HasNoData()); REQUIRE(pair.Out().Find(2)->Sequence() == sequence);
+    APDURequest error(W(a)); error.ConfigureHeader(FunctionCode::AUTH_REQUEST_NO_ACK, 7);
+    auto errorWriter = error.GetWriter();
+    Group120Var7 foreign(sequence, 2, 8, 1, DNPTime(1700000000000ULL), {});
+    REQUIRE(errorWriter.WriteFreeFormat(&foreign, 1));
+    pair.out.SendToOutstation(HexConversions::to_hex(error.ToRSeq()));
+    REQUIRE(pair.Out().remote->Busy()); REQUIRE(pair.Out().remote->Owner() == 2);
+    REQUIRE_FALSE(pair.master.context->OnReceive(Message(Addresses(1, 0), error.ToRSeq())));
+    auto* common = pair.Master().Find(1);
+    size_t size = 0;
+    REQUIRE(common->Begin(7, 9, 0, W(a), size) == SessionKeys::Result::OK);
+    pair.out.SendToOutstation(HexConversions::to_hex({a.data(), size}));
+    REQUIRE(pair.out.lower->NumWrites() == 1);
+    HexSequence status(pair.out.lower->PopWriteAsHex()); pair.out.OnTxReady();
+    REQUIRE(common->Process(7, status.ToRSeq(), 0, W(b), size) == SessionKeys::Result::OK);
+    pair.out.SendToOutstation(HexConversions::to_hex({b.data(), size}));
+    REQUIRE(pair.out.lower->NumWrites() == 1);
+    HexSequence confirmation(pair.out.lower->PopWriteAsHex()); pair.out.OnTxReady();
+    REQUIRE(common->Process(7, confirmation.ToRSeq(), 0, W(a), size) == SessionKeys::Result::INSTALLED);
+    const auto commonSequence = common->Sequence();
+    REQUIRE(pair.Out().Find(2)->Sequence() == sequence);
+    REQUIRE(pair.Out().remote->Busy());
+    pair.master.exe->advance_time(std::chrono::milliseconds(2000)); pair.master.exe->run_many(); pair.Pump();
+    REQUIRE(completed->results.size() == 1); REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    REQUIRE(pair.Out().Find(1)->Sequence() == commonSequence);
+    REQUIRE(pair.Out().Find(1)->ControlKey(0).equals(common->ControlKey(2000)));
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}
+
 TEST_CASE("RemoteUpdateKeys - each lost response retries the owned native exchange exactly once", "[remote-update-keys][remote-update-runtime]")
 {
     const auto response = GENERATE(uint8_t(0), uint8_t(12), uint8_t(15));
@@ -419,6 +747,89 @@ TEST_CASE("RemoteUpdateKeys - native retry exhaustion retains the usable key and
     REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
     REQUIRE(pair.masterCredentials->users[1].updateKey == old);
     REQUIRE(pair.outCredentials->users[1].updateKey == old);
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - every transmitted stage disconnects without reusing old authorization", "[remote-update-keys][remote-update-runtime]")
+{
+    const bool asymmetric = GENERATE(false, true);
+    const uint8_t stage = GENERATE(uint8_t(0), uint8_t(1), uint8_t(2));
+    CAPTURE(asymmetric, stage);
+    std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority);
+    const auto old = pair.masterCredentials->users[1].updateKey;
+    pair.dropStatus = stage == 0;
+    pair.dropOutVariation = stage == 1 ? 12 : (stage == 2 ? 15 : 0);
+    auto completed = pair.Start(authority->Status(3, 1, "A")); pair.Pump();
+    REQUIRE(completed->results.empty());
+    const auto lateRequest = pair.masterWire.back(), lateResponse = pair.outWire.back();
+    REQUIRE(pair.master.context->OnLowerLayerDown()); pair.out.LowerLayerDown();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::FAILURE_NO_COMMS);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == (stage == 1 ? 1 : 0));
+    REQUIRE_FALSE(pair.Master().remote->Busy()); REQUIRE_FALSE(pair.Out().remote->Busy());
+    pair.out.LowerLayerUp(); REQUIRE(pair.master.context->OnLowerLayerUp());
+    REQUIRE_FALSE(pair.Master().Find(2)->Ready(0)); REQUIRE_FALSE(pair.Out().Find(2)->Ready(0));
+    REQUIRE(pair.master.SendToMaster(lateResponse));
+    if (stage == 2)
+    {
+        pair.out.SendToOutstation(lateRequest); // Old V13/V14 or V13/V15 has no exchange owner.
+        REQUIRE(pair.out.lower->HasNoData());
+    }
+    REQUIRE(pair.masterCredentials->users[1].updateKey == old);
+    REQUIRE_FALSE(pair.Master().Find(2)->Ready(0));
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == (stage == 2 ? 1 : 0));
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - expired Outstation exchange rejects otherwise valid late proof", "[remote-update-keys][remote-update-runtime]")
+{
+    const bool asymmetric = GENERATE(false, true);
+    std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority);
+    const auto old = pair.outCredentials->users[1].updateKey;
+    pair.dropOutVariation = 12;
+    auto completed = pair.Start(authority->Status(3, 1, "A", 0)); pair.Pump();
+    const auto reply = pair.outWire.back();
+    REQUIRE(pair.Out().remote->Busy());
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(6000));
+    REQUIRE_FALSE(pair.Out().remote->Busy());
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(pair.master.SendToMaster(reply)); pair.master.exe->run_many(); pair.Pump();
+    REQUIRE(completed->results.empty());
+    REQUIRE(pair.masterCredentials->users[1].havePendingKey);
+    REQUIRE(pair.masterCredentials->users[1].updateKey == old);
+    REQUIRE(pair.outCredentials->users[1].updateKey == old);
+    REQUIRE(pair.outCredentials->users[1].role == 1);
+    REQUIRE(pair.Out().Authorize(2, 5, 6000)); // The old verified role/session survives; late proof grants nothing.
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - later-stage retry exhaustion retains pending recovery without duplicate installation", "[remote-update-keys][remote-update-runtime]")
+{
+    const bool asymmetric = GENERATE(false, true);
+    const uint8_t lost = GENERATE(uint8_t(12), uint8_t(15));
+    CAPTURE(asymmetric, lost);
+    std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority);
+    const auto old = pair.masterCredentials->users[1].updateKey;
+    pair.dropOutVariation = lost;
+    auto completed = pair.Start(authority->Status(3, 1, "A")); pair.Pump(); pair.dropAll = true;
+    for (size_t n = 0; n < 3; ++n)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000)); pair.master.exe->run_many(); pair.Pump();
+    }
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.masterCredentials->users[1].updateKey == old);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == (lost == 15 ? 1 : 0));
+    REQUIRE(pair.masterCredentials->users[1].havePendingKey == (lost == 15));
     REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
 }
 
@@ -480,7 +891,7 @@ TEST_CASE("RemoteUpdateKeys - unowned or malformed replies cannot replace the sc
     REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
 }
 
-TEST_CASE("RemoteUpdateKeys - SCS wrap requires a newly trusted authority key and rejects historical certificates", "[remote-update-keys][remote-update-runtime]")
+TEST_CASE("RemoteUpdateKeys - SCS wrap remains rejected across authority-key changes", "[remote-update-keys][remote-update-runtime]")
 {
     RemotePair pair;
     const auto historical = pair.authority->Status(3, 0xFFFFFFFFu, "A");
@@ -500,15 +911,63 @@ TEST_CASE("RemoteUpdateKeys - SCS wrap requires a newly trusted authority key an
     completed = pair.Start(wrapped);
     pair.Pump();
     REQUIRE(completed->results.size() == 1);
-    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
-    REQUIRE(pair.outCredentials->users[1].statusSequence == 0);
-    REQUIRE(pair.outCredentials->users[1].role == 0);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].statusSequence == 0xFFFFFFFFu);
+    REQUIRE(pair.outCredentials->users[1].role == 1);
     completed = pair.Start(historical);
     pair.Pump();
+    // The existing Error budget may now suppress another Error. Suppression
+    // cannot authorize anything; native bounded timeout still completes it.
+    for (size_t n = 0; n < 3 && completed->results.empty(); ++n)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000)); pair.master.exe->run_many(); pair.Pump();
+    }
     REQUIRE(completed->results.size() == 1);
     REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
-    REQUIRE(pair.outCredentials->users[1].role == 0);
+    REQUIRE(pair.outCredentials->users[1].role == 1);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+}
+
+TEST_CASE("RemoteUpdateKeys - SCS and tombstones cannot be reset by changing certification methods", "[remote-update-keys][remote-update-runtime]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    RemotePair pair(3, true, authority);
+    const auto status68 = authority->Status(3, 5, "A");
+    auto completed = pair.Start(status68); pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    auto old4 = authority->RemoteAuthority::Status(3, 0, "A", 0);
+    completed = pair.Start(old4); pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].statusSequence == 5);
+    authority->nextKey.fill(0x77);
+    auto newer4 = authority->RemoteAuthority::Status(3, 6, "A");
+    completed = pair.Start(newer4); pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    completed = pair.Start(status68); pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].statusSequence == 6);
+    REQUIRE(pair.outCredentials->users[1].method == 4);
+    REQUIRE(pair.outCredentials->users[1].updateKey == authority->nextKey);
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 2);
+}
+
+TEST_CASE("RemoteUpdateKeys - a different certification method cannot evict a deleted identity's replay watermark", "[remote-update-keys][remote-update-runtime]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    RemotePair pair(3, true, authority);
+    auto completed = pair.Start(authority->Status(1, 0, "C")); pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    completed = pair.Start(authority->Status(2, 1, "C")); pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    completed = pair.Start(authority->RemoteAuthority::Status(1, 0, "D")); pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE_FALSE(pair.outCredentials->users[2].active);
+    REQUIRE(pair.outCredentials->users[2].statusSequence == 1);
+    REQUIRE(pair.outCredentials->users[2].name[0] == 'C');
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
 }
 
 TEST_CASE("RemoteUpdateKeys - real key-change statistics publish through native G121 G122 and CONFIRM", "[remote-update-keys][remote-update-runtime]")
@@ -547,6 +1006,25 @@ TEST_CASE("RemoteUpdateKeys - real key-change statistics publish through native 
     REQUIRE(event);
     REQUIRE(RemoteUpdateKeyTestAccess::Events(pair.out.context) == 0);
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+    pair.master.meas->securityStatSOE.clear();
+    pair.authority->corruptCiphertext = true;
+    completed = pair.Start(pair.authority->Status(3, 2, "A")); pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES) == 1);
+    pair.master.context->ScanRange(GroupVariationID(121, 1), 16, 16, pair.master.meas, TaskConfig::Default());
+    pair.master.exe->run_many(); pair.Pump();
+    pair.master.context->ScanAllObjects(GroupVariationID(122, 1), pair.master.meas, TaskConfig::Default());
+    pair.master.exe->run_many(); pair.Pump();
+    bool failedStatic = false, failedEvent = false;
+    for (const auto& item : pair.master.meas->securityStatSOE)
+        if (item.meas.index == 16)
+        {
+            REQUIRE(item.meas.value.associationId == 0); REQUIRE(item.meas.value.value == 1);
+            if (item.info.isEventVariation) failedEvent = true; else failedStatic = true;
+        }
+    REQUIRE(failedStatic); REQUIRE(failedEvent);
+    REQUIRE(RemoteUpdateKeyTestAccess::Events(pair.out.context) == 0);
 }
 
 TEST_CASE("RemoteUpdateKeys - failure to persist an authority decision cannot activate the pending role", "[remote-update-keys][remote-update-runtime]")

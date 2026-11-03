@@ -35,7 +35,7 @@ Prefix: `opendnp3/cpp/lib/src/`
 - `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
 - `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
 - `auth/AggressiveMode.*` → authenticated V3/V9 envelopes, separate solicited/unsolicited challenge histories and replay checks.
-- `auth/RemoteUpdateKeys.*`, `auth/UpdateKeyFunctions.*` → opt-in, bounded remote credential/user lifecycle and IEEE transcripts; `master/UpdateKeyTask.*` reuses native task scheduling.
+- `auth/RemoteUpdateKeys.*`, `auth/UpdateKeyFunctions.*` → opt-in, bounded Method 4/68 remote credential/user lifecycle and IEEE transcripts; `master/UpdateKeyTask.*` reuses native task scheduling.
 - `auth/WindowsAuthenticationCredentials.cpp` → legacy retrieval plus remote-user journal in Windows Credential Manager; trusted clock supplied by the provisioning application.
 - `auth/AuthenticationStatistics.*` → G121 association counters, reporting baselines, five protocol maxima, frozen READ snapshots and synchronous G122 occurrence notifications.
 - `outstation/SecurityStatEventPublisher.*` → copies G122 occurrence snapshots into the native bounded event buffer (application DNP time, Class 1/2/3 config).
@@ -84,7 +84,7 @@ Prefix: `opendnp3/cpp/tests/`
 - `unit/TestDeviceAttributes.cpp` (`[device-attributes]`) → G0 wire formats, actual per-association count, discovery, malformed data, typed Master delivery, fragmentation/WRITE protection.
 - `unit/TestMasterSecurityStatistics.cpp` (`[master-security-statistics]`) → Master G121/G122 qualifiers, typed callbacks, association isolation, occurrence time, malformed fragments, mixed-WRITE rejection.
 - `unit/TestSecurityStatEvents.cpp` (`[security-stat-events]`) → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation, clock-state cases.
-- `unit/TestRemoteUpdateKeys.cpp` (`[remote-update-keys]`) → Method 4 native runtime, persistence faults/recovery, authority/role/expiry/replay checks and actual G121/G122 accounting; `integration/TestSecureAuthentication.cpp` (`[remote-update-tcp]`) exercises changed keys across real TCP reconnect/restart.
+- `unit/TestRemoteUpdateKeys.cpp` (`[remote-update-keys]`) → Methods 4/68 native runtime, independent cryptographic vectors, persistence faults/recovery, authority/role/expiry/replay checks and actual G121/G122 accounting; `integration/TestSecureAuthentication.cpp` (`[remote-update-tcp]`) exercises both methods across real TCP reconnect/restart.
 - `dnp3mocks/` → shared mocks and stack fixtures (`MockSOEHandler` implements the new overloads).
 - `asiotests/` → asynchronous I/O tests. `integration/` → stack integration tests. `fuzz/` → parser fuzz targets.
 Enable C++ tests with `DNP3_TESTS`; fuzz targets use `DNP3_FUZZING`.
@@ -97,7 +97,8 @@ READ/CONTROL, count renewal, reconnect and Outstation restart with ephemeral key
 ## Known Open Issues
 Unresolved or deliberately deferred work; details live in the linked reports, not here.
 - `P4-OPEN-01` → G120V7 code 5/7 meaning conflict (Annex A.45.7.2.2 vs 7.5.5.7); provisional code 5 = MAC not supported, 7 = authorization failed.
-- `RUK-OPEN-01` → SCS monotonicity versus wrap (7.5.5.5 versus A.45.10); same-authority-key wrap is rejected to prevent historical certification replay. See `DNP3_PDD_PLAN/SA_REMOTE_UPDATE_KEYS_REPORT.md`.
+- `RUK-OPEN-01` → SCS monotonicity versus wrap (7.5.5.5 versus A.45.10); all remote resets/wrap are rejected across certification methods and authority-key changes. Named tombstones are retained. See `DNP3_PDD_PLAN/SA_REMOTE_UPDATE_KEYS_REPORT.md`.
+- `RUK-OPEN-02` → A.45.14 does not specify DSA r/s wire representation; Method 68 provisionally uses strict DER per RFC5758/3279. Independent interoperability remains required.
 - `P6-OPEN-01` → G121 reporting threshold boundary (7.6.1.4.2 vs 11.9.10.2); approved provisional `delta >= threshold`.
 - G121 continuity → without a successful initial retention load snapshots keep DISCONTINUITY; per-point acquisition/transmission rearming and a platform retention backend are missing. Rollover does not set DISCONTINUITY.
 - NEED_TIME → `WriteHandler` G80V1 only clears DEVICE_RESTART; clear/rearm on time request is a pre-existing gap.

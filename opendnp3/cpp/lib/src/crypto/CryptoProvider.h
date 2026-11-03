@@ -33,6 +33,16 @@ namespace crypto
     // Empty output is a successful no-op. Nonempty output uses a CSPRNG, without fallback.
     Result GenerateRandom(ser4cpp::wseq_t output);
     Result SHA256(ser4cpp::rseq_t message, ser4cpp::wseq_t output);
+    // Method 68 only: SPKI DER public keys, DER private keys; exact RSA2048
+    // or DSA L=2048/N=256. No algorithm fallback. DSA signatures are canonical
+    // DER Dss-Sig-Value (RFC5758/3279); no X.509 certificate chain is implied.
+    bool ValidateMethod68PublicKey(ser4cpp::rseq_t key, bool rsa);
+    Result RSAOAEP2048Encrypt(ser4cpp::rseq_t publicKey, ser4cpp::rseq_t plaintext, ser4cpp::wseq_t output);
+    Result RSAOAEP2048Decrypt(ser4cpp::rseq_t privateKey, ser4cpp::rseq_t ciphertext,
+                             ser4cpp::wseq_t output, size_t& size);
+    Result DSASHA256Sign(ser4cpp::rseq_t privateKey, ser4cpp::rseq_t message,
+                        ser4cpp::wseq_t output, size_t& size);
+    Result DSASHA256Verify(ser4cpp::rseq_t publicKey, ser4cpp::rseq_t message, ser4cpp::rseq_t signature);
     // IEEE A.45.11 / FIPS186-2 Appendix 3.1, general-purpose form
     // (Change Notice 1 p74). Fresh CSPRNG seed for every 32-byte challenge.
     Result GenerateUpdateKeyChallenge(ser4cpp::wseq_t output);

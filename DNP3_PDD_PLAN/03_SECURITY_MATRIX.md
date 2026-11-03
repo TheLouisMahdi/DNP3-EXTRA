@@ -183,8 +183,8 @@ describe static implementation coverage, not executed verification or conformanc
 | 12 | Successful Authentications | I | Challenger verified Reply and successful Aggressive verification, once before authorization; not Reply generation or key-status MAC processing | 100 |
 | 13 | Session Key Changes | I | SessionKeys::Process returning INSTALLED on each role, never credential loading or codec serialization | 10 |
 | 14 | Failed Session Key Changes | P | Correlated Outstation V6 unwrap/validation/confirmation-generation failure; Master terminal retry/Reply-Max failure and disconnect of a pending key transaction | 5 |
-| 15 | Update Key Changes | D | Method 4 real mutual-proof/durable-install boundaries; Outstation counts actual final TX; verification-only and retries do not duplicate | 1 |
-| 16 | Failed Update Key Changes | D | Method 4 terminal transmitted-exchange failure; bounded retry exhaustion/disconnect; never codec construction or untransmitted attempts | 1 |
+| 15 | Update Key Changes | D | Methods 4/68 real mutual-proof/durable-install boundaries; Outstation counts actual final TX; verification-only and retries do not duplicate | 1 |
+| 16 | Failed Update Key Changes | D | Methods 4/68 terminal transmitted-exchange failure; bounded retry exhaustion/disconnect; never codec construction or untransmitted attempts | 1 |
 | 17 | Rekeys Due to Restarts | I | MContext::OnReceive rising RESPONSE/UNSOLICITED_RESPONSE restart IIN; existing bounded restarted-peer Key Status bootstrap avoids double counting; moving throttle/rearm; always zero in Outstations | 3 |
 
 Indexes 0/9 cover the confirmed authentication and Context response-discard paths;
@@ -238,7 +238,7 @@ and resetting the restart Max on reconnect. No second authentication engine exis
   identity, reuses native Reset/reconnect, and leaves serial/UDP untouched. Active
   authentication APDU arrays are not overwritten by threshold servicing. Actual
   TCP/TLS cancellation/reconnect remains unexecuted until P10.
-- Indexes 15/16 now have operational Method 4 producers in `RemoteUpdateKeys`.
+- Indexes 15/16 now have operational Method 4/68 producers in `RemoteUpdateKeys`.
   Native G121/G122/CONFIRM publication is tested. Credential loading and G120
   serialization remain uncounted. See the remote-update report for validation.
 - P6b consumes real reporting-threshold state for G121/G122 publication and G0V210, including retention/discontinuity quality and event snapshots; that wire support is implemented and user-validated (`P6b-O2_REPORT.md`, `P6b-M1_REPORT.md`, `P6c_REPORT.md`). No full SA compliance is advertised by the runtime index enum, and G0V209 remains unavailable on the Outstation.
@@ -254,15 +254,18 @@ and resetting the restart Max on reconnect. No second authentication engine exis
   Master unowned Error reception now has the same 11/0/9 boundary.
 
 Historical P6a static-subset disposition remains recorded above. Current index
-15/16 production is supplied by the opt-in remote Method 4 lifecycle. P6-OPEN-03
+15/16 production is supplied by the opt-in remote Method 4/68 lifecycle. P6-OPEN-03
 remains open; this does not claim full SA conformance.
 
-## Remote Update Keys: Windows Method 4 checkpoint (2026-11-03)
+## Remote Update Keys: Windows Methods 4/68 (2026-11-03)
 
 `SA_REMOTE_UPDATE_KEYS_REPORT.md` records source boundaries, normative references,
 validation and OPEN decisions. SEC-T1-02 is implemented with configurable 2..16
-users. SEC-T1-16 and SEC-T2-04 remain PARTIAL: Method 4 is locally verified;
-asymmetric Method 68/G120V14 is the next slice. SEC-T2-10 remains configuration
+users. SEC-T1-16 and SEC-T2-04 have locally verified configurable Methods 4/68:
+Method 4 is independent; Method 68 requires explicit `allowMethod68`, provisioned
+RSA-OAEP2048/SHA256 keys and DSA2048/256 keys. This verifies the implemented
+operative choices, not every optional Table 7-16 method. RUK-OPEN-01/02 and
+independent interoperability remain OPEN. SEC-T2-10 remains configuration
 dependent: the standard SECADM role does not grant monitoring; an explicitly
 provisioned private role and application policy are required for the requested
 combined administrative/ordinary capabilities. No permissive default is added.

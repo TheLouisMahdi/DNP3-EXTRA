@@ -71,10 +71,11 @@ struct RemotePolicy final : IAuthenticationAuthorization
     { return association == 7 && allow; }
 };
 // Test-only authority. Production Master interfaces expose no Certification Key.
-struct RemoteAuthority final : IUpdateKeyTrust, IUpdateKeySource
+struct RemoteAuthority : IUpdateKeyTrust, IUpdateKeySource
 {
     std::array<uint8_t, 32> certificationKey{}, nextKey{};
     bool corruptCiphertext = false;
+    bool method68 = false;
     RemoteAuthority() { certificationKey.fill(0x55); nextKey.fill(0x66); }
     ~RemoteAuthority() { crypto::Clear(W(certificationKey)); crypto::Clear(W(nextKey)); }
     bool ReadCertificationKey(uint16_t association, uint8_t* output, size_t capacity) override
@@ -100,7 +101,7 @@ struct RemoteAuthority final : IUpdateKeyTrust, IUpdateKeySource
         if (corruptCiphertext) encrypted[0] ^= 1;
         return true;
     }
-    UpdateKeyRequest Status(uint8_t operation, uint32_t sequence, const std::string& name, uint16_t role = 1)
+    virtual UpdateKeyRequest Status(uint8_t operation, uint32_t sequence, const std::string& name, uint16_t role = 1)
     {
         UpdateKeyRequest result;
         REQUIRE(name.size() <= result.name.size());
@@ -116,7 +117,8 @@ struct RemoteAuthority final : IUpdateKeyTrust, IUpdateKeySource
         std::array<uint8_t, 256> message{};
         size_t size = 0;
         REQUIRE(updatekeys::CertificationData(status, W(message), size));
-        REQUIRE(crypto::ComputeHMACSHA256(R(certificationKey), {message.data(), size}, W(result.certification)) == crypto::Result::OK);
+        REQUIRE(crypto::ComputeHMACSHA256(R(certificationKey), {message.data(), size},
+            {result.certification.data(), result.certificationSize}) == crypto::Result::OK);
         return result;
     }
 };
@@ -129,6 +131,7 @@ AuthenticationConfig RemoteSettings(const std::shared_ptr<RemoteCredentials>& cr
     config.credentials = credentials;
     config.authorization = policy;
     config.remoteUpdateKeys = true;
+    config.allowMethod68 = authority->method68;
     config.userCapacity = static_cast<uint16_t>(capacity);
     config.outstationName[0] = 'B';
     config.outstationNameSize = 1;

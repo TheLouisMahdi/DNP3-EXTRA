@@ -3,6 +3,7 @@
 #include "mocks/NullSOEHandler.h"
 #include "mocks/QueuedChannelListener.h"
 #include "dnp3mocks/RemoteUpdateKeyCredentials.h"
+#include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
 
 #include <opendnp3/DNP3Manager.h>
 #include <opendnp3/master/DefaultMasterApplication.h>
@@ -209,13 +210,14 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     manager.Shutdown();
 }
 
-TEST_CASE("SecureAuthenticationTCP - remote Method 4 installs a key used by native commands and reconnect", "[sa-tcp][remote-update-tcp]")
+TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native commands and reconnect", "[sa-tcp][remote-update-tcp]")
 {
     using namespace remote_update_test;
     auto mc = std::make_shared<RemoteCredentials>();
     auto oc = std::make_shared<RemoteCredentials>();
     auto policy = std::make_shared<RemotePolicy>();
-    auto authority = std::make_shared<RemoteAuthority>();
+    const bool asymmetric = GENERATE(false, true);
+    std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
     auto listener = std::make_shared<QueuedChannelListener>();
     auto trace = std::make_shared<AuthenticationTrace>();
     auto commands = std::make_shared<TcpCommands>();

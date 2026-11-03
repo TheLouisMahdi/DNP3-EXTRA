@@ -26,9 +26,15 @@ namespace updatekeys
     bool VerifyMAC(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::rseq_t mac);
     // A.45.13/Table A-11. Zero padding to the RFC 3394 multiple-of-eight boundary.
     bool KeyData(ser4cpp::rseq_t name, ser4cpp::rseq_t key, ser4cpp::rseq_t challenge,
-                 ser4cpp::wseq_t output, size_t& size);
+                 ser4cpp::wseq_t output, size_t& size, bool wrapPadding = true);
     bool ReadKeyData(ser4cpp::rseq_t input, ser4cpp::rseq_t name, ser4cpp::rseq_t challenge,
-                     ser4cpp::wseq_t key);
+                     ser4cpp::wseq_t key, bool wrapPadding = true);
+    // Table A-12: Outstation name || Master challenge || Outstation challenge ||
+    // KSQ || USR || encrypted key data, with no additional padding for DSA.
+    bool SignatureData(ser4cpp::rseq_t outstationName, ser4cpp::rseq_t userName,
+                       ser4cpp::rseq_t masterChallenge, ser4cpp::rseq_t outstationChallenge,
+                       uint32_t sequence, uint16_t user, ser4cpp::rseq_t encrypted,
+                       ser4cpp::wseq_t output, size_t& size);
 }
 }
 #endif

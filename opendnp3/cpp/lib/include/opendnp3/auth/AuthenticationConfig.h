@@ -85,8 +85,9 @@ struct AuthenticationConfig
     std::shared_ptr<IAuthenticationCredentials> credentials;
     std::shared_ptr<IAuthenticationAuthorization> authorization;
     // Remote Update Keys are opt-in. Requires IUpdateKeyCredentials, AES-256,
-    // and a provisioned association-local Outstation identity. Method 4 only.
+    // and a provisioned association-local Outstation identity.
     bool remoteUpdateKeys = false;
+    bool allowMethod68 = false; // Optional RSA-OAEP2048/SHA256 + DSA2048/256; no fallback.
     uint8_t maxUpdateKeyRetries = 2; // Bounded retransmissions per remote-key stage, maximum 10.
     uint16_t userCapacity = 2; // 2..16 when remoteUpdateKeys is enabled.
     std::array<uint8_t, 128> outstationName{};

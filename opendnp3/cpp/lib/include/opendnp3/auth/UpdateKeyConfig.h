@@ -30,9 +30,12 @@ struct UpdateKeyUser
     uint32_t statusSequence = 0;
     uint8_t statusOperation = 0;
     uint16_t statusExpiryDays = 0;
-    std::array<uint8_t, 16> certification{};
+    uint8_t method = 4;
+    std::array<uint8_t, 1024> publicKey{}; // Authority-certified DSA SPKI for Method 68.
+    uint16_t publicKeySize = 0;
+    std::array<uint8_t, 72> certification{};
     uint8_t certificationSize = 0;
-    std::array<uint8_t, 32> certificationKeyFingerprint{}; // Outstation-local trust epoch; never supplied by Master.
+    std::array<uint8_t, 32> certificationKeyFingerprint{}; // Outstation audit evidence; never resets SCS.
     bool haveStatusSequence = false;
     bool active = false;
     bool pending = false;
@@ -68,6 +71,10 @@ class IUpdateKeyTrust
 public:
     virtual ~IUpdateKeyTrust() = default;
     virtual bool ReadCertificationKey(uint16_t association, uint8_t* output, size_t capacity) = 0;
+    // Optional Method 68. Pinned authority DSA SPKI and Outstation RSA private
+    // DER are provisioned separately. Neither is supplied by a received ASDU.
+    virtual bool ReadAuthorityPublicKey(uint16_t, uint8_t*, size_t, size_t&) { return false; }
+    virtual bool ReadOutstationPrivateKey(uint16_t, uint8_t*, size_t, size_t&) { return false; }
 };
 
 // Trusted integration with the external authority. The Master has neither its
@@ -83,6 +90,11 @@ public:
                         const uint8_t* masterChallenge, const uint8_t* outstationChallenge,
                         uint32_t sequence, uint16_t user, uint8_t* updateKey,
                         uint8_t* ciphertext, size_t capacity, size_t& size) = 0;
+    // Method 68 Master credentials: user's DSA private DER and independently
+    // trusted Outstation RSA SPKI. The authority private key never crosses this
+    // boundary. Supply a fresh 32-byte Update Key; outputs are caller-owned/wiped.
+    virtual bool GetAsymmetricKey(uint16_t, const uint8_t*, size_t, uint8_t*,
+                                  uint8_t*, size_t, size_t&, uint8_t*, size_t, size_t&) { return false; }
 };
 
 // Owns all request bytes across asynchronous scheduling. Certification must be
@@ -95,7 +107,10 @@ struct UpdateKeyRequest
     uint32_t statusSequence = 0;
     uint16_t role = 0;
     uint16_t expiryDays = 0;
-    std::array<uint8_t, 16> certification{};
+    uint8_t method = 4;
+    std::array<uint8_t, 1024> publicKey{};
+    uint16_t publicKeySize = 0;
+    std::array<uint8_t, 72> certification{};
     uint8_t certificationSize = 0;
     bool verifyOnly = false;
     std::shared_ptr<IUpdateKeySource> source;

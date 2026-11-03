@@ -46,6 +46,10 @@ private:
     bool Install(ser4cpp::rseq_t key, uint64_t now);
     size_t Find(ser4cpp::rseq_t name) const;
     bool Confirmation(bool fromMaster, ser4cpp::rseq_t key, ser4cpp::wseq_t output);
+    bool AsymmetricChange(const UpdateKeyUser& record);
+    bool VerifyCertification(const Group120Var10& status, ser4cpp::wseq_t certifier);
+    bool ReadAsymmetricChange(const Group120Var13& change, const Group120Var14& signature);
+    bool MethodAllowed(uint8_t method) const;
     bool Error(uint8_t code, uint32_t sequence, uint16_t errorUser, uint8_t appSequence,
                ser4cpp::wseq_t output, size_t& size, IINField iin);
     void ClearExchange();
@@ -57,7 +61,9 @@ private:
     std::array<uint64_t, MAX_AUTHENTICATION_USERS> expires{}, pendingExpires{};
     UpdateKeyRequest operation;
     std::array<uint8_t, 32> masterChallenge{}, outstationChallenge{}, candidate{};
-    std::array<uint8_t, 208> ciphertext{};
+    std::array<uint8_t, 256> ciphertext{};
+    std::array<uint8_t, 72> signature{};
+    size_t signatureSize = 0;
     size_t cipherSize = 0, slot = 0;
     uint32_t ksq = 0;
     uint16_t user = 0;

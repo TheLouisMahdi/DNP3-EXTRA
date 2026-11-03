@@ -27,6 +27,7 @@ namespace
         Group120Var11 request;
         Group120Var12 reply;
         Group120Var13 change;
+        Group120Var14 signature;
         Group120Var15 confirm;
         Group120Var7 error;
         uint8_t first = 0, second = 0;
@@ -39,7 +40,7 @@ namespace
             return n == 0 ? (gv == GroupVariation::Group120Var10 || gv == GroupVariation::Group120Var11
                 || gv == GroupVariation::Group120Var12 || gv == GroupVariation::Group120Var13
                 || gv == GroupVariation::Group120Var15 || gv == GroupVariation::Group120Var7)
-                : (n == 1 && changeHeader && gv == GroupVariation::Group120Var15);
+                : (n == 1 && changeHeader && (gv == GroupVariation::Group120Var15 || gv == GroupVariation::Group120Var14));
         }
         template<class T> IINField Accept(const ICollection<T>& values, T& value, uint8_t variation)
         {
@@ -52,6 +53,7 @@ namespace
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var11>& v) override { return Accept(v, request, 11); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var12>& v) override { return Accept(v, reply, 12); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var13>& v) override { return Accept(v, change, 13); }
+        IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var14>& v) override { return Accept(v, signature, 14); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var15>& v) override { return Accept(v, confirm, 15); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var7>& v) override { return Accept(v, error, 7); }
     };
@@ -75,6 +77,10 @@ RemoteUpdateKeys::RemoteUpdateKeys(AuthenticationSession& owner_, SessionKeys::R
 {
 }
 RemoteUpdateKeys::~RemoteUpdateKeys() { ClearExchange(); }
+bool RemoteUpdateKeys::MethodAllowed(uint8_t method) const
+{
+    return method == 4 || (method == 68 && owner.config.allowMethod68);
+}
 
 bool RemoteUpdateKeys::Load(uint64_t now)
 {
@@ -108,7 +114,10 @@ bool RemoteUpdateKeys::Load(uint64_t now)
             if (value.nameSize == 0) continue;
             if (!updatekeys::ValidName(Name(value)) || value.user != n + 1
                 || updatekeys::IsCommon(Name(value)) != (value.user == 1)
-                || !updatekeys::ValidRole(value.role) || !updatekeys::ValidRole(value.pendingRole)) return false;
+                || !updatekeys::ValidRole(value.role) || !updatekeys::ValidRole(value.pendingRole)
+                || !MethodAllowed(value.method) || value.publicKeySize > value.publicKey.size()
+                || (value.method == 4 ? value.publicKeySize != 0
+                    : !crypto::ValidateMethod68PublicKey({value.publicKey.data(), value.publicKeySize}, false))) return false;
             for (size_t j = 0; j < n; ++j)
                 if (Name(users[j]).equals(Name(value)) || (users[j].active && value.active
                     && crypto::ConstantTimeEqual(Read(users[j].updateKey), Read(value.updateKey)))) return false;
@@ -155,16 +164,17 @@ bool RemoteUpdateKeys::Authorize(uint16_t number, uint8_t function, uint64_t now
     const auto n = number - 1;
     const auto& value = users[n];
     if (!value.active || now >= expires[n]) return false;
-    // Table 7-12 assigns capabilities; point/file/security policy remains in
-    // IAuthenticationAuthorization. Private roles require that explicit policy.
+    // Table 7-12 capability gate for native operations. The explicit application
+    // policy additionally restricts points/content. Native file/code/security
+    // configuration APIs do not exist: do not grant a coarse file permission
+    // that would let SECAUD write or RBACMNT read. Private roles require policy.
     if (value.role >= 32768) return true;
     if (function == 0) return true; // Native application CONFIRM, after exact-owner authentication.
-    if (function == 1) return value.role != 4; // Monitoring
-    if (function >= 3 && function <= 6) return value.role == 1; // Controls
-    if (function >= 25 && function <= 30)
-        return value.role == 2 || value.role == 3 || value.role == 5 || value.role == 6; // Further restricted by policy.
-    if (function == 32 || function == 33) return false; // Authority protocols never gain ordinary role authorization.
-    return value.role == 2 || value.role == 3 || value.role == 4 || value.role == 6;
+    if (function == 1 || function == 23) return value.role != 4; // Monitoring/delay measurement.
+    if (function >= 3 && function <= 12) return value.role == 1; // Controls/counter freezing.
+    if (function == 2 || function == 13 || function == 14 || (function >= 20 && function <= 22)
+        || function == 24 || function == 31) return value.role == 2 || value.role == 3 || value.role == 6;
+    return false; // Unsupported file/code operations and separately certified authority procedures.
 }
 void RemoteUpdateKeys::ClearExchange()
 {
@@ -172,6 +182,8 @@ void RemoteUpdateKeys::ClearExchange()
     crypto::Clear(Write(outstationChallenge));
     crypto::Clear(Write(candidate));
     crypto::Clear(Write(ciphertext));
+    crypto::Clear(Write(signature));
+    signatureSize = 0;
     operation = UpdateKeyRequest();
     phase = Phase::IDLE;
     cipherSize = 0;
@@ -316,9 +328,13 @@ bool RemoteUpdateKeys::Begin(const UpdateKeyRequest& value, uint64_t now)
     Tick(now);
     if (!loaded || clockFailed || role != SessionKeys::Role::MASTER || Busy() || !credentials
         || !updatekeys::ValidName({value.name.data(), value.nameSize})
+        || !MethodAllowed(value.method) || (value.method == 68 && value.nameSize > 126)
+        || value.publicKeySize > value.publicKey.size() || value.certificationSize > value.certification.size()
         || (!value.certificationSize && value.operation != 0)
         || (value.certificationSize && value.verifyOnly)
-        || (value.certificationSize && value.certificationSize != owner.config.tagLength)
+        || (value.certificationSize && (value.method == 4 ? value.certificationSize != owner.config.tagLength
+            : (value.certificationSize < 8 || !crypto::ValidateMethod68PublicKey({value.publicKey.data(), value.publicKeySize}, false))))
+        || (value.method == 4 && value.publicKeySize)
         || (value.certificationSize && (value.operation < 1 || value.operation > 3 || !updatekeys::ValidRole(value.role)))
         || (!value.verifyOnly && value.operation != 2 && !value.source)) return false;
     operation = value;
@@ -335,6 +351,7 @@ bool RemoteUpdateKeys::Begin(const UpdateKeyRequest& value, uint64_t now)
     }
     slot = Find({value.name.data(), value.nameSize});
     if (!value.certificationSize && slot == owner.Size()) { ClearExchange(); return false; }
+    if (!value.certificationSize && users[slot].method != value.method) { ClearExchange(); return false; }
     phase = value.certificationSize ? Phase::STATUS : Phase::REPLY;
     deadline = now + owner.config.replyTimeoutMs;
     if (crypto::GenerateUpdateKeyChallenge(Write(masterChallenge)) != crypto::Result::OK) { ClearExchange(); return false; }
@@ -351,11 +368,14 @@ bool RemoteUpdateKeys::Build(APDURequest& request, uint8_t sequence, uint64_t no
     auto writer = request.GetWriter();
     const ser4cpp::rseq_t name(operation.name.data(), operation.nameSize);
     if (phase == Phase::STATUS)
-        return WriteObject(writer, Group120Var10(4, operation.operation, operation.statusSequence, operation.role,
-            operation.expiryDays, name, {}, {operation.certification.data(), operation.certificationSize}));
+        return WriteObject(writer, Group120Var10(operation.method, operation.operation, operation.statusSequence, operation.role,
+            operation.expiryDays, name, {operation.publicKey.data(), operation.publicKeySize}, {operation.certification.data(), operation.certificationSize}));
     if (phase == Phase::REPLY)
-        return WriteObject(writer, Group120Var11(4, name, Read(masterChallenge)));
+        return WriteObject(writer, Group120Var11(operation.method, name, Read(masterChallenge)));
     if (phase != Phase::CONFIRM) return false;
+    if (!operation.verifyOnly && operation.method == 68)
+        return WriteObject(writer, Group120Var13(ksq, user, {ciphertext.data(), cipherSize}))
+            && WriteObject(writer, Group120Var14({signature.data(), signatureSize}));
     std::array<uint8_t, 16> mac{};
     if (!Confirmation(true, Read(candidate), {mac.data(), owner.config.tagLength})) return false;
     if (!operation.verifyOnly && !WriteObject(writer, Group120Var13(ksq, user, {ciphertext.data(), cipherSize}))) return false;
@@ -430,6 +450,12 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
         record.user = user;
         record.name = operation.name;
         record.nameSize = operation.nameSize;
+        if (operation.certificationSize)
+        {
+            record.method = operation.method;
+            record.publicKey = operation.publicKey;
+            record.publicKeySize = operation.publicKeySize;
+        }
         if (operation.verifyOnly)
         {
             if (record.havePendingKey) { candidate = record.pendingUpdateKey; changed = true; }
@@ -441,12 +467,13 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
             bool provided = false;
             try
             {
-                provided = operation.source->GetKey(owner.config.association, operation.name.data(), operation.nameSize,
-                    masterChallenge.data(), outstationChallenge.data(), ksq, user, candidate.data(),
-                    ciphertext.data(), ciphertext.size(), cipherSize);
+                provided = operation.method == 68 ? AsymmetricChange(record)
+                    : operation.source->GetKey(owner.config.association, operation.name.data(), operation.nameSize,
+                        masterChallenge.data(), outstationChallenge.data(), ksq, user, candidate.data(),
+                        ciphertext.data(), ciphertext.size(), cipherSize);
             }
             catch (...) {}
-            if (!provided || cipherSize < 24 || cipherSize > ciphertext.size() || cipherSize % 8)
+            if (!provided || (operation.method == 68 ? cipherSize != 256 : (cipherSize < 24 || cipherSize > 208 || cipherSize % 8)))
             { Failure(); return Result::FAILED; }
             record.havePendingKey = true;
             record.pendingUpdateKey = candidate;
@@ -493,6 +520,83 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
     return Result::IGNORED;
 }
 
+bool RemoteUpdateKeys::AsymmetricChange(const UpdateKeyUser& record)
+{
+    struct Material
+    {
+        std::array<uint8_t, 2048> privateKey{};
+        std::array<uint8_t, 1024> outstationKey{};
+        std::array<uint8_t, 200> plain{};
+        ~Material() { crypto::Clear(Write(privateKey)); crypto::Clear(Write(plain)); }
+    } material;
+    size_t privateSize = 0, publicSize = 0, plainSize = 0, transcriptSize = 0;
+    bool supplied = false;
+    try { supplied = operation.source->GetAsymmetricKey(owner.config.association, operation.name.data(), operation.nameSize,
+        candidate.data(), material.privateKey.data(), material.privateKey.size(), privateSize,
+        material.outstationKey.data(), material.outstationKey.size(), publicSize); } catch (...) {}
+    std::array<uint8_t, 512> transcript{};
+    if (!supplied || privateSize > material.privateKey.size() || publicSize > material.outstationKey.size()
+        || !updatekeys::KeyData(Name(record), Read(candidate), Read(outstationChallenge), Write(material.plain), plainSize, false)
+        || crypto::RSAOAEP2048Encrypt({material.outstationKey.data(), publicSize}, {material.plain.data(), plainSize}, Write(ciphertext)) != crypto::Result::OK
+        || !updatekeys::SignatureData({owner.config.outstationName.data(), owner.config.outstationNameSize}, Name(record),
+            Read(masterChallenge), Read(outstationChallenge), ksq, user, Read(ciphertext), Write(transcript), transcriptSize)
+        || crypto::DSASHA256Sign({material.privateKey.data(), privateSize}, {transcript.data(), transcriptSize}, Write(signature), signatureSize) != crypto::Result::OK
+        || crypto::DSASHA256Verify({record.publicKey.data(), record.publicKeySize}, {transcript.data(), transcriptSize},
+            {signature.data(), signatureSize}) != crypto::Result::OK) return false;
+    cipherSize = ciphertext.size();
+    return true;
+}
+bool RemoteUpdateKeys::VerifyCertification(const Group120Var10& status, ser4cpp::wseq_t certifier)
+{
+    std::array<uint8_t, 1200> message{};
+    size_t length = 0;
+    if (status.keyChangeMethod == 68 && status.userName.length() > 126) return false;
+    if (!updatekeys::CertificationData(status, Write(message), length)) return false;
+    bool trusted = false, authenticated = false, fingerprint = false;
+    if (status.keyChangeMethod == 4)
+    {
+        std::array<uint8_t, 32> key{};
+        try { trusted = owner.config.updateKeyTrust->ReadCertificationKey(owner.config.association, key.data(), key.size()); } catch (...) {}
+        authenticated = trusted && status.certificationData.length() == owner.config.tagLength
+            && updatekeys::VerifyMAC(Read(key), {message.data(), length}, status.certificationData);
+        if (authenticated) fingerprint = crypto::SHA256(Read(key), certifier) == crypto::Result::OK;
+        crypto::Clear(Write(key));
+    }
+    else
+    {
+        std::array<uint8_t, 1024> key{};
+        size_t size = 0;
+        try { trusted = owner.config.updateKeyTrust->ReadAuthorityPublicKey(owner.config.association, key.data(), key.size(), size); } catch (...) {}
+        trusted = trusted && size <= key.size() && crypto::ValidateMethod68PublicKey({key.data(), size}, false);
+        authenticated = trusted && crypto::DSASHA256Verify({key.data(), size}, {message.data(), length}, status.certificationData) == crypto::Result::OK;
+        if (authenticated) fingerprint = crypto::ValidateMethod68PublicKey(status.userPublicKey, false)
+            && crypto::SHA256({key.data(), size}, certifier) == crypto::Result::OK;
+    }
+    if (trusted && !authenticated) owner.statistics.AuthenticationFailed(0);
+    return authenticated && fingerprint;
+}
+bool RemoteUpdateKeys::ReadAsymmetricChange(const Group120Var13& change, const Group120Var14& proof)
+{
+    std::array<uint8_t, 512> transcript{};
+    size_t transcriptSize = 0;
+    if (!updatekeys::SignatureData({owner.config.outstationName.data(), owner.config.outstationNameSize}, Name(users[slot]),
+        Read(masterChallenge), Read(outstationChallenge), ksq, user, change.encryptedUpdateKey, Write(transcript), transcriptSize)
+        || crypto::DSASHA256Verify({users[slot].publicKey.data(), users[slot].publicKeySize}, {transcript.data(), transcriptSize},
+            proof.digitalSignature) != crypto::Result::OK) return false;
+    struct Material
+    {
+        std::array<uint8_t, 2048> privateKey{};
+        std::array<uint8_t, 200> plain{};
+        ~Material() { crypto::Clear(Write(privateKey)); crypto::Clear(Write(plain)); }
+    } material;
+    size_t keySize = 0, plainSize = 0;
+    bool trusted = false;
+    try { trusted = owner.config.updateKeyTrust->ReadOutstationPrivateKey(owner.config.association, material.privateKey.data(), material.privateKey.size(), keySize); } catch (...) {}
+    return trusted && keySize <= material.privateKey.size()
+        && crypto::RSAOAEP2048Decrypt({material.privateKey.data(), keySize}, change.encryptedUpdateKey, Write(material.plain), plainSize) == crypto::Result::OK
+        && updatekeys::ReadKeyData({material.plain.data(), plainSize}, Name(users[slot]), Read(outstationChallenge), Write(candidate), false);
+}
+
 bool RemoteUpdateKeys::Error(uint8_t code, uint32_t sequence, uint16_t errorUser, uint8_t sequenceAPDU,
                             ser4cpp::wseq_t output, size_t& size, IINField iin)
 {
@@ -533,26 +637,15 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
     if (value.first == 10 && !value.second)
     {
         const auto& status = value.status;
-        if (status.keyChangeMethod != 4) return Error(8, status.seqNum, 0, header.control.SEQ, output, size, iin);
-        std::array<uint8_t, 1200> message{};
-        std::array<uint8_t, 32> certificationKey{};
+        if (!MethodAllowed(status.keyChangeMethod)) return Error(8, status.seqNum, 0, header.control.SEQ, output, size, iin);
         std::array<uint8_t, 32> certifier{};
-        size_t length = 0;
-        bool trusted = false;
-        try { trusted = owner.config.updateKeyTrust->ReadCertificationKey(owner.config.association, certificationKey.data(), certificationKey.size()); }
-        catch (...) {}
-        const bool canonical = updatekeys::CertificationData(status, Write(message), length);
-        const bool authenticated = trusted && canonical && status.certificationData.length() == owner.config.tagLength
-            && updatekeys::VerifyMAC(Read(certificationKey), {message.data(), length}, status.certificationData);
-        const bool valid = authenticated
-            && crypto::SHA256(Read(certificationKey), Write(certifier)) == crypto::Result::OK;
-        crypto::Clear(Write(certificationKey));
-        if (trusted && canonical && !authenticated) owner.statistics.AuthenticationFailed(0);
-        if (!valid) return Error(10, status.seqNum, 0, header.control.SEQ, output, size, iin);
+        if (!VerifyCertification(status, Write(certifier))) return Error(10, status.seqNum, 0, header.control.SEQ, output, size, iin);
         auto index = Find(status.userName);
         if (index < owner.Size() && users[index].haveStatusSequence && status.seqNum == users[index].statusSequence
             && users[index].statusOperation == status.operation && users[index].pendingRole == status.userRole
             && users[index].statusExpiryDays == status.userRoleExpiryDays
+            && users[index].method == status.keyChangeMethod
+            && ser4cpp::rseq_t(users[index].publicKey.data(), users[index].publicKeySize).equals(status.userPublicKey)
             && users[index].certificationSize == status.certificationData.length()
             && crypto::ConstantTimeEqual({users[index].certification.data(), users[index].certificationSize}, status.certificationData))
         {
@@ -567,29 +660,35 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
         {
             const size_t first = updatekeys::IsCommon(status.userName) ? 0 : 1;
             for (size_t n = first; n < owner.Size(); ++n)
-                if (users[n].nameSize == 0 || (!users[n].active && !users[n].pending
-                    && !crypto::ConstantTimeEqual(Read(users[n].certificationKeyFingerprint), Read(certifier))))
+                if (users[n].nameSize == 0)
                 { index = n; break; }
         }
-        // A.45.10 permits wrap, but 7.5.5.5 requires strictly newer SCS. Same-key
-        // wrap would revalidate recorded historical certificates. A verified,
-        // administratively rotated authority key establishes a new trust epoch.
-        // RUK-OPEN-01 records the interoperability boundary of this fail-closed rule.
+        // 7.5.5.5 requires strictly newer SCS. Algorithm/key changes cannot
+        // reset this watermark: another configured authority method could still
+        // validate historical certifications. Named tombstones are never evicted.
+        // RUK-OPEN-01 records the conflicting A.45.10 wrap requirement.
         if (index >= owner.Size() || (users[index].haveStatusSequence
-            && crypto::ConstantTimeEqual(Read(users[index].certificationKeyFingerprint), Read(certifier))
             && status.seqNum <= users[index].statusSequence)
             || (status.operation == 1 && users[index].active)
             || (status.operation != 1 && !users[index].nameSize)) return Error(10, status.seqNum, 0, header.control.SEQ, output, size, iin);
         uint64_t utc = 0;
-        try { if (!credentials->TrustedUnixTimeMs(utc)) return false; }
-        catch (...) { return false; }
-        const uint64_t lifetime = uint64_t(status.userRoleExpiryDays) * 86400000;
-        if (utc > std::numeric_limits<uint64_t>::max() - lifetime || now > std::numeric_limits<uint64_t>::max() - lifetime) return false;
+        uint64_t lifetime = 0;
+        if (status.operation != 2)
+        {
+            try { if (!credentials->TrustedUnixTimeMs(utc)) return false; }
+            catch (...) { return false; }
+            lifetime = uint64_t(status.userRoleExpiryDays) * 86400000;
+            if (utc > std::numeric_limits<uint64_t>::max() - lifetime || now > std::numeric_limits<uint64_t>::max() - lifetime) return false;
+        } // An authenticated DELETE revokes immediately, even without trusted UTC.
         auto next = users[index];
         if (!Name(next).equals(status.userName)) next = UpdateKeyUser();
         std::memcpy(next.name.data(), status.userName, status.userName.length());
         next.nameSize = static_cast<uint16_t>(status.userName.length());
         next.user = static_cast<uint16_t>(index + 1);
+        next.method = status.keyChangeMethod;
+        next.publicKeySize = static_cast<uint16_t>(status.userPublicKey.length());
+        next.publicKey.fill(0);
+        if (next.publicKeySize) std::memcpy(next.publicKey.data(), status.userPublicKey, next.publicKeySize);
         next.haveStatusSequence = true;
         next.statusSequence = status.seqNum;
         next.certificationKeyFingerprint = certifier;
@@ -625,9 +724,10 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
     }
     if (value.first == 11 && !value.second)
     {
+        if (!MethodAllowed(value.request.keyChangeMethod)) return Error(8, 0, 0, header.control.SEQ, output, size, iin);
         if (Busy())
         {
-            if (phase != Phase::OUTSTATION_REPLY || value.request.keyChangeMethod != 4
+            if (phase != Phase::OUTSTATION_REPLY || value.request.keyChangeMethod != users[slot].method
                 || !Name(users[slot]).equals(value.request.userName)
                 || !Read(masterChallenge).equals(value.request.challengeData)) return false;
             APDUResponse response(output);
@@ -640,11 +740,11 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
             size = response.Size();
             return true;
         }
-        if (value.request.keyChangeMethod != 4) return Error(8, 0, 0, header.control.SEQ, output, size, iin);
         const auto index = Find(value.request.userName);
         if (index >= owner.Size() || value.request.challengeData.length() != 32
             || now >= (users[index].pending ? pendingExpires[index] : expires[index]))
             return Error(11, 0, 0, header.control.SEQ, output, size, iin);
+        if (users[index].method != value.request.keyChangeMethod) return Error(8, 0, 0, header.control.SEQ, output, size, iin);
         if (!owner.At(index)->NextUpdateKeySequence(ksq)) return false;
         slot = index;
         user = users[index].user;
@@ -665,10 +765,12 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
     if (phase != Phase::OUTSTATION_REPLY || !transmitted || (value.first != 13 && value.first != 15)
         || header.control.SEQ != ((appSequence + 1) & 15)) return false;
     const bool changing = value.first == 13;
-    if (changing && (value.second != 15 || value.change.seqNum != ksq || value.change.userNum != user)) return false;
+    const bool asymmetric = users[slot].method == 68;
+    if (changing && (value.second != (asymmetric ? 14 : 15) || value.change.seqNum != ksq || value.change.userNum != user)) return false;
     if (!changing && value.second) return false;
     bool keyOK = true;
-    if (changing)
+    if (changing && asymmetric) keyOK = ReadAsymmetricChange(value.change, value.signature);
+    else if (changing)
     {
         std::array<uint8_t, 32> authorityKey{};
         std::array<uint8_t, 200> plain{};
@@ -685,9 +787,10 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
     else if (users[slot].active && now < expires[slot] && !users[slot].pending) candidate = users[slot].updateKey;
     else keyOK = false;
     std::array<uint8_t, 16> expected{};
-    const bool authenticated = keyOK && value.confirm.hmacValue.length() == owner.config.tagLength
-        && Confirmation(true, Read(candidate), {expected.data(), owner.config.tagLength})
-        && crypto::ConstantTimeEqual({expected.data(), owner.config.tagLength}, value.confirm.hmacValue);
+    const bool authenticated = keyOK && ((changing && asymmetric)
+        || (value.confirm.hmacValue.length() == owner.config.tagLength
+            && Confirmation(true, Read(candidate), {expected.data(), owner.config.tagLength})
+            && crypto::ConstantTimeEqual({expected.data(), owner.config.tagLength}, value.confirm.hmacValue)));
     if (!authenticated)
     {
         const auto failedSequence = ksq;

@@ -18,11 +18,12 @@ namespace opendnp3
 {
 namespace
 {
-    constexpr uint8_t recordMagic[] = {'D','N','P','3','U','K','0','1'};
+    constexpr uint8_t legacyRecordMagic[] = {'D','N','P','3','U','K','0','1'};
+    constexpr uint8_t recordMagic[] = {'D','N','P','3','U','K','0','2'};
     constexpr uint8_t commitMagic[] = {'D','N','P','3','U','C','0','1'};
     struct Blob
     {
-        std::array<uint8_t, 512> bytes{};
+        std::array<uint8_t, 2048> bytes{};
         size_t size = 0;
         ~Blob() { crypto::Clear({bytes.data(), bytes.size()}); }
         ser4cpp::rseq_t Read() const { return {bytes.data(), size}; }
@@ -59,7 +60,8 @@ namespace
     }
     bool Encode(const UpdateKeyUser& user, uint16_t association, uint64_t generation, Blob& output)
     {
-        if (user.nameSize == 0 || user.nameSize > user.name.size() || user.certificationSize > user.certification.size()) return false;
+        if (user.nameSize == 0 || user.nameSize > user.name.size() || user.certificationSize > user.certification.size()
+            || user.publicKeySize > user.publicKey.size() || (user.method != 4 && user.method != 68)) return false;
         auto dest = output.Write();
         dest.copy_from({recordMagic, sizeof(recordMagic)});
         const uint8_t flags = (user.active ? 1 : 0) | (user.pending ? 2 : 0)
@@ -72,6 +74,8 @@ namespace
         dest.copy_from({user.name.data(), user.name.size()});
         dest.copy_from({user.updateKey.data(), user.updateKey.size()});
         dest.copy_from({user.pendingUpdateKey.data(), user.pendingUpdateKey.size()});
+        ser4cpp::LittleEndian::write(dest, user.method, user.publicKeySize);
+        dest.copy_from({user.publicKey.data(), user.publicKey.size()});
         output.size = output.bytes.size() - dest.length();
         return true;
     }
@@ -81,7 +85,8 @@ namespace
         blank.nameSize = 1;
         Blob sizeCheck;
         Encode(blank, association, generation, sizeCheck);
-        if (input.length() != sizeCheck.size || !input.take(8).equals({recordMagic, sizeof(recordMagic)})) return false;
+        const bool legacy = input.length() == 291 && input.take(8).equals({legacyRecordMagic, sizeof(legacyRecordMagic)});
+        if (!legacy && (input.length() != sizeCheck.size || !input.take(8).equals({recordMagic, sizeof(recordMagic)}))) return false;
         input.advance(8);
         uint64_t storedGeneration = 0;
         uint16_t storedAssociation = 0;
@@ -90,16 +95,24 @@ namespace
             user.statusSequence, flags, user.role, user.pendingRole, user.expiresUnixMs, user.pendingExpiresUnixMs,
             user.statusOperation, user.statusExpiryDays, user.certificationSize);
         if (storedGeneration != generation || storedAssociation != association || flags > 15
-            || user.nameSize == 0 || user.nameSize > user.name.size() || user.certificationSize > user.certification.size()) return false;
+            || user.nameSize == 0 || user.nameSize > user.name.size()
+            || user.certificationSize > (legacy ? 16u : user.certification.size())) return false;
         user.active = (flags & 1) != 0;
         user.pending = (flags & 2) != 0;
         user.haveStatusSequence = (flags & 4) != 0;
         user.havePendingKey = (flags & 8) != 0;
-        std::memcpy(user.certification.data(), input, user.certification.size()); input.advance(user.certification.size());
+        const auto certificationSize = legacy ? 16u : user.certification.size();
+        std::memcpy(user.certification.data(), input, certificationSize); input.advance(certificationSize);
         std::memcpy(user.certificationKeyFingerprint.data(), input, user.certificationKeyFingerprint.size()); input.advance(user.certificationKeyFingerprint.size());
         std::memcpy(user.name.data(), input, user.name.size()); input.advance(user.name.size());
         std::memcpy(user.updateKey.data(), input, user.updateKey.size()); input.advance(user.updateKey.size());
-        std::memcpy(user.pendingUpdateKey.data(), input, user.pendingUpdateKey.size());
+        std::memcpy(user.pendingUpdateKey.data(), input, user.pendingUpdateKey.size()); input.advance(user.pendingUpdateKey.size());
+        if (!legacy)
+        {
+            ser4cpp::LittleEndian::read(input, user.method, user.publicKeySize);
+            if (user.publicKeySize > user.publicKey.size() || (user.method != 4 && user.method != 68)) return false;
+            std::memcpy(user.publicKey.data(), input, user.publicKey.size());
+        }
         return true;
     }
     bool Marker(ser4cpp::rseq_t marker, uint8_t& slot, uint64_t& generation, ser4cpp::rseq_t& hash)

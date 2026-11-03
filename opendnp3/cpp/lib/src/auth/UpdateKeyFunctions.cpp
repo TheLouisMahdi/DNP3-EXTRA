@@ -111,14 +111,15 @@ bool VerifyMAC(ser4cpp::rseq_t key, ser4cpp::rseq_t message, ser4cpp::rseq_t mac
 }
 
 bool KeyData(ser4cpp::rseq_t name, ser4cpp::rseq_t key, ser4cpp::rseq_t challenge,
-             ser4cpp::wseq_t output, size_t& size)
+             ser4cpp::wseq_t output, size_t& size, bool wrapPadding)
 {
     size = 0;
     Output guard(output);
     if (!ValidName(name) || !Valid(key) || !Valid(challenge) || key.length() != KEY_SIZE
         || challenge.length() != CHALLENGE_SIZE || Overlaps(name, output) || Overlaps(key, output)
         || Overlaps(challenge, output)) return false;
-    const auto required = (name.length() + KEY_SIZE + CHALLENGE_SIZE + 7) & ~size_t(7);
+    const auto content = name.length() + KEY_SIZE + CHALLENGE_SIZE;
+    const auto required = wrapPadding ? ((content + 7) & ~size_t(7)) : content;
     if (!static_cast<uint8_t*>(output) || output.length() < required) return false;
     crypto::Clear(output);
     auto dest = output;
@@ -131,20 +132,37 @@ bool KeyData(ser4cpp::rseq_t name, ser4cpp::rseq_t key, ser4cpp::rseq_t challeng
 }
 
 bool ReadKeyData(ser4cpp::rseq_t input, ser4cpp::rseq_t name, ser4cpp::rseq_t challenge,
-                 ser4cpp::wseq_t key)
+                 ser4cpp::wseq_t key, bool wrapPadding)
 {
     Output guard(key);
     if (!Valid(input) || !ValidName(name) || !Valid(challenge) || challenge.length() != CHALLENGE_SIZE
         || !static_cast<uint8_t*>(key) || key.length() != KEY_SIZE || Overlaps(input, key)
         || Overlaps(name, key) || Overlaps(challenge, key)) return false;
     const auto content = name.length() + KEY_SIZE + CHALLENGE_SIZE;
-    if (input.length() != ((content + 7) & ~size_t(7))
+    if (input.length() != (wrapPadding ? ((content + 7) & ~size_t(7)) : content)
         || !crypto::ConstantTimeEqual(input.take(name.length()), name)
         || !crypto::ConstantTimeEqual(input.skip(name.length() + KEY_SIZE).take(CHALLENGE_SIZE), challenge))
         return false;
     // Table A-11 does not prescribe padding values. RFC 3394 authenticates all
     // plaintext bytes; do not reject an authority's otherwise valid padding.
     std::memcpy(key, input.skip(name.length()), KEY_SIZE);
+    guard.committed = true;
+    return true;
+}
+
+bool SignatureData(ser4cpp::rseq_t outstationName, ser4cpp::rseq_t userName,
+                   ser4cpp::rseq_t masterChallenge, ser4cpp::rseq_t outstationChallenge,
+                   uint32_t sequence, uint16_t user, ser4cpp::rseq_t encrypted,
+                   ser4cpp::wseq_t output, size_t& size)
+{
+    size = 0;
+    Output guard(output);
+    if (!Valid(encrypted) || encrypted.length() != 256 || Overlaps(encrypted, output)
+        || output.length() < outstationName.length() + 70 + encrypted.length()) return false;
+    if (!ConfirmationData(true, outstationName, userName, masterChallenge, outstationChallenge,
+        sequence, user, output, size)) return false;
+    output.skip(size).copy_from(encrypted);
+    size += encrypted.length();
     guard.committed = true;
     return true;
 }
