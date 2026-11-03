@@ -33,6 +33,7 @@
 #include <assert.h>
 
 #include <deque>
+#include <ser4cpp/container/Buffer.h>
 #include <memory>
 
 namespace opendnp3
@@ -119,6 +120,7 @@ private:
     CommandStatus statusResult;
     const CommandResultCallbackT commandCallback;
     CommandSet commands;
+    ser4cpp::Buffer selectObjects;
     const IndexQualifierMode mode;
 };
 

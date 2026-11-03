@@ -19,12 +19,10 @@
  */
 #include "RequestHistory.h"
 
-#include "link/CRC.h"
-
 namespace opendnp3
 {
 
-RequestHistory::RequestHistory() : hasLast(false), lastDigest(0), lastObjectsLength(0) {}
+RequestHistory::RequestHistory(size_t capacity) : hasLast(false), lastObjects(capacity), lastObjectsLength(0) {}
 
 void RequestHistory::Reset()
 {
@@ -33,10 +31,11 @@ void RequestHistory::Reset()
 
 void RequestHistory::RecordLastProcessedRequest(const APDUHeader& header, const ser4cpp::rseq_t& objects)
 {
-    hasLast = true;
+    hasLast = objects.length() <= lastObjects.length();
+    if (!hasLast) return;
+    if (objects.is_not_empty()) lastObjects.as_wslice().copy_from(objects);
     lastHeader = header;
     lastObjectsLength = objects.length();
-    lastDigest = CRC::CalcCrc(objects);
 }
 
 bool RequestHistory::FullyEqualsLastRequest(const APDUHeader& header, const ser4cpp::rseq_t& objects) const
@@ -51,7 +50,8 @@ APDUHeader RequestHistory::GetLastHeader() const
 
 bool RequestHistory::EqualsLastObjects(const ser4cpp::rseq_t& objects) const
 {
-    return hasLast && (lastObjectsLength == objects.length()) && (lastDigest == CRC::CalcCrc(objects));
+    return hasLast && objects.length() == lastObjectsLength
+        && (lastObjectsLength == 0 || lastObjects.as_rslice().take(lastObjectsLength).equals(objects));
 }
 
 } // namespace opendnp3

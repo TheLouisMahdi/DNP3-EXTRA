@@ -21,6 +21,8 @@
 #define OPENDNP3_REQUESTHISTORY_H
 
 #include "app/APDUHeader.h"
+#include "opendnp3/app/AppConstants.h"
+#include <ser4cpp/container/Buffer.h>
 
 #include <ser4cpp/container/SequenceTypes.h>
 
@@ -33,7 +35,7 @@ namespace opendnp3
 class RequestHistory
 {
 public:
-    RequestHistory();
+    explicit RequestHistory(size_t capacity = DEFAULT_MAX_APDU_SIZE);
 
     bool HasLastRequest() const
     {
@@ -50,7 +52,7 @@ public:
 private:
     bool hasLast;
     APDUHeader lastHeader;
-    uint16_t lastDigest;
+    ser4cpp::Buffer lastObjects;
     size_t lastObjectsLength;
 };
 

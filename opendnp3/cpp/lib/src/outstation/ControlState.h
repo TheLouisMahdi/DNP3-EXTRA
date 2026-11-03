@@ -21,7 +21,9 @@
 #define OPENDNP3_CONTROLSTATE_H
 
 #include "app/AppSeqNum.h"
-#include "link/CRC.h"
+#include "opendnp3/app/AppConstants.h"
+#include "opendnp3/gen/FunctionCode.h"
+#include <ser4cpp/container/Buffer.h>
 
 #include "opendnp3/gen/CommandStatus.h"
 #include "opendnp3/util/Timestamp.h"
@@ -36,7 +38,29 @@ class ControlState
 {
 
 public:
-    ControlState() = default;
+    explicit ControlState(size_t capacity = DEFAULT_MAX_APDU_SIZE) : selectedObjects(capacity) {}
+
+    // Also prevents an authenticated retry from replacing the original SELECT owner.
+    bool IsSelectSequence(const AppSeqNum& seq) const
+    {
+        return selected && expectedSeq.Equals(seq.Next());
+    }
+
+    // Table 4-9 applies only after native authentication/authorization admission.
+    // A changed same-sequence SELECT is discarded without replacing the timer.
+    bool OnRequest(FunctionCode function, const AppSeqNum& seq, const ser4cpp::rseq_t& objects)
+    {
+        if (!selected) return true;
+        if (function == FunctionCode::SELECT)
+        {
+            if (IsSelectSequence(seq))
+                return selectedObjects.as_rslice().take(length).equals(objects);
+            Unselect();
+        }
+        else if (function != FunctionCode::OPERATE)
+            Unselect();
+        return true;
+    }
 
     CommandStatus ValidateSelection(const AppSeqNum& seq,
                                     const Timestamp& now,
@@ -50,7 +74,7 @@ public:
                 auto elapsed = now - selectTime;
                 if (elapsed < timeout)
                 {
-                    if (length == objects.length() && digest == CRC::CalcCrc(objects))
+                    if (selectedObjects.as_rslice().take(length).equals(objects))
                     {
                         return CommandStatus::SUCCESS;
                     }
@@ -77,10 +101,11 @@ public:
 
     void Select(const AppSeqNum& currentSeqN, const Timestamp& now, const ser4cpp::rseq_t& objects)
     {
-        selected = true;
+        selected = objects.is_not_empty() && objects.length() <= selectedObjects.length();
+        if (!selected) return;
+        selectedObjects.as_wslice().copy_from(objects);
         selectTime = now;
         expectedSeq = currentSeqN.Next();
-        digest = CRC::CalcCrc(objects);
         length = objects.length();
     }
 
@@ -93,7 +118,7 @@ private:
     bool selected = false;
     AppSeqNum expectedSeq;
     Timestamp selectTime;
-    uint16_t digest = 0;
+    ser4cpp::Buffer selectedObjects;
     size_t length = 0;
 };
 

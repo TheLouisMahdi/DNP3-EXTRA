@@ -123,6 +123,9 @@ IINField CommandResponseHandler::RespondToHeaderWithIterator(QualifierCode quali
         case (CommandStatus::SUCCESS):
             ++this->numSuccess;
             break;
+        case (CommandStatus::ALREADY_ACTIVE):
+            ret.SetBit(IINBit::ALREADY_EXECUTING);
+            break;
         case (CommandStatus::NOT_SUPPORTED):
             ret.SetBit(IINBit::PARAM_ERROR);
             break;
@@ -143,9 +146,9 @@ IINField CommandResponseHandler::RespondToHeaderWithIterator(QualifierCode quali
 
 template<class Target> CommandStatus CommandResponseHandler::ProcessCommand(const Target& command, uint16_t index)
 {
-    if (numRequests < maxCommands)
+    // Count rejected objects too: any TOO_MANY_OPS invalidates the entire SELECT.
+    if (numRequests++ < maxCommands)
     {
-        ++numRequests;
         return pCommandAction->Action(command, index);
     }
     else

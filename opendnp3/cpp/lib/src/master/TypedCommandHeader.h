@@ -30,6 +30,7 @@
 #include "opendnp3/master/ICommandCollection.h"
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace opendnp3
@@ -68,6 +69,21 @@ public:
     virtual void Foreach(IVisitor<CommandState>& visitor) const override;
 
 private:
+    // Compare echoed command fields as transmitted, excluding the returned status.
+    template<class U> static bool ValuesEqual(const U& lhs, const U& rhs) { return lhs.ValuesEqual(rhs); }
+    static bool ValuesEqual(const ControlRelayOutputBlock& lhs, const ControlRelayOutputBlock& rhs)
+    {
+        return lhs.rawCode == rhs.rawCode && lhs.ValuesEqual(rhs);
+    }
+    static bool ValuesEqual(const AnalogOutputFloat32& lhs, const AnalogOutputFloat32& rhs)
+    {
+        return std::memcmp(&lhs.value, &rhs.value, sizeof(lhs.value)) == 0;
+    }
+    static bool ValuesEqual(const AnalogOutputDouble64& lhs, const AnalogOutputDouble64& rhs)
+    {
+        return std::memcmp(&lhs.value, &rhs.value, sizeof(lhs.value)) == 0;
+    }
+
     QualifierCode ExpectedQualfier() const
     {
         return this->use_single_byte_index ? QualifierCode::UINT8_CNT_UINT8_INDEX
@@ -162,7 +178,7 @@ void TypedCommandHeader<T>::ApplySelectResponse(QualifierCode code, const IColle
             return;
         }
 
-        if (!item.value.ValuesEqual(rec.command))
+        if (!ValuesEqual(item.value, rec.command))
         {
             rec.state = CommandPointState::SELECT_MISMATCH;
             return;
@@ -208,7 +224,7 @@ void TypedCommandHeader<T>::ApplyOperateResponse(QualifierCode code, const IColl
             return;
         }
 
-        if (!item.value.ValuesEqual(rec.command))
+        if (!ValuesEqual(item.value, rec.command))
         {
             rec.state = CommandPointState::OPERATE_FAIL;
             return;

@@ -2091,7 +2091,7 @@ TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives res
         pair.SelectOperate();
         REQUIRE(pair.master.lower->NumWrites() == 1);
         HexSequence fresh(pair.master.lower->PopWriteAsHex());
-        REQUIRE_FALSE(fresh.ToRSeq()[2] == 120 && fresh.ToRSeq()[3] == 3);
+        REQUIRE_FALSE((fresh.ToRSeq()[2] == 120 && fresh.ToRSeq()[3] == 3));
         for (size_t i = 0; i < borrowed.length(); ++i)
             REQUIRE(borrowed[i] == 0);
     }

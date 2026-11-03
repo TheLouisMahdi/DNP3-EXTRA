@@ -75,7 +75,7 @@ CommandSetOps::SelectResult CommandSetOps::ProcessSelectResponse(CommandSet& set
 {
     CommandSetOps handler(Mode::Select, set);
     const auto result = APDUParser::Parse(headers, handler, logger);
-    if (result != ParseResult::OK)
+    if (result != ParseResult::OK || handler.Errors().Any())
     {
         return SelectResult::FAIL_PARSE;
     }
@@ -90,8 +90,8 @@ CommandSetOps::OperateResult CommandSetOps::ProcessOperateResponse(CommandSet& s
                                                                    Logger* logger)
 {
     CommandSetOps handler(Mode::Operate, set);
-    return (APDUParser::Parse(headers, handler, logger) == ParseResult::OK) ? OperateResult::OK
-                                                                            : OperateResult::FAIL_PARSE;
+    return (APDUParser::Parse(headers, handler, logger) == ParseResult::OK && !handler.Errors().Any())
+        ? OperateResult::OK : OperateResult::FAIL_PARSE;
 }
 
 bool CommandSetOps::IsAllowed(uint32_t /*headerCount*/, GroupVariation gv, QualifierCode qc)

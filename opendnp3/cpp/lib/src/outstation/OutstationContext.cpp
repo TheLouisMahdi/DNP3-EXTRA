@@ -71,7 +71,9 @@ OContext::OContext(const Addresses& addresses,
       isOnline(false),
       isTransmitting(false),
       staticIIN(IINBit::DEVICE_RESTART),
+      history(config.params.maxRxFragSize),
       deferred(config.params.maxRxFragSize),
+      control(config.params.maxRxFragSize),
       sol(config.params.maxTxFragSize),
       unsol(config.params.maxTxFragSize),
       unsolRetries(config.params.numUnsolRetries),
@@ -158,6 +160,7 @@ bool OContext::OnLowerLayerDown()
     sol.Reset();
     unsol.Reset();
     history.Reset();
+    control.Unselect();
     deferred.Reset();
     eventBuffer.Unselect();
     rspContext.Reset();
@@ -248,6 +251,9 @@ OutstationState& OContext::ProcessNewRequest(const ParsedRequest& request)
 
 bool OContext::ProcessObjects(const ParsedRequest& request)
 {
+    if (!control.OnRequest(request.header.function, AppSeqNum(request.header.control.SEQ), request.objects))
+        return true; // Changed same-sequence SELECT: discard per Table 4-9.
+
     if (request.addresses.IsBroadcast())
     {
         this->state = &this->state->OnBroadcastMessage(*this, request);
@@ -887,6 +893,8 @@ IINField OContext::HandleWrite(const ser4cpp::rseq_t& objects)
 
 IINField OContext::HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateType opType, HeaderWriter* pWriter)
 {
+    if (objects.is_empty() || objects.length() > params.maxRxFragSize) return IINBit::PARAM_ERROR;
+
     // since we're echoing, make sure there's enough size before beginning
     if (pWriter && (objects.length() > pWriter->Remaining()))
     {
@@ -904,6 +912,9 @@ IINField OContext::HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateTy
 
 IINField OContext::HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& writer)
 {
+    control.Unselect(); // A failed new SELECT must never leave an older selection armed.
+    if (objects.is_empty() || objects.length() > params.maxRxFragSize) return IINBit::PARAM_ERROR;
+
     // since we're echoing, make sure there's enough size before beginning
     if (objects.length() > writer.Remaining())
     {
@@ -931,9 +942,16 @@ IINField OContext::HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& wr
 
 IINField OContext::HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& writer)
 {
+    if (objects.is_empty() || objects.length() > params.maxRxFragSize)
+    {
+        control.Unselect();
+        return IINBit::PARAM_ERROR;
+    }
+
     // since we're echoing, make sure there's enough size before beginning
     if (objects.length() > writer.Remaining())
     {
+        control.Unselect();
         FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Igonring command request due to oversized payload size of %zu",
                          objects.length());
         return IINField(IINBit::PARAM_ERROR);
@@ -941,6 +959,7 @@ IINField OContext::HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& w
 
     auto now = Timestamp(this->executor->get_time());
     auto result = this->control.ValidateSelection(this->sol.seq.num, now, this->params.selectTimeout, objects);
+    control.Unselect(); // Consume once; native history retransmits an exact duplicate response.
 
     if (result == CommandStatus::SUCCESS)
     {
@@ -950,11 +969,6 @@ IINField OContext::HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& w
         this->shouldCheckForUnsolicited = true;
         return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
     }
-    else
-    {
-        this->control.Unselect();
-    }
-
     return this->HandleCommandWithConstant(objects, writer, result);
 }
 
@@ -1559,7 +1573,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                     permitted = permitted && auth.selectUser == handler.reply.userNum;
                     auth.selectUser = 0;
                 }
-                else if (original.header.function == FunctionCode::SELECT && permitted)
+                else if (original.header.function == FunctionCode::SELECT && permitted
+                         && !control.IsSelectSequence(AppSeqNum(original.header.control.SEQ)))
                     auth.selectUser = handler.reply.userNum;
             }
             if (permitted)
@@ -1636,7 +1651,8 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             allowed = allowed && auth.selectUser == user;
             auth.selectUser = 0;
         }
-        else if (original.header.function == FunctionCode::SELECT && allowed)
+        else if (original.header.function == FunctionCode::SELECT && allowed
+                 && !control.IsSelectSequence(AppSeqNum(original.header.control.SEQ)))
             auth.selectUser = user;
         if (allowed)
             ProcessObjects(ParsedRequest(message.addresses, original.header, original.objects));

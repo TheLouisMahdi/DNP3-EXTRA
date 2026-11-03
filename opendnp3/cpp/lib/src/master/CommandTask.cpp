@@ -98,7 +98,10 @@ bool CommandTask::BuildRequest(APDURequest& request, uint8_t seq)
         functionCodes.pop_front();
         request.SetControl(AppControlField::Request(seq));
         auto writer = request.GetWriter();
-        return CommandSetOps::Write(commands, writer, this->mode);
+        const auto success = CommandSetOps::Write(commands, writer, this->mode);
+        if (success && request.GetFunction() == FunctionCode::SELECT)
+            selectObjects = ser4cpp::Buffer(request.ToRSeq().skip(2));
+        return success;
     }
 
     return false;
@@ -107,7 +110,14 @@ bool CommandTask::BuildRequest(APDURequest& request, uint8_t seq)
 IMasterTask::ResponseResult CommandTask::ProcessResponse(const APDUResponseHeader& header,
                                                          const ser4cpp::rseq_t& objects)
 {
-    return ValidateSingleResponse(header) ? ProcessResponse(objects) : ResponseResult::ERROR_BAD_RESPONSE;
+    if (!ValidateSingleResponse(header)) return ResponseResult::ERROR_BAD_RESPONSE;
+    const bool select = !functionCodes.empty();
+    const bool exactEcho = !select || selectObjects.as_rslice().equals(objects);
+    const bool rejected = header.IIN.HasRequestError() || header.IIN.IsSet(IINBit::ALREADY_EXECUTING);
+    const auto result = ProcessResponse(objects); // Retain typed per-point failure reporting.
+    // IEEE 4.4.4.3 Rule 8: no OPERATE after any changed echo or rejecting IIN.
+    return select && result == ResponseResult::OK_REPEAT && (!exactEcho || rejected)
+        ? ResponseResult::ERROR_BAD_RESPONSE : result;
 }
 
 void CommandTask::OnTaskComplete(TaskCompletion result, Timestamp /*now*/)
