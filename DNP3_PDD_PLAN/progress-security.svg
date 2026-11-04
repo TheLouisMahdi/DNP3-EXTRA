@@ -1,18 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 165" role="img" aria-labelledby="title desc">
 <title id="title">RTU Security Requirements</title>
-<desc id="desc">Verified 42.42% (14/33). Implementation coverage 48.48% (16/33). Evidence 4d9f7bbaea1f | 21 open issue IDs. Verified: 14, Implemented, unverified: 2, Partial: 10, Missing: 3, Not audited: 3, Not applicable: 0, Blocked: 1</desc>
+<desc id="desc">Verified 0.00% (0/33). Implementation coverage 0.00% (0/33). Evidence 4d9f7bbaea1f | 21 open issue IDs. Verified: 0, Implemented, unverified: 0, Partial: 0, Missing: 3, Not audited: 29, Not applicable: 0, Blocked: 1</desc>
 <rect width="700" height="165" rx="14" fill="#101b2d"/>
 <g font-family="system-ui, sans-serif" fill="#f1f6ff">
 <text x="22" y="30" font-size="22" font-weight="700">RTU Security Requirements</text>
-<text x="22" y="63" font-size="25" font-weight="700">Verified 42.42% (14/33)</text>
-<text x="22" y="91" font-size="17">Implementation coverage 48.48% (16/33)</text>
+<text x="22" y="63" font-size="25" font-weight="700">Verified 0.00% (0/33)</text>
+<text x="22" y="91" font-size="17">Implementation coverage 0.00% (0/33)</text>
 <text x="22" y="150" font-size="16" fill="#bdcce2">Evidence 4d9f7bbaea1f | 21 open issue IDs</text>
 </g>
 <rect x="22" y="106" width="656" height="22" rx="5" fill="#34425a"/>
-<rect x="22" y="106" width="278" height="22" fill="#52d39b"/>
-<rect x="300" y="106" width="40" height="22" fill="#55c9ee"/>
-<rect x="340" y="106" width="198" height="22" fill="#ffc465"/>
-<rect x="538" y="106" width="60" height="22" fill="#f38d91"/>
-<rect x="598" y="106" width="60" height="22" fill="#8191a8"/>
+<rect x="22" y="106" width="59" height="22" fill="#f38d91"/>
+<rect x="81" y="106" width="577" height="22" fill="#8191a8"/>
 <rect x="658" y="106" width="20" height="22" fill="#cc9af2"/>
 </svg>
