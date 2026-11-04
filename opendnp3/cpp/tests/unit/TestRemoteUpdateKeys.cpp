@@ -1130,7 +1130,12 @@ TEST_CASE("RemoteUpdateKeys - startup waits for trusted expiry validation and ig
 
 TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and preserves pending recovery", "[remote-update-keys][remote-update-runtime]")
 {
-    RemotePair pair;
+    const bool asymmetric = GENERATE(false, true);
+    std::shared_ptr<RemoteAuthority> authority
+        = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority);
+    const auto masterCommonKSQ = pair.Master().Find(1)->Sequence();
+    const auto outCommonKSQ = pair.Out().Find(1)->Sequence();
     pair.dropOutVariation = 15;
     auto completed = pair.Start(pair.authority->Status(3, 1, "A", 0));
     pair.Pump();
@@ -1138,44 +1143,73 @@ TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and
     REQUIRE(pair.masterCredentials->users[1].havePendingKey);
     REQUIRE(pair.masterCredentials->users[1].role == 1);
     REQUIRE(pair.outCredentials->users[1].role == 0);
+    REQUIRE(pair.Master().Find(1)->Ready(1));
+    REQUIRE(pair.Out().Find(1)->Ready(1));
+    REQUIRE(pair.Master().Find(1)->Sequence() == masterCommonKSQ);
+    REQUIRE(pair.Out().Find(1)->Sequence() == outCommonKSQ);
+    const auto& oldChange = pair.masterWire.back();
+    const HexSequence oldPacket(oldChange);
+    REQUIRE(oldPacket.ToRSeq().length() >= 4);
+    REQUIRE(oldPacket.ToRSeq()[3] == 13);
     REQUIRE(pair.master.context->OnLowerLayerDown());
     AuthenticationSession restarted(SessionKeys::Role::MASTER,
         RemoteMasterSettings(RemoteSettings(pair.masterCredentials, pair.policy, pair.authority, 2)).authentication);
     REQUIRE(restarted.Load(0));
+    REQUIRE_FALSE(restarted.Find(2)->Ready(0));
     REQUIRE(restarted.Find(2)->UpdateKey(0).equals(R(pair.masterCredentials->users[1].updateKey)));
     REQUIRE_FALSE(restarted.Find(2)->UpdateKey(0).equals(R(pair.masterCredentials->users[1].pendingUpdateKey)));
     pair.out.LowerLayerDown();
-    pair.out.LowerLayerUp();
+    OutstationTestObject restartedOut(RemoteOutSettings(RemoteSettings(pair.outCredentials, pair.policy, authority, 2)));
+    restartedOut.application->currentTime = DNPTime(pair.outCredentials->utc);
+    restartedOut.LowerLayerUp();
+    auto& outSession = RemoteUpdateKeyTestAccess::Sessions(restartedOut.context);
+    REQUIRE_FALSE(outSession.Find(2)->Ready(0));
+    const auto recoveredKSQ = outSession.Find(2)->Sequence();
+    const auto commonKSQ = outSession.Find(1)->Sequence();
+    const auto outWrites = pair.outCredentials->writes;
+    restartedOut.SendToOutstation(oldChange);
+    REQUIRE(restartedOut.lower->NumWrites() == 0);
+    REQUIRE(pair.outCredentials->writes == outWrites);
+    REQUIRE(outSession.Find(2)->Sequence() == recoveredKSQ);
     REQUIRE(pair.masterCredentials->users[1].havePendingKey);
     UpdateKeyRequest verify;
     verify.name[0] = 'A';
     verify.nameSize = 1;
+    verify.method = asymmetric ? 68 : 4;
     verify.verifyOnly = true;
     REQUIRE(restarted.remote->Begin(verify, 0));
-    // Recreated Master engine and native Outstation, using only the durable
-    // pending key. V15 proof, rather than a local restart, activates the key.
+    // Only a fresh V15 proof activates the durable pending Update Key.
+    uint64_t now = 0;
     for (uint8_t sequence = 9; sequence <= 10; ++sequence)
     {
+        ++now;
         std::array<uint8_t, 1024> buffer{};
         APDURequest apdu(W(buffer));
-        REQUIRE(restarted.remote->Build(apdu, sequence, 0));
+        REQUIRE(restarted.remote->Build(apdu, sequence, now));
         const rseq_t wire(buffer.data(), apdu.Size());
         restarted.remote->Transmitted(wire);
-        pair.out.SendToOutstation(HexConversions::to_hex(wire));
-        REQUIRE(pair.out.lower->NumWrites() == 1);
-        HexSequence response(pair.out.lower->PopWriteAsHex());
-        pair.out.OnTxReady();
+        restartedOut.AdvanceTime(TimeDuration::Milliseconds(1));
+        restartedOut.SendToOutstation(HexConversions::to_hex(wire));
+        REQUIRE(restartedOut.lower->NumWrites() == 1);
+        HexSequence response(restartedOut.lower->PopWriteAsHex());
+        restartedOut.OnTxReady();
         const auto parsed = APDUHeaderParser::ParseResponse(response.ToRSeq());
         REQUIRE(parsed.success);
-        REQUIRE(restarted.remote->Response(parsed.header, parsed.objects, 0)
+        REQUIRE(restarted.remote->Response(parsed.header, parsed.objects, now)
             == (sequence == 9 ? RemoteUpdateKeys::Result::CONTINUE : RemoteUpdateKeys::Result::COMPLETE));
     }
     REQUIRE_FALSE(pair.masterCredentials->users[1].havePendingKey);
     REQUIRE(pair.masterCredentials->users[1].updateKey == pair.outCredentials->users[1].updateKey);
-    REQUIRE(restarted.Find(2)->UpdateKey(0).equals(R(pair.outCredentials->users[1].updateKey)));
+    REQUIRE(restarted.Find(2)->UpdateKey(now).equals(R(pair.outCredentials->users[1].updateKey)));
+    REQUIRE_FALSE(restarted.Find(2)->Ready(now));
+    REQUIRE_FALSE(outSession.Find(2)->Ready(now));
+    REQUIRE(outSession.Find(2)->Sequence() == recoveredKSQ + 1);
+    REQUIRE(outSession.Find(1)->Sequence() == commonKSQ);
+    REQUIRE(pair.outCredentials->writes == outWrites);
     REQUIRE(restarted.statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
-    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+    REQUIRE(outSession.statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    REQUIRE(restartedOut.cmdHandler->NumInvocations() == 0);
 }
 
 TEST_CASE("RemoteUpdateKeys - Table A-13 direction-specific transcript and known MAC", "[remote-update-keys]")

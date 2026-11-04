@@ -8,6 +8,7 @@ from contextlib import ExitStack
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import threading
 import time
@@ -98,7 +99,15 @@ def run(exe, *args, success=True):
     return result
 
 
+def loopback_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return ["--port", str(listener.getsockname()[1])]
+
+
 def connected(exe, options, master_options=(), out_options=()):
+    if "--port" not in options:
+        options = [*options, *loopback_port()]
     out = Peer(exe, "outstation", [*options, *out_options])
     master = Peer(exe, "master", [*options, *master_options])
     try:
@@ -169,7 +178,7 @@ def secure(exe, method):
     profile = "pc-" + uuid.uuid4().hex[:12]
     args = ["--test-only", "--profile", profile, "--auth", method]
     run(exe, "test-provision", *args)
-    options = [*args, "--trust-system-time", "--reply-ms", "5000", "--trace"]
+    options = [*args, *loopback_port(), "--trust-system-time", "--reply-ms", "5000", "--trace"]
     master = out = None
     try:
         master, out = connected(exe, options)
@@ -237,7 +246,8 @@ def invalid_credentials(exe):
     profiles = ["bad-" + uuid.uuid4().hex[:10] for _ in range(2)]
     for profile in profiles:
         run(exe, "test-provision", "--test-only", "--profile", profile, "--auth", "method4")
-    options = ["--auth", "method4", "--test-only", "--trust-system-time", "--response-ms", "1000", "--reply-ms", "1000"]
+    options = ["--auth", "method4", "--test-only", *loopback_port(), "--trust-system-time",
+               "--response-ms", "1000", "--reply-ms", "1000"]
     out = Peer(exe, "outstation", [*options, "--profile", profiles[0], "--deny-controls"])
     master = Peer(exe, "master", [*options, "--profile", profiles[1]])
     try:
@@ -351,7 +361,7 @@ def tls_cases(exe, root):
             run(exe, "test-cleanup", *auth)
     # The same stack must reject every invalid peer before command dispatch.
     for fault in ("wrong-name", "untrusted-server", "untrusted-client", "expired-server"):
-        common = ["--auth", "compat", "--tls", "--response-ms", "1000"]
+        common = ["--auth", "compat", "--tls", *loopback_port(), "--response-ms", "1000"]
         trust = expired if fault == "expired-server" else material
         mo = peer_options("master", wrong if fault == "untrusted-client" else material, trust)
         oo = peer_options("outstation", wrong if fault == "untrusted-server" else expired if fault == "expired-server" else material, trust)
