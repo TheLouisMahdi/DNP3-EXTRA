@@ -349,8 +349,7 @@ IINField Database::SelectRange(GroupVariation gv, const Range& range)
         const auto count = SelectDeadbands(range, static_cast<AnalogDeadbandVariation>(id & 0xFF));
         return count == range.Count() ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
     }
-    if (gv == GroupVariation::Group0Var209 || gv == GroupVariation::Group0Var210
-        || gv == GroupVariation::Group0Var254 || gv == GroupVariation::Group0Var255)
+    if ((id >> 8) == 0)
     {
         if (!range.IsValid() || range.start != 0) return IINBit::PARAM_ERROR;
         const auto variation = static_cast<uint8_t>(GroupVariationSpec::to_type(gv));

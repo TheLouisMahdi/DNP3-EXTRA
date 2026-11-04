@@ -13,12 +13,12 @@ class DeviceAttributeSelection
 {
 public:
     IINField Select(uint8_t variation, uint32_t statisticsPerAssociation);
-    bool HasSelection() const { return countSelected || listSelected; }
-    void Reset() { countSelected = listSelected = false; }
+    bool HasSelection() const { return selected || listSelected; }
+    void Reset() { selected = 0; listSelected = false; }
     bool Load(HeaderWriter& writer);
 private:
     uint32_t count = 0;
-    bool countSelected = false;
+    uint8_t selected = 0;
     bool listSelected = false;
 };
 } // namespace opendnp3

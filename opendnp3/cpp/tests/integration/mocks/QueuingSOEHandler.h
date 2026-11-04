@@ -27,6 +27,7 @@
 #include <opendnp3/master/ISOEHandler.h>
 
 #include <mutex>
+#include <tuple>
 #include <vector>
 
 class QueuingSOEHandler final : public opendnp3::ISOEHandler
@@ -45,6 +46,7 @@ public:
     SynchronizedQueue<ExpectedValue> values;
     SynchronizedQueue<std::pair<opendnp3::HeaderInfo, opendnp3::Indexed<opendnp3::AnalogDeadband>>> deadbands;
     SynchronizedQueue<std::pair<opendnp3::HeaderInfo, opendnp3::Indexed<opendnp3::IINValue>>> indications;
+    SynchronizedQueue<std::tuple<opendnp3::GroupVariation, uint16_t, uint64_t>> unsignedAttributes;
 
     void BeginFragment(const opendnp3::ResponseInfo& info) override
     {
@@ -86,6 +88,15 @@ public:
                  const opendnp3::ICollection<opendnp3::Indexed<opendnp3::IINValue>>& values) override
     {
         values.ForeachItem([&](const opendnp3::Indexed<opendnp3::IINValue>& item) { indications.Add({info, item}); });
+    }
+
+    void Process(const opendnp3::HeaderInfo& info,
+                 const opendnp3::ICollection<opendnp3::Indexed<opendnp3::DeviceAttribute>>& values) override
+    {
+        values.ForeachItem([&](const opendnp3::Indexed<opendnp3::DeviceAttribute>& item) {
+            uint64_t value;
+            if (item.value.GetUnsigned(value)) unsignedAttributes.Add({info.gv, item.index, value});
+        });
     }
 
     void Process(const opendnp3::HeaderInfo& info,

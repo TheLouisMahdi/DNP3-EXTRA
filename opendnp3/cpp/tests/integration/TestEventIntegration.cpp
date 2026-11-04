@@ -96,8 +96,8 @@ TEST_CASE(SUITE("TestEventIntegration"))
               << std::endl;
 }
 
-TEST_CASE(SUITE("Master reads G80 and G34 writes affect Outstation G32 delivery over TCP"),
-          "[profile-deadband][level4-iin]")
+TEST_CASE(SUITE("Master reads attributes and G80 and G34 writes affect G32 delivery over TCP"),
+          "[profile-deadband][level4-iin][device-attributes]")
 {
     const auto timeout = std::chrono::seconds(4);
     DNP3Manager manager(2);
@@ -124,6 +124,11 @@ TEST_CASE(SUITE("Master reads G80 and G34 writes affect Outstation G32 delivery 
     auto master = client->AddMaster("deadband master", soe, DefaultMasterApplication::Create(), masterConfig);
     REQUIRE(outstation->Enable());
     REQUIRE(master->Enable());
+
+    master->Scan({Header::Range8(0, 212, 0, 0)}, soe);
+    std::vector<std::tuple<GroupVariation, uint16_t, uint64_t>> attributes;
+    REQUIRE(soe->unsignedAttributes.DrainTo(attributes, timeout) == 1);
+    REQUIRE(attributes.front() == std::make_tuple(GroupVariation::Group0Var212, uint16_t(0), uint64_t(0)));
 
     for (const auto qualifier : {QualifierCode::UINT8_START_STOP, QualifierCode::UINT16_START_STOP})
     {

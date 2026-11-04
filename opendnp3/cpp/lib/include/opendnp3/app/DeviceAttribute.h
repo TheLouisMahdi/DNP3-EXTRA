@@ -33,11 +33,34 @@ struct DeviceAttribute
 
     bool IsValid(uint8_t variation) const
     {
-        if (variation == 209 || variation == 210)
-            return dataType == 2 && value.length() > 0 && value.length() <= 255;
-        if (variation != 255 || (value.length() % 2) != 0) return false;
-        return (dataType == 254 && value.length() <= 255)
-            || (dataType == 255 && value.length() >= 256 && value.length() <= 511);
+        switch (variation)
+        {
+        case 255:
+            return (value.length() % 2) == 0
+                && ((dataType == 254 && value.length() <= 255)
+                    || (dataType == 255 && value.length() >= 256 && value.length() <= 511));
+        case 211:
+            if (dataType == 254) return value.is_empty();
+            if (value.is_empty()) return false;
+            return IsVisibleString();
+        case 242: case 243: case 245: case 246: case 247: case 248: case 249: case 250: case 252:
+            return IsVisibleString();
+        case 219: case 222: case 225: case 226: case 227: case 230: case 231: case 234: case 237:
+            return dataType == 3 && value.length() > 0 && value.length() <= 255;
+        default:
+            return variation >= 209 && variation <= 241
+                && dataType == 2 && value.length() > 0 && value.length() <= 255;
+        }
+    }
+
+private:
+    bool IsVisibleString() const
+    {
+        if (dataType != 1 || value.length() > 255) return false;
+        const uint8_t* bytes = value;
+        for (size_t i = 0; i < value.length(); ++i)
+            if (bytes[i] < 0x20 || bytes[i] > 0x7E) return false;
+        return true;
     }
 };
 } // namespace opendnp3

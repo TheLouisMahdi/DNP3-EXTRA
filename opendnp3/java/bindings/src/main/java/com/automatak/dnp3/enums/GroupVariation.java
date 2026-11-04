@@ -37,6 +37,46 @@ public enum GroupVariation
 {
   Group0Var209(0xD1),
   Group0Var210(0xD2),
+  Group0Var211(0xD3),
+  Group0Var212(0xD4),
+  Group0Var213(0xD5),
+  Group0Var214(0xD6),
+  Group0Var215(0xD7),
+  Group0Var216(0xD8),
+  Group0Var217(0xD9),
+  Group0Var218(0xDA),
+  Group0Var219(0xDB),
+  Group0Var220(0xDC),
+  Group0Var221(0xDD),
+  Group0Var222(0xDE),
+  Group0Var223(0xDF),
+  Group0Var224(0xE0),
+  Group0Var225(0xE1),
+  Group0Var226(0xE2),
+  Group0Var227(0xE3),
+  Group0Var228(0xE4),
+  Group0Var229(0xE5),
+  Group0Var230(0xE6),
+  Group0Var231(0xE7),
+  Group0Var232(0xE8),
+  Group0Var233(0xE9),
+  Group0Var234(0xEA),
+  Group0Var235(0xEB),
+  Group0Var236(0xEC),
+  Group0Var237(0xED),
+  Group0Var238(0xEE),
+  Group0Var239(0xEF),
+  Group0Var240(0xF0),
+  Group0Var241(0xF1),
+  Group0Var242(0xF2),
+  Group0Var243(0xF3),
+  Group0Var245(0xF5),
+  Group0Var246(0xF6),
+  Group0Var247(0xF7),
+  Group0Var248(0xF8),
+  Group0Var249(0xF9),
+  Group0Var250(0xFA),
+  Group0Var252(0xFC),
   Group0Var254(0xFE),
   Group0Var255(0xFF),
   Group1Var0(0x100),
@@ -180,6 +220,86 @@ public enum GroupVariation
         return Group0Var209;
       case(0xD2):
         return Group0Var210;
+      case(0xD3):
+        return Group0Var211;
+      case(0xD4):
+        return Group0Var212;
+      case(0xD5):
+        return Group0Var213;
+      case(0xD6):
+        return Group0Var214;
+      case(0xD7):
+        return Group0Var215;
+      case(0xD8):
+        return Group0Var216;
+      case(0xD9):
+        return Group0Var217;
+      case(0xDA):
+        return Group0Var218;
+      case(0xDB):
+        return Group0Var219;
+      case(0xDC):
+        return Group0Var220;
+      case(0xDD):
+        return Group0Var221;
+      case(0xDE):
+        return Group0Var222;
+      case(0xDF):
+        return Group0Var223;
+      case(0xE0):
+        return Group0Var224;
+      case(0xE1):
+        return Group0Var225;
+      case(0xE2):
+        return Group0Var226;
+      case(0xE3):
+        return Group0Var227;
+      case(0xE4):
+        return Group0Var228;
+      case(0xE5):
+        return Group0Var229;
+      case(0xE6):
+        return Group0Var230;
+      case(0xE7):
+        return Group0Var231;
+      case(0xE8):
+        return Group0Var232;
+      case(0xE9):
+        return Group0Var233;
+      case(0xEA):
+        return Group0Var234;
+      case(0xEB):
+        return Group0Var235;
+      case(0xEC):
+        return Group0Var236;
+      case(0xED):
+        return Group0Var237;
+      case(0xEE):
+        return Group0Var238;
+      case(0xEF):
+        return Group0Var239;
+      case(0xF0):
+        return Group0Var240;
+      case(0xF1):
+        return Group0Var241;
+      case(0xF2):
+        return Group0Var242;
+      case(0xF3):
+        return Group0Var243;
+      case(0xF5):
+        return Group0Var245;
+      case(0xF6):
+        return Group0Var246;
+      case(0xF7):
+        return Group0Var247;
+      case(0xF8):
+        return Group0Var248;
+      case(0xF9):
+        return Group0Var249;
+      case(0xFA):
+        return Group0Var250;
+      case(0xFC):
+        return Group0Var252;
       case(0xFE):
         return Group0Var254;
       case(0xFF):

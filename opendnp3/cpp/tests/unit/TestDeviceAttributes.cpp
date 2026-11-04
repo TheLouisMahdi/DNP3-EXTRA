@@ -126,13 +126,16 @@ TEST_CASE("DeviceAttributes - mandatory discovery reports only available read-on
         AttributeRead read;
         REQUIRE(read.Select(header) == ParseResult::OK);
         REQUIRE(read.errors == IINField::Empty());
-        REQUIRE(read.Fragment() == "C0 81 00 00 00 FF 17 01 00 FE 02 D2 00");
+        REQUIRE(read.Fragment() == "C0 81 00 00 00 FF 17 01 00 FE 0E D2 00 D3 00 D4 00 D5 00 D6 00 D7 00 E6 00");
     }
     for (const auto& header : {"00 FE 00 00 00", "00 FE 06"})
     {
         AttributeRead read;
         REQUIRE(read.Select(header) == ParseResult::OK);
-        REQUIRE(read.Fragment() == "C0 81 00 00 00 D2 00 00 00 02 01 12");
+        REQUIRE(read.Fragment() == "C0 81 00 00 00 D2 00 00 00 02 01 12 00 D3 00 00 00 FE 00"
+                                   " 00 D4 00 00 00 02 01 00 00 D5 00 00 00 02 01 00"
+                                   " 00 D6 00 00 00 02 01 00 00 D7 00 00 00 02 01 00"
+                                   " 00 E6 00 00 00 03 01 00");
     }
 }
 
@@ -152,6 +155,48 @@ TEST_CASE("DeviceAttributes - attribute sets are not association or statistic in
     REQUIRE(master.soe.attributes[1].set == 7);
     REQUIRE(master.soe.Unsigned(0) == 18);
     REQUIRE(master.soe.Unsigned(1) == 0x1234);
+}
+
+TEST_CASE("DeviceAttributes - standard Level 4 variations decode both response forms", "[device-attributes]")
+{
+    for (uint8_t variation = 211; variation <= 252; ++variation)
+    {
+        if (variation == 244 || variation == 251) continue; // Not in Table 14-5.
+        CAPTURE(unsigned(variation));
+        uint8_t type = 2;
+        switch (variation)
+        {
+        case 219: case 222: case 225: case 226: case 227: case 230: case 231: case 234: case 237:
+            type = 3;
+            break;
+        default:
+            if (variation == 211 || variation >= 242) type = 1;
+            break;
+        }
+        for (const auto qualifier : {uint8_t(0), uint8_t(0x17)})
+        {
+            const uint8_t prefix[] = {0, variation, qualifier, uint8_t(qualifier != 0), 0, type};
+            const auto payload = variation == 211 ? "03 58 2C 31" : variation == 249 ? "06 34 3A 32 30 31 32"
+                : type == 1 ? "01 58" : "01 00";
+            MasterAttributes master;
+            REQUIRE(master.Parse(HexConversions::to_hex(rseq_t(prefix, sizeof(prefix))) + " " + payload)
+                    == ParseResult::OK);
+            REQUIRE(master.soe.attributes.size() == 1);
+            REQUIRE(master.soe.attributes.front().type == type);
+            REQUIRE(master.soe.attributes.front().set == 0);
+        }
+    }
+
+    MasterAttributes master;
+    REQUIRE(master.Parse("00 D3 00 00 00 FE 00") == ParseResult::OK);
+    for (const auto& malformed : {"00 D3 00 00 00 FE 01 00", "00 DB 00 00 00 02 01 01",
+                                  "00 F2 17 01 00 01 01 00", "00 F0 00 00 00 02 00"})
+        REQUIRE(master.Parse(malformed) != ParseResult::OK);
+    REQUIRE(master.soe.attributes.size() == 1);
+
+    AttributeRead read;
+    REQUIRE(read.Select("00 F2 00 00 00") == ParseResult::OK);
+    REQUIRE(read.Fragment() == "C0 81 00 02"); // Software version is product metadata.
 }
 
 TEST_CASE("DeviceAttributes - attributes remain outside Class zero and do not clear statistics", "[device-attributes]")
@@ -283,7 +328,7 @@ TEST_CASE("DeviceAttributes - atomic writer and native response fragmentation", 
     REQUIRE(read.database.HasAnySelection());
     REQUIRE(read.Fragment(12) == "20 81 00 00 00 D2 00 00 00 02 01 12");
     REQUIRE(read.database.HasAnySelection());
-    REQUIRE(read.Fragment(13) == "40 81 00 00 00 FF 17 01 00 FE 02 D2 00");
+    REQUIRE(read.Fragment(25) == "40 81 00 00 00 FF 17 01 00 FE 0E D2 00 D3 00 D4 00 D5 00 D6 00 D7 00 E6 00");
     REQUIRE_FALSE(read.database.HasAnySelection());
     REQUIRE(read.Select("00 D2 00 00 00") == ParseResult::OK);
     read.database.Unselect();

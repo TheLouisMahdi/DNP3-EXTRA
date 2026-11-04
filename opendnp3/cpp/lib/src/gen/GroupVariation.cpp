@@ -47,6 +47,86 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
       return GroupVariation::Group0Var209;
     case(0xD2):
       return GroupVariation::Group0Var210;
+    case(0xD3):
+      return GroupVariation::Group0Var211;
+    case(0xD4):
+      return GroupVariation::Group0Var212;
+    case(0xD5):
+      return GroupVariation::Group0Var213;
+    case(0xD6):
+      return GroupVariation::Group0Var214;
+    case(0xD7):
+      return GroupVariation::Group0Var215;
+    case(0xD8):
+      return GroupVariation::Group0Var216;
+    case(0xD9):
+      return GroupVariation::Group0Var217;
+    case(0xDA):
+      return GroupVariation::Group0Var218;
+    case(0xDB):
+      return GroupVariation::Group0Var219;
+    case(0xDC):
+      return GroupVariation::Group0Var220;
+    case(0xDD):
+      return GroupVariation::Group0Var221;
+    case(0xDE):
+      return GroupVariation::Group0Var222;
+    case(0xDF):
+      return GroupVariation::Group0Var223;
+    case(0xE0):
+      return GroupVariation::Group0Var224;
+    case(0xE1):
+      return GroupVariation::Group0Var225;
+    case(0xE2):
+      return GroupVariation::Group0Var226;
+    case(0xE3):
+      return GroupVariation::Group0Var227;
+    case(0xE4):
+      return GroupVariation::Group0Var228;
+    case(0xE5):
+      return GroupVariation::Group0Var229;
+    case(0xE6):
+      return GroupVariation::Group0Var230;
+    case(0xE7):
+      return GroupVariation::Group0Var231;
+    case(0xE8):
+      return GroupVariation::Group0Var232;
+    case(0xE9):
+      return GroupVariation::Group0Var233;
+    case(0xEA):
+      return GroupVariation::Group0Var234;
+    case(0xEB):
+      return GroupVariation::Group0Var235;
+    case(0xEC):
+      return GroupVariation::Group0Var236;
+    case(0xED):
+      return GroupVariation::Group0Var237;
+    case(0xEE):
+      return GroupVariation::Group0Var238;
+    case(0xEF):
+      return GroupVariation::Group0Var239;
+    case(0xF0):
+      return GroupVariation::Group0Var240;
+    case(0xF1):
+      return GroupVariation::Group0Var241;
+    case(0xF2):
+      return GroupVariation::Group0Var242;
+    case(0xF3):
+      return GroupVariation::Group0Var243;
+    case(0xF5):
+      return GroupVariation::Group0Var245;
+    case(0xF6):
+      return GroupVariation::Group0Var246;
+    case(0xF7):
+      return GroupVariation::Group0Var247;
+    case(0xF8):
+      return GroupVariation::Group0Var248;
+    case(0xF9):
+      return GroupVariation::Group0Var249;
+    case(0xFA):
+      return GroupVariation::Group0Var250;
+    case(0xFC):
+      return GroupVariation::Group0Var252;
     case(0xFE):
       return GroupVariation::Group0Var254;
     case(0xFF):
@@ -342,6 +422,86 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
       return "Group0Var209";
     case(GroupVariation::Group0Var210):
       return "Group0Var210";
+    case(GroupVariation::Group0Var211):
+      return "Group0Var211";
+    case(GroupVariation::Group0Var212):
+      return "Group0Var212";
+    case(GroupVariation::Group0Var213):
+      return "Group0Var213";
+    case(GroupVariation::Group0Var214):
+      return "Group0Var214";
+    case(GroupVariation::Group0Var215):
+      return "Group0Var215";
+    case(GroupVariation::Group0Var216):
+      return "Group0Var216";
+    case(GroupVariation::Group0Var217):
+      return "Group0Var217";
+    case(GroupVariation::Group0Var218):
+      return "Group0Var218";
+    case(GroupVariation::Group0Var219):
+      return "Group0Var219";
+    case(GroupVariation::Group0Var220):
+      return "Group0Var220";
+    case(GroupVariation::Group0Var221):
+      return "Group0Var221";
+    case(GroupVariation::Group0Var222):
+      return "Group0Var222";
+    case(GroupVariation::Group0Var223):
+      return "Group0Var223";
+    case(GroupVariation::Group0Var224):
+      return "Group0Var224";
+    case(GroupVariation::Group0Var225):
+      return "Group0Var225";
+    case(GroupVariation::Group0Var226):
+      return "Group0Var226";
+    case(GroupVariation::Group0Var227):
+      return "Group0Var227";
+    case(GroupVariation::Group0Var228):
+      return "Group0Var228";
+    case(GroupVariation::Group0Var229):
+      return "Group0Var229";
+    case(GroupVariation::Group0Var230):
+      return "Group0Var230";
+    case(GroupVariation::Group0Var231):
+      return "Group0Var231";
+    case(GroupVariation::Group0Var232):
+      return "Group0Var232";
+    case(GroupVariation::Group0Var233):
+      return "Group0Var233";
+    case(GroupVariation::Group0Var234):
+      return "Group0Var234";
+    case(GroupVariation::Group0Var235):
+      return "Group0Var235";
+    case(GroupVariation::Group0Var236):
+      return "Group0Var236";
+    case(GroupVariation::Group0Var237):
+      return "Group0Var237";
+    case(GroupVariation::Group0Var238):
+      return "Group0Var238";
+    case(GroupVariation::Group0Var239):
+      return "Group0Var239";
+    case(GroupVariation::Group0Var240):
+      return "Group0Var240";
+    case(GroupVariation::Group0Var241):
+      return "Group0Var241";
+    case(GroupVariation::Group0Var242):
+      return "Group0Var242";
+    case(GroupVariation::Group0Var243):
+      return "Group0Var243";
+    case(GroupVariation::Group0Var245):
+      return "Group0Var245";
+    case(GroupVariation::Group0Var246):
+      return "Group0Var246";
+    case(GroupVariation::Group0Var247):
+      return "Group0Var247";
+    case(GroupVariation::Group0Var248):
+      return "Group0Var248";
+    case(GroupVariation::Group0Var249):
+      return "Group0Var249";
+    case(GroupVariation::Group0Var250):
+      return "Group0Var250";
+    case(GroupVariation::Group0Var252):
+      return "Group0Var252";
     case(GroupVariation::Group0Var254):
       return "Group0Var254";
     case(GroupVariation::Group0Var255):
@@ -637,6 +797,86 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
       return "Device Attributes - Secure Authentication Version";
     case(GroupVariation::Group0Var210):
       return "Device Attributes - Security Statistics Per Association";
+    case(GroupVariation::Group0Var211):
+      return "Device Attributes - User Specific Attribute Support";
+    case(GroupVariation::Group0Var212):
+      return "Device Attributes - Master Defined Data Set Prototypes";
+    case(GroupVariation::Group0Var213):
+      return "Device Attributes - Outstation Defined Data Set Prototypes";
+    case(GroupVariation::Group0Var214):
+      return "Device Attributes - Master Defined Data Sets";
+    case(GroupVariation::Group0Var215):
+      return "Device Attributes - Outstation Defined Data Sets";
+    case(GroupVariation::Group0Var216):
+      return "Device Attributes - Maximum Binary Outputs Per Request";
+    case(GroupVariation::Group0Var217):
+      return "Device Attributes - Local Timing Accuracy";
+    case(GroupVariation::Group0Var218):
+      return "Device Attributes - Duration Of Timing Accuracy";
+    case(GroupVariation::Group0Var219):
+      return "Device Attributes - Analog Output Event Support";
+    case(GroupVariation::Group0Var220):
+      return "Device Attributes - Maximum Analog Output Index";
+    case(GroupVariation::Group0Var221):
+      return "Device Attributes - Number Of Analog Outputs";
+    case(GroupVariation::Group0Var222):
+      return "Device Attributes - Binary Output Event Support";
+    case(GroupVariation::Group0Var223):
+      return "Device Attributes - Maximum Binary Output Index";
+    case(GroupVariation::Group0Var224):
+      return "Device Attributes - Number Of Binary Outputs";
+    case(GroupVariation::Group0Var225):
+      return "Device Attributes - Frozen Counter Event Support";
+    case(GroupVariation::Group0Var226):
+      return "Device Attributes - Frozen Counter Support";
+    case(GroupVariation::Group0Var227):
+      return "Device Attributes - Counter Event Support";
+    case(GroupVariation::Group0Var228):
+      return "Device Attributes - Maximum Counter Index";
+    case(GroupVariation::Group0Var229):
+      return "Device Attributes - Number Of Counter Points";
+    case(GroupVariation::Group0Var230):
+      return "Device Attributes - Frozen Analog Input Support";
+    case(GroupVariation::Group0Var231):
+      return "Device Attributes - Analog Input Event Support";
+    case(GroupVariation::Group0Var232):
+      return "Device Attributes - Maximum Analog Input Index";
+    case(GroupVariation::Group0Var233):
+      return "Device Attributes - Number Of Analog Input Points";
+    case(GroupVariation::Group0Var234):
+      return "Device Attributes - Double Bit Binary Input Event Support";
+    case(GroupVariation::Group0Var235):
+      return "Device Attributes - Maximum Double Bit Binary Input Index";
+    case(GroupVariation::Group0Var236):
+      return "Device Attributes - Number Of Double Bit Binary Input Points";
+    case(GroupVariation::Group0Var237):
+      return "Device Attributes - Binary Input Event Support";
+    case(GroupVariation::Group0Var238):
+      return "Device Attributes - Maximum Binary Input Index";
+    case(GroupVariation::Group0Var239):
+      return "Device Attributes - Number Of Binary Input Points";
+    case(GroupVariation::Group0Var240):
+      return "Device Attributes - Maximum Transmit Fragment Size";
+    case(GroupVariation::Group0Var241):
+      return "Device Attributes - Maximum Receive Fragment Size";
+    case(GroupVariation::Group0Var242):
+      return "Device Attributes - Manufacturer Software Version";
+    case(GroupVariation::Group0Var243):
+      return "Device Attributes - Manufacturer Hardware Version";
+    case(GroupVariation::Group0Var245):
+      return "Device Attributes - User Assigned Location";
+    case(GroupVariation::Group0Var246):
+      return "Device Attributes - User Assigned ID";
+    case(GroupVariation::Group0Var247):
+      return "Device Attributes - User Assigned Name";
+    case(GroupVariation::Group0Var248):
+      return "Device Attributes - Serial Number";
+    case(GroupVariation::Group0Var249):
+      return "Device Attributes - Subset And Conformance";
+    case(GroupVariation::Group0Var250):
+      return "Device Attributes - Product Name And Model";
+    case(GroupVariation::Group0Var252):
+      return "Device Attributes - Manufacturer Name";
     case(GroupVariation::Group0Var254):
       return "Device Attributes - All Attributes Request";
     case(GroupVariation::Group0Var255):
@@ -928,6 +1168,46 @@ GroupVariation GroupVariationSpec::from_string(const std::string& arg)
 {
   if(arg == "Group0Var209") return GroupVariation::Group0Var209;
   if(arg == "Group0Var210") return GroupVariation::Group0Var210;
+  if(arg == "Group0Var211") return GroupVariation::Group0Var211;
+  if(arg == "Group0Var212") return GroupVariation::Group0Var212;
+  if(arg == "Group0Var213") return GroupVariation::Group0Var213;
+  if(arg == "Group0Var214") return GroupVariation::Group0Var214;
+  if(arg == "Group0Var215") return GroupVariation::Group0Var215;
+  if(arg == "Group0Var216") return GroupVariation::Group0Var216;
+  if(arg == "Group0Var217") return GroupVariation::Group0Var217;
+  if(arg == "Group0Var218") return GroupVariation::Group0Var218;
+  if(arg == "Group0Var219") return GroupVariation::Group0Var219;
+  if(arg == "Group0Var220") return GroupVariation::Group0Var220;
+  if(arg == "Group0Var221") return GroupVariation::Group0Var221;
+  if(arg == "Group0Var222") return GroupVariation::Group0Var222;
+  if(arg == "Group0Var223") return GroupVariation::Group0Var223;
+  if(arg == "Group0Var224") return GroupVariation::Group0Var224;
+  if(arg == "Group0Var225") return GroupVariation::Group0Var225;
+  if(arg == "Group0Var226") return GroupVariation::Group0Var226;
+  if(arg == "Group0Var227") return GroupVariation::Group0Var227;
+  if(arg == "Group0Var228") return GroupVariation::Group0Var228;
+  if(arg == "Group0Var229") return GroupVariation::Group0Var229;
+  if(arg == "Group0Var230") return GroupVariation::Group0Var230;
+  if(arg == "Group0Var231") return GroupVariation::Group0Var231;
+  if(arg == "Group0Var232") return GroupVariation::Group0Var232;
+  if(arg == "Group0Var233") return GroupVariation::Group0Var233;
+  if(arg == "Group0Var234") return GroupVariation::Group0Var234;
+  if(arg == "Group0Var235") return GroupVariation::Group0Var235;
+  if(arg == "Group0Var236") return GroupVariation::Group0Var236;
+  if(arg == "Group0Var237") return GroupVariation::Group0Var237;
+  if(arg == "Group0Var238") return GroupVariation::Group0Var238;
+  if(arg == "Group0Var239") return GroupVariation::Group0Var239;
+  if(arg == "Group0Var240") return GroupVariation::Group0Var240;
+  if(arg == "Group0Var241") return GroupVariation::Group0Var241;
+  if(arg == "Group0Var242") return GroupVariation::Group0Var242;
+  if(arg == "Group0Var243") return GroupVariation::Group0Var243;
+  if(arg == "Group0Var245") return GroupVariation::Group0Var245;
+  if(arg == "Group0Var246") return GroupVariation::Group0Var246;
+  if(arg == "Group0Var247") return GroupVariation::Group0Var247;
+  if(arg == "Group0Var248") return GroupVariation::Group0Var248;
+  if(arg == "Group0Var249") return GroupVariation::Group0Var249;
+  if(arg == "Group0Var250") return GroupVariation::Group0Var250;
+  if(arg == "Group0Var252") return GroupVariation::Group0Var252;
   if(arg == "Group0Var254") return GroupVariation::Group0Var254;
   if(arg == "Group0Var255") return GroupVariation::Group0Var255;
   if(arg == "Group1Var0") return GroupVariation::Group1Var0;
