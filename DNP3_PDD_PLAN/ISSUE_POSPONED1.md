@@ -1287,7 +1287,7 @@ Reproduce a transient bind/retry failure without masking a configuration error.
 
 **Source**
 
-IEEE §4.1.5.3 (p. 17), Table 12-24 (p. 360). Device Profile pp. 5–8 and 12. Original tracking: EventSelection.cpp default-variation TODO.
+IEEE §4.1.5.3 (p. 17), §5.1.5 and Table 5-3 (p. 107), and Table 12-24 (p. 360). Device Profile pp. 5–8 and 12. Original tracking in the EventSelection.cpp default-variation TODO.
 
 **Problem**
 
@@ -1299,7 +1299,7 @@ Outstation. [opendnp3/cpp/lib/src/outstation/event/EventSelection.cpp:26](../ope
 
 **Engineering decision**
 
-Select the configured variation when the class request claims an unselected record. The existing typed default-selection API preserves the snapshot. Resetting variation during serialization would override an explicit variation or alter an already selected response.
+A class READ selects event classes without specifying each event’s reporting variation. Table 5-3 uses the configured default in that case. The local SelectByClass change mirrors SelectByTypeGeneric at EventSelection.h:54–78, where selection of an unselected record assigns its default or the explicitly requested variation. EventTypeImpl.h:46–50 applies the same default assignment through typed storage. The change preserves event data, class, ownership and confirmation state.
 
 **Implementation**
 
@@ -1315,7 +1315,7 @@ NOT_YET_IMPLEMENTED
 
 **Remaining dependency**
 
-Establish whether the authenticated TCP timeouts are independent of this patch and pass the full suite. The candidate exists locally but the published source still has the defect. Independent peer or dedicated TCP coverage of the expired-confirm and class reselect sequence remains open.
+The Method 4 failure can occur independently of this patch. The clock regression uses a static G30 READ and bypasses class/event selection. The event candidate remains local by request. Dedicated TCP or independent peer coverage of the expired-confirm and class reselect sequence remains open.
 
 ### METHOD68-RESTART-TIMEOUT - Intermittent post-restart READ timeout
 
@@ -1351,36 +1351,38 @@ NOT_YET_IMPLEMENTED
 
 Capture safe per-peer timing and authentication ownership on recurrence and reproduce with a deterministic fixture.
 
-### SA-TCP-INTERMITTENT - Authenticated READ timeouts in TCP regressions
+### SA-TCP-INTERMITTENT - Outstation session reset during authenticated response dispatch
 
 **Source**
 
-IEEE Clause 7 for session ownership and §4.2.2 for application sequences. Security amendment p. 4 row 16. Discovered in issue-event-ctest.log during the Windows event-variation slice.
+IEEE §7.5.1.3 (PDF p. 234), §7.5.2.3.5 and Table 7-8 (PDF pp. 256–257 and following), and §7.6.1.4.4–5 (printed p. 243). Security amendment p. 4 row 16. Original observations in issue-event-ctest.log and issue-event-ctest-serial.log.
 
 **Problem**
 
-In one parallel CTest run, pc-method4 timed out after restarting both peers and enabling Aggressive Mode. The startup integrity task timed out first. The native TCP suite also timed out in its authenticated READ after receiving the request. These symptoms do not establish one shared cause.
+Outstation RouteAuthentication captured an arrival time before processing an authenticated request. Processing could enter BeginTx, which observed a later time on the common session while preparing a native or Aggressive monitoring response. The outer control-message accounting then fed the earlier timestamp into SessionKeys::Observe. That anti-rollback check reset an otherwise valid session. The next owned monitoring Challenge, CONFIRM or READ could no longer use the matching common session. Windows scheduling determined whether the calls crossed a millisecond boundary.
 
 **Affected implementation**
 
-Master and Outstation. [cli/tests/ProcessSmoke.py:219](../cli/tests/ProcessSmoke.py#L219) · `secure`, and [opendnp3/cpp/tests/integration/TestSecureAuthentication.cpp:166](../opendnp3/cpp/tests/integration/TestSecureAuthentication.cpp#L166) · `SecureAuthenticationTCP - session keys authenticated READ CONTROL and reconnect`. Anchors at `275300426ed5e210fef69703c99475b11af15408`.
+Outstation [OutstationContext.cpp:347–397](../opendnp3/cpp/lib/src/outstation/OutstationContext.cpp#L347) (BeginTx), [1102–1129](../opendnp3/cpp/lib/src/outstation/OutstationContext.cpp#L1102) (CountControlAuthentication), [1657–1669](../opendnp3/cpp/lib/src/outstation/OutstationContext.cpp#L1657) (G120V2 verified dispatch) and [1734–1745](../opendnp3/cpp/lib/src/outstation/OutstationContext.cpp#L1734) (Aggressive dispatch). Shared [SessionKeys.cpp:168–179](../opendnp3/cpp/lib/src/auth/SessionKeys.cpp#L168) (Observe) and [342–349](../opendnp3/cpp/lib/src/auth/SessionKeys.cpp#L342) (CountAuthentication). Tested source 174facf1bfb4b6c344fd5ebd83ae96ae7cdd8367.
 
 **Engineering decision**
 
-Keep the existing completion and authorization assertions. Raising the timeout or retrying the READ inside the test would obscure loss of an owned response. Compare unchanged source under serial execution before attributing the failure to the event selector.
+Sample the monotonic executor clock when charging verified incoming control traffic after response dispatch. Preserve the rollback guard, deadline and key-count rules, association and KSQ ownership, MAC verification, replay checks and authorization. Clamping timestamps inside SessionKeys would mask a real clock regression. Increasing response timeouts would leave the invalidated session unusable.
 
 **Implementation**
 
-Root cause remains open. No SA protocol or timer change was made for these failures.
+OutstationContext.h:166 and OutstationContext.cpp:1102–1129 remove the receive-time argument from CountControlAuthentication. Both authenticated dispatch callers use the fresh timestamp. TestProductionAuthentication.cpp:328–364 adds “ProductionAuthentication - response dispatch can advance the clock before control accounting”. The static G30 regression advances time by one millisecond during authorization and checks real key negotiation, Challenge/Reply and Aggressive cases, unchanged KSQ and successful Master completion. Temporary metadata tracing was removed from production sources.
 
 **Validation**
 
-Parallel CTest exited 8. The unit suite passed 720 cases and 59,077 assertions. The integration suite reported 1 failed case and 2 failed assertions. The separate pc-method4 target failed at ProcessSmoke.py:219. The same run passed pc-method68, negative security and TLS tests. Serial CTest also exited 8. The integration suite recovered to 12 cases and 241 assertions, while pc-method4 failed again at the same READ. The isolated Method 4 case then passed on the first source commit and on the candidate, each with exit 0. This comparison does not establish causality. Logs: issue-event-ctest-serial.log, issue-method4-control-ctest.log and issue-method4-peer-diagnostic.log.
+Before the fix, the deterministic test failed both generated scenarios at session readiness (exit 2). Isolated Method 4 runs failed 3 of 4. Three unfiltered Release CTest runs exited 8, 8 and 0. The first failed pc-method4 after pc-method68. The second started with a passing pc-method4 and failed native integration. CLI PC tests use RUN_SERIAL. The two peers shut down with exit 0 and each trial used a unique test credential profile. The metadata-only trace reproduced the reset in method4-diag-2.log:542–563. Outstation received Aggressive READ SEQ 4 at 1687997 ms, transmitted its response at the next millisecond, then accounted at 1687997 ms and reset common KSQ 2 to 0 with 993 messages still available. Subsequent G120V1/V2 and READ traffic preceded the Master timeout. Outstation user 1 reported not ready while independent users remained ready. This demonstrates a production lifetime defect independent of event selection and of CTest ordering.
+
+After the fix, a Release build of dnp3-cli, unittests, integrationtests and asiotests exited 0 with the pre-existing event candidate excluded. The focused [sa-dispatch-clock],[production-sa] run exited 0 with 43 cases and 32,758 assertions. Six isolated Method 4 runs exited successfully. Three complete CTest runs using -C Release -V -j 2 --timeout 180 each exited 0 with 8/8 targets, including 720 unit cases and 59,158 assertions, 12 integration cases and 241 assertions, 7 ASIO cases and 105 assertions, and the Method 4, Method 68, negative and TLS process scenarios. Logs in build-p6b-o1/native include method4-fix-build.log, method4-fixed-1.log through method4-fixed-6.log and method4-fixed-full-1.log through method4-fixed-full-3.log.
 
 **Status**
 
-NOT_YET_IMPLEMENTED
+VERIFIED_LOCAL
 
 **Remaining dependency**
 
-Reproduce with per-peer connection, exchange and transmit-ownership metadata around G120V3/G120V9 and READ. Compare with the first validated source slice before changing any security behavior. Track the earlier Method 68 observation separately until a common cause is demonstrated.
+No Method 4 or native TCP failure recurred in the six isolated and three full post-fix runs. Earlier native TCP failures had no equivalent per-peer capture, so their historical cause is not established independently. The earlier Method 68 observation remains separately open. Independent interoperability was not exercised.
