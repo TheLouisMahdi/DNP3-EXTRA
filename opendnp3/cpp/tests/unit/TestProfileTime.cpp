@@ -174,3 +174,60 @@ TEST_CASE("ProfileTime - default NEED_TIME acknowledgment preserves clock qualit
     REQUIRE(immediate.ClearNeedTime());
     REQUIRE(immediate.GetApplicationIIN().needTime);
 }
+
+TEST_CASE("ProfileTime - LAN time accepts intervening requests and consumes the recorded time once",
+          "[profile-time][level4-lan-time]")
+{
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+    REQUIRE(Exchange(t, "C0 18") == "C0 81 80 00");
+    t.AdvanceTime(TimeDuration::Milliseconds(4));
+    REQUIRE(Exchange(t, "C1 01") == "C1 81 80 00");
+    REQUIRE(Exchange(t, "C2 02 32 03 08 01 00 " + absoluteTime) == "C2 81 80 04");
+    REQUIRE(t.application->timestamps.empty());
+    REQUIRE(Exchange(t, "C3 02 32 03 07 01 " + absoluteTime) == "C3 81 80 00");
+    REQUIRE(t.application->timestamps.size() == 1);
+    REQUIRE(t.application->timestamps.front().msSinceEpoch == 0x01020304050A);
+    REQUIRE(Exchange(t, "C4 02 32 03 07 01 " + absoluteTime) == "C4 81 80 04");
+    REQUIRE(t.application->timestamps.size() == 1);
+}
+
+TEST_CASE("ProfileTime - broadcast LAN time uses the most recent valid objectless record",
+          "[profile-time][level4-lan-time]")
+{
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+    t.BroadcastToOutstation(LinkBroadcastAddress::DontConfirm, "C1 18");
+    t.AdvanceTime(TimeDuration::Milliseconds(8));
+    t.BroadcastToOutstation(LinkBroadcastAddress::DontConfirm, "C2 18");
+    t.AdvanceTime(TimeDuration::Milliseconds(1));
+    t.BroadcastToOutstation(LinkBroadcastAddress::DontConfirm, "C3 18 00");
+    t.AdvanceTime(TimeDuration::Milliseconds(2));
+    t.BroadcastToOutstation(LinkBroadcastAddress::DontConfirm, "C4 02 32 03 07 01 " + absoluteTime);
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(t.application->timestamps.size() == 1);
+    REQUIRE(t.application->timestamps.front().msSinceEpoch == 0x010203040509);
+}
+
+TEST_CASE("ProfileTime - LAN time record belongs to its master and expires at disconnect",
+          "[profile-time][level4-lan-time]")
+{
+    OutstationConfig config;
+    config.params.respondToAnyMaster = true;
+    OutstationTestObject t(config);
+    t.LowerLayerUp();
+    REQUIRE(Exchange(t, "C0 18") == "C0 81 80 00");
+    const HexSequence otherWrite("C1 02 32 03 07 01 " + absoluteTime);
+    REQUIRE(t.context.OnReceive(Message(Addresses(2, 0), otherWrite.ToRSeq())));
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 04");
+    t.OnTxReady();
+    REQUIRE(t.application->timestamps.empty());
+    REQUIRE(Exchange(t, "C2 02 32 03 07 01 " + absoluteTime) == "C2 81 80 00");
+    REQUIRE(t.application->timestamps.size() == 1);
+
+    REQUIRE(Exchange(t, "C3 18") == "C3 81 80 00");
+    t.LowerLayerDown();
+    t.LowerLayerUp();
+    REQUIRE(Exchange(t, "C4 02 32 03 07 01 " + absoluteTime) == "C4 81 80 04");
+    REQUIRE(t.application->timestamps.size() == 1);
+}

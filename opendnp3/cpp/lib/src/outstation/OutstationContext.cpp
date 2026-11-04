@@ -164,6 +164,7 @@ bool OContext::OnLowerLayerDown()
 #endif
     sol.Reset();
     unsol.Reset();
+    time = TimeSyncState();
     history.Reset();
     control.Unselect();
     deferred.Reset();
@@ -548,7 +549,7 @@ OutstationState& OContext::RespondToNonReadRequest(const ParsedRequest& request)
     auto writer = response.GetWriter();
     response.SetFunction(FunctionCode::RESPONSE);
     response.SetControl(AppControlField(true, true, false, false, request.header.control.SEQ));
-    auto iin = this->HandleNonReadResponse(request.header, request.objects, writer);
+    auto iin = this->HandleNonReadResponse(request, writer);
     response.SetIIN(iin | this->GetResponseIIN());
     return this->BeginResponseTx(request.addresses.source, response);
 }
@@ -743,7 +744,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
     switch (request.header.function)
     {
     case (FunctionCode::WRITE):
-        this->HandleWrite(request.objects);
+        this->HandleWrite(request);
         return true;
     case (FunctionCode::DIRECT_OPERATE_NR):
         this->HandleDirectOperate(request.objects, OperateType::DirectOperateNoAck, nullptr);
@@ -766,15 +767,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
         }
     }
     case (FunctionCode::RECORD_CURRENT_TIME): {
-        if (request.objects.is_not_empty())
-        {
-            this->HandleRecordCurrentTime();
-            return true;
-        }
-        else
-        {
-            return false;
-        }
+        return !this->HandleRecordCurrentTime(request).Any();
     }
     case (FunctionCode::DISABLE_UNSOLICITED): {
         if (this->params.allowUnsolicited)
@@ -826,12 +819,13 @@ bool OContext::ProcessRequestNoAck(const ParsedRequest& request)
     }
 }
 
-IINField OContext::HandleNonReadResponse(const APDUHeader& header, const ser4cpp::rseq_t& objects, HeaderWriter& writer)
+IINField OContext::HandleNonReadResponse(const ParsedRequest& request, HeaderWriter& writer)
 {
-    switch (header.function)
+    const auto& objects = request.objects;
+    switch (request.header.function)
     {
     case (FunctionCode::WRITE):
-        return this->HandleWrite(objects);
+        return this->HandleWrite(request);
     case (FunctionCode::SELECT):
         return this->HandleSelect(objects, writer);
     case (FunctionCode::OPERATE):
@@ -847,7 +841,7 @@ IINField OContext::HandleNonReadResponse(const APDUHeader& header, const ser4cpp
     case (FunctionCode::DELAY_MEASURE):
         return this->HandleDelayMeasure(objects, writer);
     case (FunctionCode::RECORD_CURRENT_TIME):
-        return objects.is_empty() ? this->HandleRecordCurrentTime() : IINField(IINBit::PARAM_ERROR);
+        return this->HandleRecordCurrentTime(request);
     case (FunctionCode::DISABLE_UNSOLICITED):
         return this->params.allowUnsolicited ? this->HandleDisableUnsolicited(objects, &writer)
                                              : IINField(IINBit::FUNC_NOT_SUPPORTED);
@@ -889,11 +883,11 @@ ser4cpp::Pair<IINField, AppControlField> OContext::HandleRead(const ser4cpp::rse
                                                     AppControlField(true, true, false, false));
 }
 
-IINField OContext::HandleWrite(const ser4cpp::rseq_t& objects)
+IINField OContext::HandleWrite(const ParsedRequest& request)
 {
-    WriteHandler handler(*this->application, this->time, this->sol.seq.num, Timestamp(this->executor->get_time()),
+    WriteHandler handler(*this->application, this->time, request.addresses.source, Timestamp(this->executor->get_time()),
                          &this->staticIIN);
-    auto result = APDUParser::Parse(objects, handler, &this->logger);
+    auto result = APDUParser::Parse(request.objects, handler, &this->logger);
     return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
 }
 
@@ -992,9 +986,12 @@ IINField OContext::HandleDelayMeasure(const ser4cpp::rseq_t& objects, HeaderWrit
     return IINField(IINBit::PARAM_ERROR);
 }
 
-IINField OContext::HandleRecordCurrentTime()
+IINField OContext::HandleRecordCurrentTime(const ParsedRequest& request)
 {
-    this->time.RecordCurrentTime(this->sol.seq.num, Timestamp(this->executor->get_time()));
+    if (request.objects.is_not_empty())
+        return IINBit::PARAM_ERROR;
+
+    this->time.RecordCurrentTime(request.addresses.source, Timestamp(this->executor->get_time()));
     return IINField::Empty();
 }
 

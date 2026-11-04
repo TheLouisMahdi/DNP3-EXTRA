@@ -85,6 +85,10 @@ struct LinkConfig
     /// the interval for keep-alive messages (link status requests)
     /// if set to TimeDuration::Max(), the keep-alive is disabled
     TimeDuration KeepAliveTimeout;
+
+    /// Accept the commissioning destination 0xFFFC as the local address.
+    /// Enable on only one device on a shared link during commissioning.
+    bool acceptSelfAddress = false;
 };
 
 } // namespace opendnp3

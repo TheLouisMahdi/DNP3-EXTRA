@@ -315,18 +315,27 @@ bool LinkContext::OnFrame(const LinkHeaderFields& header, const ser4cpp::rseq_t&
         return false;
     }
 
-    if (header.addresses.destination != config.LocalAddr && !header.addresses.IsBroadcast())
+    auto addresses = header.addresses;
+    const bool selfAddressed = addresses.destination == LinkSelfAddress;
+    const bool destinationAllowed = selfAddressed ? config.acceptSelfAddress
+                                                  : addresses.destination == config.LocalAddr || addresses.IsBroadcast();
+    if (!destinationAllowed)
     {
         ++statistics.numUnknownDestination;
         this->listener->OnUnknownDestinationAddress(header.addresses.destination);
         return false;
     }
 
-    if (header.addresses.source != config.RemoteAddr && !config.respondToAnySource)
+    if (addresses.source == LinkSelfAddress || (addresses.source != config.RemoteAddr && !config.respondToAnySource))
     {
         ++statistics.numUnknownSource;
         this->listener->OnUnknownSourceAddress(header.addresses.source);
         return false;
+    }
+
+    if (selfAddressed)
+    {
+        addresses.destination = config.LocalAddr;
     }
 
     // Broadcast addresses can only be used for sending data.
@@ -368,10 +377,10 @@ bool LinkContext::OnFrame(const LinkHeaderFields& header, const ser4cpp::rseq_t&
         break;
     case (LinkFunction::PRI_CONFIRMED_USER_DATA):
         pSecState = &pSecState->OnConfirmedUserData(*this, header.addresses.source, header.fcb, header.addresses.IsBroadcast(),
-                                                    Message(header.addresses, userdata));
+                                                    Message(addresses, userdata));
         break;
     case (LinkFunction::PRI_UNCONFIRMED_USER_DATA):
-        this->PushDataUp(Message(header.addresses, userdata));
+        this->PushDataUp(Message(addresses, userdata));
         break;
     default:
         break;

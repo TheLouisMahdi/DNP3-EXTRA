@@ -91,6 +91,28 @@ TEST_CASE(SUITE("SecToPriNoContext"))
     REQUIRE(t.link.GetStatistics().numUnexpectedFrame == 1);
 }
 
+TEST_CASE(SUITE("SelfAddressIsAnOptInDestinationOnly"), "[level4-self-address]")
+{
+    LinkConfig config(false);
+    LinkLayerTest disabled(config);
+    REQUIRE(disabled.link.OnLowerLayerUp());
+    REQUIRE_FALSE(disabled.OnFrame(LinkFunction::PRI_REQUEST_LINK_STATUS, true, false, false, 0xFFFC, 1));
+    REQUIRE(disabled.NumTotalWrites() == 0);
+
+    config.acceptSelfAddress = true;
+    LinkLayerTest enabled(config);
+    REQUIRE(enabled.link.OnLowerLayerUp());
+    REQUIRE_FALSE(enabled.OnFrame(LinkFunction::PRI_REQUEST_LINK_STATUS, true, false, false, 0xFFFC, 2));
+    REQUIRE(enabled.NumTotalWrites() == 0);
+    REQUIRE(enabled.OnFrame(LinkFunction::PRI_REQUEST_LINK_STATUS, true, false, false, 0xFFFC, 1));
+    REQUIRE(enabled.PopLastWriteAsHex() == LinkHex::LinkStatus(false, false, 1, 1024));
+
+    LinkLayerTest anySource(LinkLayerConfig(config, true));
+    REQUIRE(anySource.link.OnLowerLayerUp());
+    REQUIRE_FALSE(anySource.OnFrame(LinkFunction::PRI_REQUEST_LINK_STATUS, true, false, false, 1024, 0xFFFC));
+    REQUIRE(anySource.NumTotalWrites() == 0);
+}
+
 // Show that the base state of idle forwards unconfirmed user data
 TEST_CASE(SUITE("UnconfirmedDataPassedUpFromIdleUnreset"))
 {

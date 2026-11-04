@@ -34,6 +34,8 @@ const uint8_t LPDU_DATA_PLUS_CRC_SIZE = 18;
 const uint8_t LPDU_MAX_USER_DATA_SIZE = 250;
 const uint16_t LPDU_MAX_FRAME_SIZE = 292; // 10(header) + 250 (user data) + 32 (block CRC's) = 292 frame bytes
 
+constexpr uint16_t LinkSelfAddress = 0xFFFC;
+
 // Broadcast addresses
 enum LinkBroadcastAddress : uint16_t
 {

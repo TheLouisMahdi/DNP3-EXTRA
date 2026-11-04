@@ -25,8 +25,8 @@ namespace opendnp3
 {
 
 WriteHandler::WriteHandler(
-    IOutstationApplication& application, TimeSyncState& timeSyncState, AppSeqNum seq, Timestamp now, IINField* writeIIN)
-    : application(&application), timeSyncState(&timeSyncState), seq(seq), now(now), writeIIN(writeIIN)
+    IOutstationApplication& application, TimeSyncState& timeSyncState, uint16_t source, Timestamp now, IINField* writeIIN)
+    : application(&application), timeSyncState(&timeSyncState), source(source), now(now), writeIIN(writeIIN)
 {
 }
 
@@ -96,7 +96,7 @@ IINField WriteHandler::ProcessHeader(const CountHeader& /*header*/, const IColle
     if (!values.ReadOnlyValue(value))
         return IINBit::PARAM_ERROR;
 
-    if (!this->timeSyncState->CalcTimeDifference(this->seq, this->now))
+    if (!this->timeSyncState->CalcTimeDifference(this->source, this->now))
         return IINBit::PARAM_ERROR;
 
     const UTCTimestamp time(

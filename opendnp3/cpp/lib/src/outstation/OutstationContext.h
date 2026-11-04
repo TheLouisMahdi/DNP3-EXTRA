@@ -238,7 +238,7 @@ private:
 
     /// Handles non-read function codes that require a response. builds the response using the supplied writer.
     /// @return An IIN field indicating the validity of the request, and to be returned in the response.
-    IINField HandleNonReadResponse(const APDUHeader& header, const ser4cpp::rseq_t& objects, HeaderWriter& writer);
+    IINField HandleNonReadResponse(const ParsedRequest& request, HeaderWriter& writer);
 
     /// Handles read function codes. May trigger an unsolicited response
     /// @return an IIN field and a partial AppControlField (missing sequence info)
@@ -246,12 +246,12 @@ private:
 
     // ------ Function Handlers ------
 
-    IINField HandleWrite(const ser4cpp::rseq_t& objects);
+    IINField HandleWrite(const ParsedRequest& request);
     IINField HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
     IINField HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
     IINField HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateType opType, HeaderWriter* pWriter);
     IINField HandleDelayMeasure(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
-    IINField HandleRecordCurrentTime();
+    IINField HandleRecordCurrentTime(const ParsedRequest& request);
     IINField HandleRestart(const ser4cpp::rseq_t& objects, bool isWarmRestart, HeaderWriter* pWriter);
     IINField HandleAssignClass(const ser4cpp::rseq_t& objects);
     IINField HandleDisableUnsolicited(const ser4cpp::rseq_t& objects, HeaderWriter* writer);

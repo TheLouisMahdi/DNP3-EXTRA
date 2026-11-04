@@ -118,8 +118,8 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
                                        const ParserSettings& settings,
                                        IAPDUHandler* pHandler)
 {
-    // Absolute time uses qualifier 07 rather than a range or index prefix.
-    if (record.enumeration == GroupVariation::Group50Var1
+    // Absolute time and last recorded time use qualifier 07 (Table 12-23).
+    if ((record.enumeration == GroupVariation::Group50Var1 || record.enumeration == GroupVariation::Group50Var3)
         && record.GetQualifierCode() != QualifierCode::UINT8_CNT)
         return ParseResult::INVALID_OBJECT_QUALIFIER;
 

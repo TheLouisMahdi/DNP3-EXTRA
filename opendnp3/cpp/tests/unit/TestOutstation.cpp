@@ -217,7 +217,7 @@ TEST_CASE(SUITE("WriteTimeDateLAN - Rejects write without prior record current t
     REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 04");        // param error
 }
 
-TEST_CASE(SUITE("WriteTimeDateLAN - Rejects write with bad sequence number"))
+TEST_CASE(SUITE("WriteTimeDateLAN - Accepts write with a nonconsecutive sequence number"))
 {
     OutstationConfig config;
     OutstationTestObject t(config);
@@ -228,10 +228,12 @@ TEST_CASE(SUITE("WriteTimeDateLAN - Rejects write with bad sequence number"))
     t.OnTxReady();
 
     t.SendToOutstation("C2 02 32 03 07 01 D2 04 00 00 00 00"); // write Grp50Var3, value = 1234 ms after epoch
-    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 80 04");        // param error
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 80 00");
+    REQUIRE(t.application->timestamps.size() == 1);
+    REQUIRE(t.application->timestamps.front().msSinceEpoch == 1234);
 }
 
-TEST_CASE(SUITE("WriteTimeDateLAN - Accepts write with correct sequence number"))
+TEST_CASE(SUITE("WriteTimeDateLAN - Adds the elapsed time to the recorded timestamp"))
 {
     OutstationConfig config;
     OutstationTestObject t(config);
@@ -244,7 +246,7 @@ TEST_CASE(SUITE("WriteTimeDateLAN - Accepts write with correct sequence number")
 
     t.AdvanceTime(TimeDuration::Milliseconds(20));
     t.SendToOutstation("C1 02 32 03 07 01 D2 04 00 00 00 00"); // write Grp50Var3, value = 1234 ms after epoch
-    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 00");        // param error
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 00");
     REQUIRE(t.application->timestamps.size() == 1);
     REQUIRE(t.application->timestamps.front().msSinceEpoch == 1254); // 1234 + difference of 20
 }

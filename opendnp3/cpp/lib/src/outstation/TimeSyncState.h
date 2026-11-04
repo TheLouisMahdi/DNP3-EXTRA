@@ -20,9 +20,9 @@
 #ifndef OPENDNP3_TIMESYNCSTATE_H
 #define OPENDNP3_TIMESYNCSTATE_H
 
-#include "app/AppSeqNum.h"
-
 #include "opendnp3/util/Timestamp.h"
+
+#include <cstdint>
 
 namespace opendnp3
 {
@@ -36,20 +36,17 @@ class TimeSyncState
 public:
     TimeSyncState() {}
 
-    void RecordCurrentTime(const AppSeqNum& seq, const Timestamp& now)
+    void RecordCurrentTime(uint16_t source, const Timestamp& now)
     {
         valid = true;
         time = now;
-        expectedSeqNum = seq.Next();
+        master = source;
     }
 
-    bool CalcTimeDifference(const AppSeqNum& seq, const Timestamp& now)
+    bool CalcTimeDifference(uint16_t source, const Timestamp& now)
     {
-        if (!valid)
-            return false;
-        if (!expectedSeqNum.Equals(seq))
-            return false;
-        if (now < time)
+        // IEEE 1815-2012 §10.3.3 permits intervening requests.
+        if (!valid || source != master || now < time)
             return false;
 
         this->difference = now - time;
@@ -67,7 +64,7 @@ private:
     bool valid = false;
     Timestamp time;
     TimeDuration difference;
-    AppSeqNum expectedSeqNum;
+    uint16_t master = 0;
 };
 
 } // namespace opendnp3

@@ -36,7 +36,7 @@ class WriteHandler final : public IAPDUHandler
 public:
     WriteHandler(IOutstationApplication& application,
                  TimeSyncState& timeSyncState,
-                 AppSeqNum seq,
+                 uint16_t source,
                  Timestamp now,
                  IINField* pWriteIIN);
 
@@ -68,7 +68,7 @@ private:
 
     IOutstationApplication* application;
     TimeSyncState* timeSyncState;
-    AppSeqNum seq;
+    uint16_t source;
     Timestamp now;
     IINField* writeIIN;
 
