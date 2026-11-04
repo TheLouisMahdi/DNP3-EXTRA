@@ -1323,27 +1323,29 @@ The expiry and re-selection sequence was verified with the native wire fixture. 
 
 **Source**
 
-IEEE Clause 7 ownership and response lifecycle. Security amendment p. 4 row 16. Original tracking: PROGRESS.md, engineering reports or the source marker at the cited anchor.
+IEEE 1815-2012 §7.5.1.3, §7.5.2.3.5 and Table 7-8 for Challenge/Reply and state ownership, §7.5.5.5–7 and §7.6.1.4.9/Table 7-16 for remote key change, and Annex A.45.10–15/Tables A-10–13 for Method 68. Security amendment p. 4 row 16. DSA representation remains tracked under RUK-OPEN-02.
 
 **Problem**
 
-One preliminary regression timed out after Method 68 restart. A subsequent run passed with unchanged success requirements.
+The historical Method 68 run timed out on an authenticated READ after both peers restarted. Its original diagnostics are insufficient to identify the cause. In this investigation the original fixed-port fixture failed before reaching that point. Three trials saw the Master open while its own Outstation did not open. One lost communications during Update Key verification before reconnect. A separate local CLI pair was present. The shared default TCP endpoint was independently shown to be a fixture failure mechanism by deliberately occupying it.
 
 **Affected implementation**
 
-Master/Outstation. [cli/tests/ProcessSmoke.py:168](../cli/tests/ProcessSmoke.py#L168) · `def secure` at `275300426ed5e210fef69703c99475b11af15408`.
+[ProcessSmoke.py:102–115](../cli/tests/ProcessSmoke.py#L102) (loopback_port and connected), [177–241](../cli/tests/ProcessSmoke.py#L177) (secure) and [245–278](../cli/tests/ProcessSmoke.py#L245) (invalid_credentials), with TLS rejection peers allocated at [364](../cli/tests/ProcessSmoke.py#L364). Method 68 uses [RemoteUpdateKeys.cpp:85](../opendnp3/cpp/lib/src/auth/RemoteUpdateKeys.cpp#L85) (Load), [294](../opendnp3/cpp/lib/src/auth/RemoteUpdateKeys.cpp#L294) (Install), [549–598](../opendnp3/cpp/lib/src/auth/RemoteUpdateKeys.cpp#L549) (VerifyCertification and ReadAsymmetricChange), and [616](../opendnp3/cpp/lib/src/auth/RemoteUpdateKeys.cpp#L616) (Request). [OpenSSLCryptoProvider.cpp:251](../opendnp3/cpp/lib/src/crypto/OpenSSLCryptoProvider.cpp#L251) checks strict DER and DSA-SHA256. [WindowsAuthenticationCredentials.cpp:137–190](../opendnp3/cpp/lib/src/auth/WindowsAuthenticationCredentials.cpp#L137) loads the committed record by marker, generation and digest and writes the alternate record before publishing its marker. [AuthenticationSession.cpp:64–82](../opendnp3/cpp/lib/src/auth/AuthenticationSession.cpp#L64) clears live sessions before loading durable credentials. Tested revision e1a1ebbe5b82dab5ffa9f1bd6e7184ea807e8ddc.
 
 **Engineering decision**
 
-Keep the failure visible. A clean rerun cannot isolate a timing or ownership cause.
+Method 68 could reach the previous stale timestamp mechanism because both methods use the same verified Control dispatch and Monitoring response paths. The relevant paths are [OutstationContext.cpp:347](../opendnp3/cpp/lib/src/outstation/OutstationContext.cpp#L347) (BeginTx), [1102](../opendnp3/cpp/lib/src/outstation/OutstationContext.cpp#L1102) (CountControlAuthentication), [MasterResponder.cpp:184](../opendnp3/cpp/lib/src/master/MasterResponder.cpp#L184) (Respond), [OutstationChallenger.cpp:283](../opendnp3/cpp/lib/src/outstation/OutstationChallenger.cpp#L283) (Reply) and [AggressiveMode.cpp:356](../opendnp3/cpp/lib/src/auth/AggressiveMode.cpp#L356) (Verify). This shared path establishes reachability before the clock fix. It does not establish the cause of the historical Method 68 failure. Isolate the demonstrated fixture collision through an OS-selected loopback port and retain the selected endpoint across a scenario's reconnect and process restart. The socket allocation has a brief handoff window before the CLI binds.
 
 **Implementation**
 
-Peer.task in cli/tests/ProcessSmoke.py includes nearby peer output on a failed completion assertion. The success assertion remains enforced. The source slice contains no production correction for the timeout.
+The PC fixture supplies its loopback endpoint to both peers. Production authentication, wire encoding, credential storage and timeout values are untouched. [TestRemoteUpdateKeys.cpp:1131](../opendnp3/cpp/tests/unit/TestRemoteUpdateKeys.cpp#L1131), RemoteUpdateKeys - restart loads only verified active credentials and preserves pending recovery, now exercises both methods after a lost V15. It checks common-user readiness and KSQ on the live peers, rejects a replayed old key change on a recreated Outstation without a journal write or KSQ advance, then completes fresh V15 recovery at increasing monotonic times. Only the owning user consumes a new Outstation KSQ. Neither recreated peer treats an Update Key proof as an installed Session Key. The original response-dispatch regression and Aggressive replay cases in TestProductionAuthentication.cpp also ran.
 
 **Validation**
 
-One preliminary pc-method68 run failed at an authenticated READ after restart. pc-method68 passed in the full Release CTest run at `275300426ed5e210fef69703c99475b11af15408`. The pass does not identify the cause of the earlier timeout.
+The baseline shared-port batch recorded 6 passes and 4 failures, aggregate exit 1. Secret-redacted timelines for both peers are in build-p6b-o1/native/method68-restart-2.log through method68-restart-5.log. The occupied-port control failed with the fixed endpoint and passed with the private endpoint against the same reserved default listener. Control logs are method68-port-control.log and method68-occupied-default-before-1.log / method68-occupied-default-after-1.log. This control establishes a fixture defect and does not attribute all earlier failures to it.
+
+All 10 private-port Method 68 scenarios completed with recorded exit 0, and the batch process exited 0. Every fresh profile exercised normal authentication, repeated key changes, reconnect, both peer process restarts, persisted credential verification, READ and CROB, Aggressive Mode, and rejection without additional command execution. Each trace recorded 13 G120V6 and four G120V14 transmissions, a reconnect, and four clean peer exits. See method68-private-independent.log and method68-private-1.log through method68-private-10.log. The Windows Release build exited 0. Focused SA passed 78 cases and 36,576 assertions with exit 0. Two serial full CTest runs passed all 8 targets with exit 0. Each covered 721 unit cases and 59,271 assertions, 12 integration cases and 241 assertions, 7 ASIO cases and 105 assertions, and all five PC scenarios. The first parallel run exited 8 after concurrent ASIO and integration fixtures overlapped on fixed ports beginning at 20000. The second parallel run passed 8/8, and pc-method68 passed in both. See method68-full-ctest-1.log / method68-full-ctest-2.log and method68-serial-ctest-1.log / method68-serial-ctest-2.log.
 
 **Status**
 
@@ -1351,7 +1353,7 @@ NOT_YET_IMPLEMENTED
 
 **Remaining dependency**
 
-Capture safe per-peer timing and authentication ownership on recurrence and reproduce with a deterministic fixture.
+The current Windows Method 68 lifecycle is verified locally at the revision above. The historical post-restart timeout remains open because it was neither reproduced nor causally attributed. If it recurs, capture the owning peer, authentication sequence, monotonic timestamps and task completion before changing production behavior. Independent interoperability and RUK-OPEN-02 remain separate.
 
 ### SA-TCP-INTERMITTENT - Outstation session reset during authenticated response dispatch
 
