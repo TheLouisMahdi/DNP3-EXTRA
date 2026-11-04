@@ -8,7 +8,7 @@ Implementation progress is not equivalent to IEEE certification or independent i
 
 <!-- progress:start -->
 
-**Historical audit snapshot, not current compliance.** The metrics below reflect audit revision `4d9f7bbaea1f` and have not been revalidated against current source `aa15ccba7017`.
+**Historical audit snapshot, not current compliance.** The metrics below reflect audit revision `4d9f7bbaea1f` and have not been revalidated against current source `afe6c386c322`.
 
 ![IEEE 1815-2012. Audit in progress.](DNP3_PDD_PLAN/progress-ieee.svg)
 
@@ -41,7 +41,7 @@ Implementation progress is not equivalent to IEEE certification or independent i
 
 Bar order: verified (green), implemented without verification (cyan), partial (amber), missing (red), not audited (slate), blocked (violet).
 
-Latest tracked source commit **aa15ccba701740dd76a2a43f6ff0f58847271983**. Audit revision **4d9f7bbaea1fcf305d942abe7891384df18a6199**.
+Latest tracked source commit **afe6c386c3223a24dccd8493ccb10cc425929845**. Audit revision **4d9f7bbaea1fcf305d942abe7891384df18a6199**.
 Last tested revision **4d9f7bbaea1fcf305d942abe7891384df18a6199** on 2026-11-03 (Windows x64 Release).
 Unit **714 cases / 59,048 assertions**. Integration **12 cases / 241 assertions**, including SA TCP. [Execution evidence](cli/README.md)
 Historical SA TCP baseline **2 cases / 240 assertions** at `33d7994ae551e4f3b30b7ddfb894e59c6b9e336d`.
