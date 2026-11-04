@@ -1287,35 +1287,37 @@ Reproduce a transient bind/retry failure without masking a configuration error.
 
 **Source**
 
-IEEE §4.1.5.3 (p. 17), §5.1.5 and Table 5-3 (p. 107), and Table 12-24 (p. 360). Device Profile pp. 5–8 and 12. Original tracking in the EventSelection.cpp default-variation TODO.
+IEEE 1815-2012 §4.1.5.3 (p. 17), §5.1.5 and Table 5-3 (p. 107), and Table 12-24 (p. 360) for class and variation selection. §4.2.2.4.3–5 (pp. 22–23) for CON, UNS and SEQ. Device Profile PDF p. 7, PROFILE-026–030, covers G32V0 default selection and G32V1/V2/V4 event encodings. Original tracking in the EventSelection.cpp default-variation TODO.
 
 **Problem**
 
-After the confirm deadline expired, a new class poll could send the buffered event with the explicit variation from the previous request. An analog event configured for G32V1 was returned as G32V2.
+An explicit G32V2 READ set the buffered event's selectedVariation. On the next READ after confirmation timeout, EventStorage::Unselect reset the selection state of an ordinary analog event and left that variation in place. SelectByClass selected the event without choosing a new variation, so a class poll could return G32V2 for an event configured with G32V1.
 
 **Affected implementation**
 
-Outstation. [opendnp3/cpp/lib/src/outstation/event/EventSelection.cpp:26](../opendnp3/cpp/lib/src/outstation/event/EventSelection.cpp#L26) · `EventSelection::SelectByClass` at published source `275300426ed5e210fef69703c99475b11af15408`. The candidate changes this function and [opendnp3/cpp/tests/unit/TestOutstationEventResponses.cpp:117](../opendnp3/cpp/tests/unit/TestOutstationEventResponses.cpp#L117) locally.
+Outstation [opendnp3/cpp/lib/src/outstation/event/EventSelection.cpp:26–44](../opendnp3/cpp/lib/src/outstation/event/EventSelection.cpp#L26) (EventSelection::SelectByClass). Related [EventSelection.h:54–78](../opendnp3/cpp/lib/src/outstation/event/EventSelection.h#L54) (SelectByTypeGeneric), [EventStorage.cpp:196–204](../opendnp3/cpp/lib/src/outstation/event/EventStorage.cpp#L196) (Unselect), and [EventTypeImpl.h:46–50](../opendnp3/cpp/lib/src/outstation/event/EventTypeImpl.h#L46) (SelectDefaultVariation). Tested source 87964278f6579ce37f88053fee415b0518ad40e1.
 
 **Engineering decision**
 
-A class READ selects event classes without specifying each event’s reporting variation. Table 5-3 uses the configured default in that case. The local SelectByClass change mirrors SelectByTypeGeneric at EventSelection.h:54–78, where selection of an unselected record assigns its default or the explicitly requested variation. EventTypeImpl.h:46–50 applies the same default assignment through typed storage. The change preserves event data, class, ownership and confirmation state.
+A Class 1, 2 or 3 READ selects a class without specifying a reporting variation for each event. Table 5-3 uses the configured default for that case. Restore the default when the class selection claims the unselected record. This mirrors the typed default path. Setting it during serialization could override a valid explicit READ.
 
 **Implementation**
 
-`EventSelection::SelectByClass` restores the configured variation through `IEventType::SelectDefaultVariation` before setting the selected state. `TestOutstationEventResponses.cpp` covers native response and confirmation ownership.
+SelectByClass uses the existing IEventType::SelectDefaultVariation operation for each eligible unselected record. The operation copies the stored default into selectedVariation. The same event snapshot, class, selection counters and confirmation ownership are used.
 
 **Validation**
 
-TestOutstationEventResponses.cpp, OutstationEventResponsesTestSuite - Class poll uses the default variation after an explicit event response times out. The explicit G32V2 READ succeeds, its CONFIRM arrives late, the class poll returns the same point/value as G32V1, and a valid new CONFIRM removes the event. The reproduction exited 1 at the G32V1 assertion before the production fix. The Release build and focused validation exited 0 with 74 cases and 401 assertions after the fix. The unfiltered unit suite passed 720 cases and 59,077 assertions. Full parallel and serial CTest runs both exited 8 with a Method 4 timeout. The candidate remains local pending an integration result that supports publishing it.
+[opendnp3/cpp/tests/unit/TestOutstationEventResponses.cpp:117–159](../opendnp3/cpp/tests/unit/TestOutstationEventResponses.cpp#L117), OutstationEventResponsesTestSuite - Class poll uses the default variation after an explicit event response times out. The original regression reproduced G32V2 instead of G32V1 before the fix. The final test runs both G32V1 and timestamped G32V4 defaults. It verifies an explicit G32V2 response at SEQ 0, completion of transmission, confirmation timeout, and re-selection at SEQ 1 with the original index, value, flags and timestamp where encoded. Late SEQ 0 confirmations in Idle and during the new wait cannot retire the event. The correct SEQ 1 confirmation reports zero remaining events in each class once. A duplicate confirmation produces no second callback, and a subsequent class poll is empty.
+
+Windows MSVC Release build exited 0. Focused event, security-event, class and measurement filters passed 72 cases and 534 assertions with exit 0. Two complete Release CTest runs each passed 8/8 targets with exit 0. Each run covered 721 unit cases and 59,186 assertions, 12 integration cases and 241 assertions, 7 ASIO cases and 105 assertions, and the PC compatibility, Method 4, Method 68, negative security and mutual TLS scenarios. Logs in build-p6b-o1/native include event-default-release-build.log and event-default-ctest-1.log / event-default-ctest-2.log.
 
 **Status**
 
-NOT_YET_IMPLEMENTED
+VERIFIED_LOCAL
 
 **Remaining dependency**
 
-The Method 4 failure can occur independently of this patch. The clock regression uses a static G30 READ and bypasses class/event selection. The event candidate remains local by request. Dedicated TCP or independent peer coverage of the expired-confirm and class reselect sequence remains open.
+The expiry and re-selection sequence was verified with the native wire fixture. Dedicated TCP coverage of that sequence and independent-peer interoperability validation remain open.
 
 ### METHOD68-RESTART-TIMEOUT - Intermittent post-restart READ timeout
 
