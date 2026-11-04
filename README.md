@@ -8,34 +8,36 @@ Implementation progress is not equivalent to IEEE certification or independent i
 
 <!-- progress:start -->
 
+**Historical audit snapshot, not current compliance.** The metrics below reflect audit revision `4d9f7bbaea1f` and have not been revalidated against current source `aa15ccba7017`.
+
 ![IEEE 1815-2012. Audit in progress.](DNP3_PDD_PLAN/progress-ieee.svg)
 
-![RTU Device Profile. Verified 0.00% (0/69), implementation coverage 0.00% (0/69).](DNP3_PDD_PLAN/progress-profile.svg)
+![RTU Device Profile. Historical verified 17.39% (12/69), historical implementation coverage 84.06% (58/69).](DNP3_PDD_PLAN/progress-profile.svg)
 
-![RTU Security Requirements. Verified 0.00% (0/33), implementation coverage 0.00% (0/33).](DNP3_PDD_PLAN/progress-security.svg)
+![RTU Security Requirements. Historical verified 42.42% (14/33), historical implementation coverage 48.48% (16/33).](DNP3_PDD_PLAN/progress-security.svg)
 
 | Scope | Verified | Implemented, unverified | Partial | Missing | Not audited | Not applicable | Blocked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| IEEE 1815-2012 / Outstation | 0 | 0 | 0 | 0 | 11 | 0 | 0 |
-| IEEE 1815-2012 / Master | 0 | 0 | 0 | 0 | 11 | 0 | 0 |
-| RTU Device Profile / Outstation | 0 | 0 | 0 | 2 | 67 | 0 | 0 |
-| RTU Device Profile / Master | 0 | 0 | 0 | 1 | 68 | 0 | 0 |
-| RTU Security Requirements / Outstation | 0 | 0 | 0 | 3 | 32 | 0 | 1 |
-| RTU Security Requirements / Master | 0 | 0 | 0 | 2 | 25 | 8 | 1 |
+| IEEE 1815-2012 / Outstation | 0 | 4 | 6 | 0 | 1 | 0 | 0 |
+| IEEE 1815-2012 / Master | 0 | 4 | 6 | 0 | 1 | 0 | 0 |
+| RTU Device Profile / Outstation | 12 | 46 | 9 | 2 | 0 | 0 | 0 |
+| RTU Device Profile / Master | 12 | 46 | 10 | 1 | 0 | 0 | 0 |
+| RTU Security Requirements / Outstation | 14 | 2 | 11 | 3 | 5 | 0 | 1 |
+| RTU Security Requirements / Master | 14 | 2 | 9 | 2 | 0 | 8 | 1 |
 
 | Role and scope | Strict verified | Implementation coverage | Open issue IDs |
 | --- | --- | --- | ---: |
 | IEEE 1815-2012 / Outstation | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 13 |
 | IEEE 1815-2012 / Master | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 13 |
-| RTU Device Profile / Outstation | 0.00% (0/69) | 0.00% (0/69) | 14 |
-| RTU Device Profile / Master | 0.00% (0/69) | 0.00% (0/69) | 14 |
-| RTU Security Requirements / Outstation | 0.00% (0/33) | 0.00% (0/33) | 21 |
-| RTU Security Requirements / Master (8 not applicable) | 0.00% (0/27) | 0.00% (0/27) | 21 |
-| Profile G120 / Outstation | 0.00% (0/15) | 0.00% (0/15) | 5 |
-| Profile G120 / Master | 0.00% (0/15) | 0.00% (0/15) | 5 |
+| RTU Device Profile / Outstation | 17.39% (12/69) | 84.06% (58/69) | 14 |
+| RTU Device Profile / Master | 17.39% (12/69) | 84.06% (58/69) | 14 |
+| RTU Security Requirements / Outstation | 42.42% (14/33) | 48.48% (16/33) | 21 |
+| RTU Security Requirements / Master (8 not applicable) | 51.85% (14/27) | 59.26% (16/27) | 21 |
+| Profile G120 / Outstation | 60.00% (9/15) | 60.00% (9/15) | 5 |
+| Profile G120 / Master | 60.00% (9/15) | 60.00% (9/15) | 5 |
 | Security recommended rows | 2 not audited | Excluded from mandatory metrics | — |
 | Security optional rows | 0 rows | Excluded from mandatory metrics | — |
-| Security unresolved rows | 1 not audited | Excluded from mandatory metrics | — |
+| Security unresolved rows | 1 partial | Excluded from mandatory metrics | — |
 
 Bar order: verified (green), implemented without verification (cyan), partial (amber), missing (red), not audited (slate), blocked (violet).
 
@@ -48,9 +50,9 @@ Historical SA TCP baseline **2 cases / 240 assertions** at `33d7994ae551e4f3b30b
 **Audit refresh required.** Positive and partial assessments await review on this source revision.
 
 Outstation items awaiting audit:
-- **IEEE 1815-2012** — `IEEE-APDU`, `IEEE-QUALIFIERS`, `IEEE-DATA`, `IEEE-CONTROLS`, `IEEE-CLASSES-TIME-IIN`, `IEEE-ATTRIBUTES`, `IEEE-SA`, `IEEE-STATISTICS`, `IEEE-TRANSPORT-LINK`, `IEEE-STATE-MACHINES`, `IEEE-LEVEL4-ENUMERATION`
-- **RTU Device Profile** — 67 rows or work packages. See the source matrices.
-- **RTU Security Requirements** — 32 rows or work packages. See the source matrices.
+- **IEEE 1815-2012** — `IEEE-LEVEL4-ENUMERATION`
+- **RTU Device Profile** — None within the listed rows
+- **RTU Security Requirements** — `SEC-T3-01`, `SEC-T3-02`, `SEC-T3-06`, `SEC-T3-07`, `SEC-T3-08`
 
 [Formulas, evidence scope and open decisions](DNP3_PDD_PLAN/PROGRESS.md)
 

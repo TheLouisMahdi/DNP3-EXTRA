@@ -110,7 +110,7 @@ def issue_count(rows):
     return len({issue for row in rows for issue in row["open_issues"].split("|") if issue})
 
 
-def svg(title, rows, evidence, ieee):
+def svg(title, rows, evidence, ieee, historical=False):
     width = 700
     selected = rows if ieee else mandatory(rows, ROLES[0])
     tally = counts(selected, ROLES[0])
@@ -119,8 +119,9 @@ def svg(title, rows, evidence, ieee):
         secondary = f"{len(rows)} provisional work packages | Level 4 obligations still being enumerated"
     else:
         verified, implemented = metrics(rows, ROLES[0])
-        primary = f"Verified {verified}"
-        secondary = f"Implementation coverage {implemented}"
+        primary = f"Historical verified {verified}" if historical else f"Verified {verified}"
+        secondary = (f"Last-audited implementation {implemented}" if historical
+                     else f"Implementation coverage {implemented}")
     context = f"Evidence {evidence['tested_revision'][:12]} | {issue_count(rows)} open issue IDs"
     desc = f"{primary}. {secondary}. {context}. " + ", ".join(
         f"{label}: {tally[key]}" for key, (label, _) in STATUSES.items())
@@ -152,11 +153,21 @@ def svg(title, rows, evidence, ieee):
 
 
 def dashboard(scopes, evidence, latest, fresh, tested_current):
+    historical = not (fresh and tested_current)
     lines = []
+    if historical:
+        lines += [
+            "**Historical audit snapshot, not current compliance.** The metrics below reflect "
+            f"audit revision `{evidence['audit_revision'][:12]}` and have not been revalidated "
+            f"against current source `{latest.split()[0][:12]}`.",
+            "",
+        ]
     for slug, title, rows in scopes:
         ieee = slug == "ieee"
         verified, implemented = metrics(rows, ROLES[0])
-        alt = "Audit in progress" if ieee else f"Verified {verified}, implementation coverage {implemented}"
+        alt = ("Audit in progress" if ieee else
+               (f"Historical verified {verified}, historical implementation coverage {implemented}"
+                if historical else f"Verified {verified}, implementation coverage {implemented}"))
         lines.append(f"![{title}. {alt}.](DNP3_PDD_PLAN/progress-{slug}.svg)")
         lines.append("")
     lines += [
@@ -249,22 +260,16 @@ def generate():
         git("merge-base", "--is-ancestor", evidence[key], "HEAD")
     fresh = not dirty and not git("diff", "--name-only", evidence["audit_revision"], "HEAD", "--", *SOURCE_PATHS)
     tested_current = not dirty and not git("diff", "--name-only", evidence["tested_revision"], "HEAD", "--", *SOURCE_PATHS)
-    for _, _, rows in scopes:
-        for row in rows:
-            for role in ROLES:
-                if not fresh and row[role] in COMPLETE | {"PARTIAL"}:
-                    row[role] = "NOT_AUDITED"
-                elif row[role] == "VERIFIED" and (
-                    not tested_current or row["last_verified_revision"] != evidence["tested_revision"]
-                ):
-                    row[role] = "IMPLEMENTED_NOT_VERIFIED"
+    # Source drift does not erase completed historical assessments. Keep their
+    # original revision visible and label the dashboard as historical instead.
     readme = ROOT / "README.md"
     before = readme.read_text(encoding="utf-8")
     require(before.count(START) == before.count(END) == 1 and before.index(START) < before.index(END),
             "README must contain one ordered managed dashboard block")
     section = dashboard(scopes, evidence, latest + (" + local edits" if dirty else ""), fresh, tested_current)
     outputs = {readme: before.split(START, 1)[0] + START + "\n\n" + section + "\n\n" + END + before.split(END, 1)[1]}
-    outputs.update({PLAN / f"progress-{slug}.svg": svg(title, rows, evidence, slug == "ieee")
+    outputs.update({PLAN / f"progress-{slug}.svg":
+                    svg(title, rows, evidence, slug == "ieee", not (fresh and tested_current))
                     for slug, title, rows in scopes})
     return outputs
 
