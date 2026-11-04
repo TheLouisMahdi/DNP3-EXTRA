@@ -114,6 +114,50 @@ TEST_CASE(SUITE("ReadClass1WithSOEWithTimeoutInBetween"))
     REQUIRE(t.lower->PopWriteAsHex() == "E1 81 80 00 02 01 28 02 00 00 00 81 00 00 01");
 }
 
+TEST_CASE(SUITE("Class poll uses the default variation after an explicit event response times out"))
+{
+    const bool timedDefault = GENERATE(false, true);
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    config.params.solConfirmTimeout = TimeDuration::Seconds(5);
+    auto database = configure::by_count_of::analog_input(1);
+    database.analog_input[0].evariation
+        = timedDefault ? EventAnalogVariation::Group32Var4 : EventAnalogVariation::Group32Var1;
+    OutstationTestObject t(config, database);
+    t.LowerLayerUp();
+
+    t.Transaction([](IUpdateHandler& db) { db.Update(Analog(7, Flags(0x01), DNPTime(0x010203040506)), 0); });
+    t.SendToOutstation("C0 01 20 02 06");
+    REQUIRE(t.lower->PopWriteAsHex() == "E0 81 80 00 20 02 28 01 00 00 00 01 07 00");
+    t.OnTxReady();
+    t.AdvanceTime(config.params.solConfirmTimeout);
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.empty());
+
+    t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
+    const auto expected = timedDefault ? "E1 81 80 00 20 04 28 01 00 00 00 01 07 00 06 05 04 03 02 01"
+                                       : "E1 81 80 00 20 01 28 01 00 00 00 01 07 00 00 00";
+    REQUIRE(t.lower->PopWriteAsHex() == expected);
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.empty());
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.application->confirms.size() == 1);
+    const auto& confirm = t.application->confirms.front();
+    REQUIRE_FALSE(confirm.is_unsolicited);
+    REQUIRE(confirm.num_class1 == 0);
+    REQUIRE(confirm.num_class2 == 0);
+    REQUIRE(confirm.num_class3 == 0);
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.application->confirms.size() == 1);
+    REQUIRE(t.lower->NumWrites() == 0);
+
+    t.SendToOutstation(hex::ClassPoll(2, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 80 00");
+}
+
 TEST_CASE(SUITE("EventBufferOverflowAndClear"))
 {
     OutstationConfig config;

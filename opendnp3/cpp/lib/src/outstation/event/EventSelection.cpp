@@ -31,12 +31,11 @@ uint32_t EventSelection::SelectByClass(EventLists& lists, const ClassField& claz
     while (iter.HasNext() && num_selected < max)
     {
         auto node = iter.Next();
-        if (node->value.state == EventState::unselected && clazz.HasEventType(node->value.clazz))
+        auto& record = node->value;
+        if (record.state == EventState::unselected && clazz.HasEventType(record.clazz))
         {
-            // if not previously selected
-            node->value.state = EventState::selected;
-            // TODO - set the storage to use the default variation
-            // node->value.selectedVariation = useDefaultVariation ? node->value.defaultVariation : variation;
+            record.type->SelectDefaultVariation(record);
+            record.state = EventState::selected;
             ++num_selected;
             lists.counters.OnSelect();
         }
