@@ -117,7 +117,8 @@ TEST_CASE("ProfileTime - malformed G50V1 count rejects a mixed WRITE before appl
     const auto valid = readTime + " " + absoluteTime;
     REQUIRE(Exchange(t, "C1 02 " + valid + " 32 01 08 01 00 " + absoluteTime) == "C1 81 80 04");
     REQUIRE(t.application->timestamps.empty());
-    REQUIRE(Exchange(t, "C2 02 32 01 07 02 " + absoluteTime + " " + absoluteTime) == "C2 81 80 04");
+    REQUIRE(Exchange(t, "C2 02 " + valid + " 32 01 07 02 " + absoluteTime + " " + absoluteTime)
+            == "C2 81 80 04");
     REQUIRE(t.application->timestamps.empty());
     REQUIRE(Exchange(t, "C3 02 " + valid) == "C3 81 80 00");
     REQUIRE(t.application->timestamps.size() == 1);
@@ -134,6 +135,7 @@ TEST_CASE("ProfileTime - Master accepts exactly one fine time delay and rejects 
 
     const char* malformed[] = {
         "34 02 07 02 0A 00 0B 00", // two values
+        "34 02 08 01 00 0A 00",   // incorrect qualifier
         "34 02 07 00",             // zero count
         "34 02 07 01 0A",          // truncated value
         "34 01 07 01 0A 00",       // coarse delay is a restart response, not a delay measurement
@@ -145,6 +147,19 @@ TEST_CASE("ProfileTime - Master accepts exactly one fine time delay and rejects 
         REQUIRE_FALSE(response.Parse(wire, unchanged));
         REQUIRE(unchanged == 0xFFFF);
     }
+}
+
+TEST_CASE("Level4 - indexed IIN read widths and standard device restart clearing", "[level4-iin]")
+{
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+    REQUIRE(Exchange(t, "C1 01 50 01 00 06 08") == "C1 81 80 00 50 01 00 06 08 02");
+    REQUIRE(Exchange(t, "C2 01 50 01 01 07 00 07 00") == "C2 81 80 00 50 01 01 07 00 07 00 01");
+    REQUIRE(Exchange(t, "C3 02 50 01 00 07 07 01") == "C3 81 80 04");
+    REQUIRE(Exchange(t, "C4 02 50 01 00 06 07 00") == "C4 81 80 04");
+    REQUIRE(Exchange(t, "C5 02 50 01 00 07 07 00") == "C5 81 00 00");
+    REQUIRE(Exchange(t, "C6 01 50 01 00 07 07") == "C6 81 00 00 50 01 00 07 07 00");
+    REQUIRE(Exchange(t, "C7 01 50 01 01 07 00 10 00") == "C7 81 00 04");
 }
 
 TEST_CASE("ProfileTime - NEED_TIME clear delegates to the application without writing time", "[profile-time]")

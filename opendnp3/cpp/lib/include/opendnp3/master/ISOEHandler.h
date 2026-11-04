@@ -22,6 +22,7 @@
 
 #include "opendnp3/app/AnalogCommandEvent.h"
 #include "opendnp3/app/AnalogDeadband.h"
+#include "opendnp3/app/IINValue.h"
 #include "opendnp3/app/BinaryCommandEvent.h"
 #include "opendnp3/app/Indexed.h"
 #include "opendnp3/app/MeasurementTypes.h"
@@ -74,6 +75,8 @@ public:
 
     /// Optional Group 34 delivery; HeaderInfo identifies the wire variation.
     virtual void Process(const HeaderInfo&, const ICollection<Indexed<AnalogDeadband>>&) {}
+
+    virtual void Process(const HeaderInfo&, const ICollection<Indexed<IINValue>>&) {}
 
     /// Optional attribute delivery. Index denotes the attribute set (0 = standard).
     /// Attribute value bytes borrow the APDU; copy them before returning.

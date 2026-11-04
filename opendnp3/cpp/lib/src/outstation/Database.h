@@ -57,6 +57,7 @@ public:
     void SelectTime() override;
     void Unselect() override;
     void SetReadIIN(const IINField& value);
+    IINField SelectIIN(const Range& range, QualifierCode qualifier) override;
     void SetSecurityStatistics(const AuthenticationStatistics::StaticSnapshot& snapshot)
     {
         securityStatistics = &snapshot;
@@ -97,6 +98,7 @@ private:
     bool time_selected = false;
     IINField read_iin;
     Range read_iin_range = Range::Invalid();
+    QualifierCode read_iin_qualifier = QualifierCode::UINT8_START_STOP;
     const AuthenticationStatistics::StaticSnapshot* securityStatistics = nullptr;
     uint32_t securitySelection = 0;
     bool securityIndexed = false;

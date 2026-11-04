@@ -66,6 +66,7 @@ public:
     virtual bool OnLowerLayerDown() override;
 
     std::deque<std::string> receivedQueue;
+    opendnp3::Addresses lastReceivedAddresses;
 
 private:
     opendnp3::ILinkLayer* pLinkLayer;

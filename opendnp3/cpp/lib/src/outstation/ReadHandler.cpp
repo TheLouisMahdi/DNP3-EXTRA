@@ -45,6 +45,8 @@ IINField ReadHandler::ProcessHeader(const RangeHeader& header)
 {
     if (header.enumeration == GroupVariation::Group122Var0)
         return pEventSelector->SelectRange(header.enumeration, header.range);
+    if (header.enumeration == GroupVariation::Group80Var1)
+        return pStaticSelector->SelectIIN(header.range, header.GetQualifierCode());
     return pStaticSelector->SelectRange(header.enumeration, header.range);
 }
 

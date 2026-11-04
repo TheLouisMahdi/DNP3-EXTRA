@@ -823,7 +823,7 @@ bool OContext::ProcessRequestNoAck(const ParsedRequest& request)
 
 bool OContext::ProcessDirectOperateNoAck(const ParsedRequest& request)
 {
-    // Broadcast sequence numbers are ignored (IEEE 1815-2012, 4.3.4 Rule 19).
+    // Broadcast sequence numbers are ignored (IEEE 1815-2012, 4.3 Rule 19).
     if (!request.addresses.IsBroadcast())
     {
         if (noAckPeer.source == request.addresses.source && noAckPeer.destination == request.addresses.destination

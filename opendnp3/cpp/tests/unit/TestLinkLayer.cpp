@@ -124,6 +124,30 @@ TEST_CASE(SUITE("UnconfirmedDataPassedUpFromIdleUnreset"))
     REQUIRE(t.upper->receivedQueue.front() == bs.ToHex());
 }
 
+TEST_CASE(SUITE("SelfAddressUserDataUsesConfiguredDestination"), "[level4-self-address]")
+{
+    LinkConfig config(false);
+    const ByteStr payload(2, 0);
+    LinkLayerTest disabled(config);
+    REQUIRE(disabled.link.OnLowerLayerUp());
+    REQUIRE_FALSE(disabled.OnFrame(LinkFunction::PRI_UNCONFIRMED_USER_DATA, true, false, false, 0xFFFC,
+                                   config.RemoteAddr, payload.ToRSeq()));
+    REQUIRE(disabled.upper->receivedQueue.empty());
+
+    config.acceptSelfAddress = true;
+    LinkLayerTest enabled(LinkLayerConfig(config, true));
+    REQUIRE(enabled.link.OnLowerLayerUp());
+    REQUIRE_FALSE(enabled.OnFrame(LinkFunction::PRI_UNCONFIRMED_USER_DATA, true, false, false, config.LocalAddr,
+                                  0xFFFC, payload.ToRSeq()));
+    REQUIRE(enabled.upper->receivedQueue.empty());
+    REQUIRE(enabled.OnFrame(LinkFunction::PRI_UNCONFIRMED_USER_DATA, true, false, false, 0xFFFC, config.RemoteAddr,
+                            payload.ToRSeq()));
+    REQUIRE(enabled.upper->receivedQueue.size() == 1);
+    REQUIRE(enabled.upper->receivedQueue.front() == payload.ToHex());
+    REQUIRE(enabled.upper->lastReceivedAddresses.source == config.RemoteAddr);
+    REQUIRE(enabled.upper->lastReceivedAddresses.destination == config.LocalAddr);
+}
+
 // Show that the base state of idle forwards unconfirmed user data with broadcast address
 TEST_CASE(SUITE("UnconfirmedBroadcastDataPassedUpFromIdleUnreset"))
 {

@@ -49,14 +49,12 @@ TEST_CASE(SUITE("accepts empty response"))
 TEST_CASE(SUITE("parses g50v1 correctly"))
 {
     auto verify = [](MockSOEHandler& soe) {
-        REQUIRE(soe.TotalReceived() == 2);
-        REQUIRE(soe.timeSOE.size() == 2);
+        REQUIRE(soe.TotalReceived() == 1);
+        REQUIRE(soe.timeSOE.size() == 1);
         REQUIRE(soe.timeSOE[0].value == 0xABABABABABAB);
-        REQUIRE(soe.timeSOE[1].value == 0xBCBCBCBCBCBC);
     };
 
-    // g50v1 count of 2
-    auto objects = "32 01 07 02 AB AB AB AB AB AB BC BC BC BC BC BC";
+    auto objects = "32 01 07 01 AB AB AB AB AB AB";
 
     TestObjectHeaders(objects, ParseResult::OK, verify);
 }

@@ -27,6 +27,7 @@ set(opendnp3_public_headers
     ./include/opendnp3/app/Flags.h
     ./include/opendnp3/app/GroupVariationID.h
     ./include/opendnp3/app/IINField.h
+    ./include/opendnp3/app/IINValue.h
     ./include/opendnp3/app/Indexed.h
     ./include/opendnp3/app/MeasurementInfo.h
     ./include/opendnp3/app/MeasurementTypes.h
@@ -195,7 +196,6 @@ set(opendnp3_private_headers
     ./src/app/Functions.h
     ./src/app/GroupVariationRecord.h
     ./src/app/HeaderWriter.h
-    ./src/app/IINValue.h
     ./src/app/IVariableLength.h
     ./src/app/MeasurementFactory.h
 	./src/app/MeasurementTypeSpecs.h

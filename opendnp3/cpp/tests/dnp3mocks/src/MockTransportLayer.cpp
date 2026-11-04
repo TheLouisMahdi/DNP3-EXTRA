@@ -38,6 +38,7 @@ bool MockTransportLayer::SendDown(ITransportSegment& segments)
 
 bool MockTransportLayer::OnReceive(const Message& message)
 {
+    lastReceivedAddresses = message.addresses;
     receivedQueue.push_back(HexConversions::to_hex(message.payload));
     return true;
 }

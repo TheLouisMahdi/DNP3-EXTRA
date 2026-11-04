@@ -21,7 +21,7 @@
 #define OPENDNP3_IAPDUHANDLER_H
 
 #include "app/GroupVariationRecord.h"
-#include "app/IINValue.h"
+#include "opendnp3/app/IINValue.h"
 #include "app/Range.h"
 #include "app/parsing/IWhiteList.h"
 #include "gen/objects/Group120.h"

@@ -40,6 +40,8 @@ public:
 
     virtual void SelectTime() = 0;
 
+    virtual IINField SelectIIN(const Range& range, QualifierCode qualifier) = 0;
+
     virtual void Unselect() = 0;
 };
 

@@ -449,14 +449,6 @@ IINField Database::SelectRange(GroupVariation gv, const Range& range)
         return select_range<TimeAndIntervalSpec>(this->time_and_interval, range,
                                                  StaticTimeAndIntervalVariation::Group50Var4);
 
-    case (GroupVariation::Group80Var1):
-        if (!range.IsValid() || range.stop > 15 || this->read_iin_range.IsValid())
-        {
-            return IINField(IINBit::PARAM_ERROR);
-        }
-        this->read_iin_range = range;
-        return IINField::Empty();
-
     case (GroupVariation::Group110Var0):
         return select_range<OctetStringSpec>(this->octet_string, range, StaticOctetStringVariation::Group110Var0);
 
@@ -593,6 +585,17 @@ void Database::SetReadIIN(const IINField& value)
     this->read_iin = value;
 }
 
+IINField Database::SelectIIN(const Range& range, QualifierCode qualifier)
+{
+    if (!range.IsValid() || range.stop > 15 || this->read_iin_range.IsValid()
+        || (qualifier != QualifierCode::UINT8_START_STOP && qualifier != QualifierCode::UINT16_START_STOP))
+        return IINBit::PARAM_ERROR;
+
+    this->read_iin_range = range;
+    this->read_iin_qualifier = qualifier;
+    return IINField::Empty();
+}
+
 namespace
 {
 Range AssignCommandClass(std::map<uint16_t, CommandEventConfig>& points, PointClass clazz, const Range& requested)
@@ -685,16 +688,25 @@ bool Database::Load(HeaderWriter& writer)
 
     if (complete && this->read_iin_range.IsValid())
     {
-        auto iter = writer.IterateOverSingleBitfield<ser4cpp::UInt8>(
-            Group80Var1::ID(), QualifierCode::UINT8_START_STOP, static_cast<uint8_t>(this->read_iin_range.start));
-        for (uint16_t index = this->read_iin_range.start; index <= this->read_iin_range.stop; ++index)
-        {
-            if (!iter.Write(this->read_iin.IsSet(static_cast<IINBit>(index))))
+        const auto writeBits = [&](auto iter) {
+            for (uint16_t index = this->read_iin_range.start; index <= this->read_iin_range.stop; ++index)
             {
-                this->read_iin_range.start = index;
-                return false;
+                if (!iter.Write(this->read_iin.IsSet(static_cast<IINBit>(index))))
+                {
+                    this->read_iin_range.start = index;
+                    return false;
+                }
             }
-        }
+            return true;
+        };
+        const auto start = this->read_iin_range.start;
+        const auto qualifier = this->read_iin_qualifier;
+        const auto completeIIN = qualifier == QualifierCode::UINT8_START_STOP
+            ? writeBits(writer.IterateOverSingleBitfield<ser4cpp::UInt8>(Group80Var1::ID(), qualifier,
+                                                                       static_cast<uint8_t>(start)))
+            : writeBits(writer.IterateOverSingleBitfield<ser4cpp::UInt16>(Group80Var1::ID(), qualifier, start));
+        if (!completeIIN)
+            return false;
         this->read_iin_range = Range::Invalid();
     }
 

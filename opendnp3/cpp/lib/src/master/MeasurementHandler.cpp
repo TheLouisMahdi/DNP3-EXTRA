@@ -90,6 +90,11 @@ IINField MeasurementHandler::ProcessHeader(const RangeHeader& header,
     return this->LoadValues(header, TimestampQuality::INVALID, values);
 }
 
+IINField MeasurementHandler::ProcessHeader(const RangeHeader& header, const ICollection<Indexed<IINValue>>& values)
+{
+    return this->LoadValues(header, TimestampQuality::INVALID, values);
+}
+
 void MeasurementHandler::CheckForTxStart()
 {
     if (!txInitiated && pSOEHandler)

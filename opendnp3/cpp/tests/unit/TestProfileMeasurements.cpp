@@ -34,6 +34,15 @@ struct DeadbandSOE : MockSOEHandler
     }
 };
 
+struct IINSOE : MockSOEHandler
+{
+    std::vector<std::pair<HeaderInfo, Indexed<IINValue>>> records;
+    void Process(const HeaderInfo& info, const ICollection<Indexed<IINValue>>& values) override
+    {
+        values.ForeachItem([&](const Indexed<IINValue>& item) { records.emplace_back(info, item); });
+    }
+};
+
 std::string DeadbandExchange(OutstationTestObject& t, const std::string& request)
 {
     t.SendToOutstation(request);
@@ -58,6 +67,35 @@ template<class T> void CheckTime(const T& record, uint64_t time, TimestampQualit
     REQUIRE(record.meas.time.quality == quality);
     REQUIRE(record.info.tsquality == quality);
 }
+}
+
+TEST_CASE("Level4 - Master delivers indexed G80 values and rejects incomplete packed ranges", "[level4-iin]")
+{
+    MockLogHandler log;
+    IINSOE soe;
+    const auto parse = [&](const std::string& wire) {
+        return MeasurementHandler::ProcessMeasurements(ResponseInfo(false, true, true), HexSequence(wire).ToRSeq(),
+                                                       log.logger, &soe);
+    };
+    REQUIRE(parse("50 01 00 07 08 01 50 01 01 07 00 08 00 02") == ParseResult::OK);
+    REQUIRE(soe.records.size() == 4);
+    for (size_t i = 0; i < soe.records.size(); ++i)
+    {
+        const auto& record = soe.records[i];
+        REQUIRE(record.first.gv == GroupVariation::Group80Var1);
+        REQUIRE(record.first.qualifier == (i < 2 ? QualifierCode::UINT8_START_STOP : QualifierCode::UINT16_START_STOP));
+        REQUIRE(record.second.index == 7 + i % 2);
+        REQUIRE(record.second.value.value == (i == 0 || i == 3));
+    }
+    REQUIRE(parse("50 01 00 07 07 01 50 01 01 00 00 08 00 01") != ParseResult::OK);
+    REQUIRE(soe.records.size() == 4);
+}
+
+TEST_CASE("Level4 - Master rejects multiple G50V1 values", "[profile-time]")
+{
+    ProfileMeasurements measurements;
+    REQUIRE(measurements.Parse("32 01 07 02 06 05 04 03 02 01 06 05 04 03 02 01")
+            == ParseResult::INVALID_OBJECT_QUALIFIER);
 }
 
 TEST_CASE("ProfileMeasurements - valid single CTO retains binary and double-bit relative event decoding",

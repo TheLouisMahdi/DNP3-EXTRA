@@ -134,9 +134,8 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
         && record.GetQualifierCode() != QualifierCode::UINT8_CNT)
         return ParseResult::INVALID_OBJECT_QUALIFIER;
 
-    // CTO response headers are information objects, not all-objects markers.
-    // Table 12-23 permits only qualifier 07; G2V3/G4V3 depend on this reference.
-    if (record.group == 51 && settings.ExpectsContents()
+    // Table 12-23 uses qualifier 07 for CTO and delay response objects.
+    if ((record.group == 51 || record.group == 52) && settings.ExpectsContents()
         && record.GetQualifierCode() != QualifierCode::UINT8_CNT)
         return ParseResult::INVALID_OBJECT_QUALIFIER;
 

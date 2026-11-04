@@ -61,10 +61,8 @@ ParseResult CountParser::ParseHeader(ser4cpp::rseq_t& buffer,
     auto result = numParser.ParseCount(buffer, count, pLogger);
     if (result == ParseResult::OK)
     {
-        if (record.enumeration == GroupVariation::Group50Var1 && !settings.ExpectsContents() && count != 1)
-            return ParseResult::INVALID_OBJECT_QUALIFIER;
-
-        if (record.enumeration == GroupVariation::Group50Var3 && count != 1)
+        if ((record.enumeration == GroupVariation::Group50Var1 || record.enumeration == GroupVariation::Group50Var3)
+            && count != 1)
             return ParseResult::INVALID_OBJECT_QUALIFIER;
 
         if ((record.enumeration == GroupVariation::Group120Var3 ||
@@ -98,11 +96,8 @@ ParseResult CountParser::ParseHeader(ser4cpp::rseq_t& buffer,
 ParseResult CountParser::ParseCountOfObjects(
     ser4cpp::rseq_t& buffer, const HeaderRecord& record, uint16_t count, Logger* pLogger, IAPDUHandler* pHandler)
 {
-    // G2V3/G4V3 use the preceding CTO. Table 12-23 requires a single CTO
-    // with qualifier 07; reject malformed headers on the first validation pass
-    // so MeasurementHandler cannot silently keep an earlier time reference.
-    if ((record.enumeration == GroupVariation::Group51Var1 || record.enumeration == GroupVariation::Group51Var2)
-        && count != 1)
+    // A CTO or delay response has one value (Table 12-23 and Table 14-5).
+    if ((record.group == 51 || record.group == 52) && count != 1)
         return ParseResult::INVALID_OBJECT_QUALIFIER;
 
     switch (record.enumeration)

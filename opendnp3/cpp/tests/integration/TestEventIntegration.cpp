@@ -96,7 +96,8 @@ TEST_CASE(SUITE("TestEventIntegration"))
               << std::endl;
 }
 
-TEST_CASE(SUITE("Master G34 writes affect Outstation G32 delivery over TCP"), "[profile-deadband]")
+TEST_CASE(SUITE("Master reads G80 and G34 writes affect Outstation G32 delivery over TCP"),
+          "[profile-deadband][level4-iin]")
 {
     const auto timeout = std::chrono::seconds(4);
     DNP3Manager manager(2);
@@ -123,6 +124,19 @@ TEST_CASE(SUITE("Master G34 writes affect Outstation G32 delivery over TCP"), "[
     auto master = client->AddMaster("deadband master", soe, DefaultMasterApplication::Create(), masterConfig);
     REQUIRE(outstation->Enable());
     REQUIRE(master->Enable());
+
+    for (const auto qualifier : {QualifierCode::UINT8_START_STOP, QualifierCode::UINT16_START_STOP})
+    {
+        master->Scan({qualifier == QualifierCode::UINT8_START_STOP ? Header::Range8(80, 1, 7, 7)
+                                                                 : Header::Range16(80, 1, 7, 7)},
+                     soe);
+        std::vector<std::pair<HeaderInfo, Indexed<IINValue>>> indications;
+        REQUIRE(soe->indications.DrainTo(indications, timeout) == 1);
+        REQUIRE(indications.front().first.gv == GroupVariation::Group80Var1);
+        REQUIRE(indications.front().first.qualifier == qualifier);
+        REQUIRE(indications.front().second.index == 7);
+        REQUIRE(indications.front().second.value.value);
+    }
 
     const auto read = [&](const Header& header) {
         std::vector<std::pair<HeaderInfo, Indexed<AnalogDeadband>>> records;

@@ -22,7 +22,7 @@
 
 namespace opendnp3
 {
-// a simple wrapper type to differentiate an IIN from a bool
+/// The value of one indexed G80V1 internal indication.
 class IINValue
 {
 public:
