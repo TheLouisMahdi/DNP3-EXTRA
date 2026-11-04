@@ -1099,11 +1099,14 @@ IINField OContext::HandleFreezeAndClear(const ser4cpp::rseq_t& objects)
     return IINFromParseResult(result);
 }
 
-void OContext::CountControlAuthentication(uint16_t user, uint8_t count, uint64_t now)
+void OContext::CountControlAuthentication(uint16_t user, uint8_t count)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     auto& auth = *authentication;
     auto* session = auth.sessions->Find(user);
+    // Dispatch may already have used the session at a later time to send its response.
+    const auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
     // Only the common user's already-dispatched operation can exhaust the key
     // still needed to authenticate its retained normal response.
     if (user == 1 && auth.monitoringPending && session->Ready(now) && session->RemainingMessages() <= count)
@@ -1122,7 +1125,6 @@ void OContext::CountControlAuthentication(uint16_t user, uint8_t count, uint64_t
 #else
     (void)user;
     (void)count;
-    (void)now;
 #endif
 }
 
@@ -1664,7 +1666,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             if (authentication->sessions)
             {
                 // Two distinct ASDUs: outgoing control Challenge and incoming verified Reply.
-                CountControlAuthentication(handler.reply.userNum, 2, now);
+                CountControlAuthentication(handler.reply.userNum, 2);
             }
         }
         crypto::Clear(ser4cpp::wseq_t(authentication->authorized.data(), authentication->authorized.size()));
@@ -1740,7 +1742,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 SendAuthorizationError(authenticated.seqNum, user, original.header.control.SEQ);
         }
         else if (statistics) statistics->Increment(SecurityStatistic::DISCARDED_MESSAGES);
-        CountControlAuthentication(user, 1, now); // One incoming authenticated V3/native/V9 ASDU, after dispatch.
+        CountControlAuthentication(user, 1); // One incoming authenticated V3/native/V9 ASDU, after dispatch.
         crypto::Clear(ser4cpp::wseq_t(auth.authorized.data(), auth.authorized.size()));
         return true;
     }

@@ -163,7 +163,7 @@ private:
     std::shared_ptr<bool> securityEventLifetime = std::make_shared<bool>(true);
     bool securityEventNotificationPosted = false;
     void ScheduleSecurityEvents();
-    void CountControlAuthentication(uint16_t user, uint8_t count, uint64_t now);
+    void CountControlAuthentication(uint16_t user, uint8_t count);
     void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();
     void ServiceSecurityStatistics(uint64_t now);

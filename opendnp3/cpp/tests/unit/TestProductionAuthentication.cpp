@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <functional>
 #include <vector>
 
 using namespace opendnp3;
@@ -157,8 +158,11 @@ struct RuntimeErrorObserver final : IAuthenticationErrorObserver
 struct RuntimePolicy final : IAuthenticationAuthorization
 {
     bool allowControl = true, allowCommonWrite = true, allowCommonSelect = false;
+    std::function<void()> onAuthorize;
     bool IsAuthorized(uint16_t assoc, uint16_t user, uint8_t function, const uint8_t* apdu, size_t size) const override
     {
+        if (onAuthorize)
+            onAuthorize();
         return apdu && size >= 2 && apdu[1] == function && assoc == 7
             && ((user == 1 && (function == 0 || function == 1 || (function == 2 && allowCommonWrite)
                             || (function == 3 && allowCommonSelect)))
@@ -320,6 +324,45 @@ struct RuntimePair
     }
 };
 } // namespace
+
+TEST_CASE("ProductionAuthentication - response dispatch can advance the clock before control accounting",
+          "[production-sa][sa-dispatch-clock]")
+{
+    const bool aggressive = GENERATE(false, true);
+    RuntimePair pair(false, aggressive);
+    pair.Pump();
+
+    auto poll = [&]() {
+        pair.master.context->ScanAllObjects(GroupVariationID(30, 5), pair.master.meas, TaskConfig::Default());
+        pair.master.exe->run_many();
+        pair.Pump();
+    };
+    poll(); // Establish real Control and Monitoring histories.
+    REQUIRE(pair.master.application->taskCompletionEvents.size() == 1);
+    REQUIRE(pair.master.application->taskCompletionEvents.back().result == TaskCompletion::SUCCESS);
+
+    auto& session = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+    const auto ksq = session.Sequence();
+    const auto requests = pair.aggressiveRequests;
+    const auto responses = pair.aggressiveResponses;
+    const auto replies = pair.monitorReplies;
+    size_t clockAdvances = 0;
+    pair.policy->onAuthorize = [&]() {
+        ++clockAdvances;
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(1));
+    };
+    poll();
+
+    REQUIRE(clockAdvances == 1);
+    REQUIRE(session.Ready(1));
+    REQUIRE(session.Sequence() == ksq);
+    REQUIRE(pair.master.application->taskCompletionEvents.size() == 2);
+    REQUIRE(pair.master.application->taskCompletionEvents.back().result == TaskCompletion::SUCCESS);
+    REQUIRE(pair.aggressiveRequests == requests + (aggressive ? 1 : 0));
+    REQUIRE(pair.aggressiveResponses == responses + (aggressive ? 1 : 0));
+    REQUIRE(pair.monitorReplies == replies + (aggressive ? 0 : 1));
+}
+
 TEST_CASE("ProductionAuthentication - standalone Error dispatch cancels only its Challenge owner", "[production-sa][auth-error]")
 {
     const bool masterChallenger = GENERATE(false, true);
