@@ -1,6 +1,6 @@
 # Progress audit
 
-The baseline audit uses the IEEE 1815-2012 parsing obligations in §12.1, the source partitions in the source index, and executed Windows evidence at the revision in `PROGRESS_EVIDENCE.json`. The IEEE matrix is a provisional inventory of work packages. Its rows differ in granularity and some mandatory Level 4 obligations remain unenumerated. It has no percentage denominator. [Source index](01_SOURCE_MAP.md)
+The baseline audit uses the IEEE 1815-2012 parsing obligations in section 12.1, the source partitions in the source index, and executed Windows evidence at the revision in `PROGRESS_EVIDENCE.json`. The IEEE matrix is a provisional inventory of work packages. Its rows differ in granularity and some mandatory Level 4 obligations remain unenumerated. It has no percentage denominator. [Source index](01_SOURCE_MAP.md)
 
 `02_PROFILE_MATRIX.csv` holds the selected Device Profile rows and their audit columns. For this denominator, each supplied object/function row is treated as one selected mandatory Outstation obligation. A grouped row receives full credit only for its assessed scope. Master status is diagnostic and does not alter that count. The original wire expectations remain in the matrix. `local_code_status` mirrors the Outstation outcome for existing consumers.
 
@@ -9,6 +9,8 @@ The baseline audit uses the IEEE 1815-2012 parsing obligations in §12.1, the so
 Full `VERIFIED` means the cited execution evidence exercises the assessed behavior at the stated revision. `VERIFIED_SUBSET` records execution of only part of a row and receives no full-verification or implementation-coverage credit. `DECODE_ONLY` records typed decoding without an operational implementation and also receives no implementation-coverage credit. Implemented without verification means the reviewed path exists and full row execution coverage is unestablished. Partial includes known gaps within a row. Missing includes codec-only objects without an operational path. The assessment of G0V209 distinguishes executed Master decoding from missing Outstation advertisement. G120V10 and G120V14 retain partial status because unresolved sequence-wrap and wire-signature behavior affect their complete rows. TLS versions were executed on Windows, while the contradictory product cipher list remains blocked.
 
 `CONDITIONAL` remains a distinct classification and is not included in mandatory denominators. An IEEE row's `outcome` is an aggregate assessment and may differ from its Outstation status; the Profile and Security outcome columns continue to mirror their Outstation status.
+
+The B3a test commit (a1d3ddcc096f329bdcc7f07da167a596eb0cb2e6) supports the audit documented in [FC6_B3_REPORT.md](FC6_B3_REPORT.md). The report records the focused Compatibility-mode transmission, sequence, timeout and disconnect evidence and the project's own Master/Outstation TCP execution checks. The eight explicit FC6 wire rows are `VERIFIED_SUBSET`. The product rejects FC6 in REQUIRED mode, and independent-peer interoperability remains untested. The broader IEEE and Profile control rows retain their existing partial or unverified assessments.
 
 Every strict percentage uses applicable mandatory rows. Verified coverage counts only verified rows. Implementation coverage adds implemented rows awaiting full verification. Partial, missing, blocked and unaudited rows receive zero credit. Role breakdowns exclude rows marked not applicable with a role justification, such as hardware port closure for the Master. No Outstation mandatory rows are excluded in this audit.
 
@@ -29,7 +31,7 @@ The generator tracks the latest commit touching C++ sources, tests, application/
 | P6-OPEN-03 | Authentication-failure user ownership. |
 | STAT-RETENTION | Durable retention, quality and rearming limits. |
 | G122-UNTIMED | Explicit V2 cannot time an untimed historical event. |
-| FC6-MASTER | Typed Master no-response control API absent. |
+| FC6-REQUIRED-MODE | Product deliberately rejects FC6 in REQUIRED mode; authenticated FC6 challenge/aggressive handling under section 7.5.2.3.2(i) is not implemented. |
 | TIME-QUALIFIERS | G50 READ and WRITE qualifier edges remain. |
 | CLASS-EDGE | Dangling and unsupported class header behavior. |
 | IIN-WRITE-SCOPE | Narrow restart-bit write support and qualifier coverage. |
@@ -62,7 +64,7 @@ The generator tracks the latest commit touching C++ sources, tests, application/
 | COUNTER-FREEZE-WIRE-AUDIT | G20V0 FC7 qualifier-00 freeze request wire behavior remains unaudited. |
 | COUNTER-WIRE-AUDIT | Listed G20-G23 counter variations and their wire forms remain unaudited. |
 | IEEE-WIRE-AUDIT | Table 14-5 wire forms and malformed-wire coverage remain under audit. |
-| INDEPENDENT-PEER | Independent-peer interoperability remains open for Level 4 command-event behavior. |
+| INDEPENDENT-PEER | Independent-peer interoperability remains open for Level 4 command-event and FC6 control behavior. |
 | INITIATOR-DISCOVERY | Self-address initiator discovery behavior remains unaudited. |
 | LAN-TIMESTAMP-ACCURACY | LAN-time timestamp accuracy remains to be assessed. |
 | MASTER-ABSOLUTE-READ | Explicit Master G50V1 READ delivery and independent interoperability remain open. |

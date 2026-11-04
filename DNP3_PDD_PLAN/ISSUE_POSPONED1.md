@@ -469,37 +469,13 @@ Independent peer behavior for V2-only polls and untimed backlog.
 
 ### FC6-MASTER - Typed no-response control
 
-**Source**
+IEEE 1815-2012 section 4.4.5 and Table 14-5. The typed Master API now sends
+FC6 in Compatibility mode and reports local transmit completion. The B3a
+tests in `a1d3ddcc096f329bdcc7f07da167a596eb0cb2e6` cover sequence wrap and the local
+Master/Outstation control boundary. See [FC6_B3_REPORT.md](FC6_B3_REPORT.md).
 
-IEEE §4.4.4 (pp. 48–54), Table 12-8 (p. 354), Table 12-20 (p. 358). Device Profile pp. 6 and 8. Original tracking: PROGRESS.md, engineering reports or the source marker at the cited anchor.
-
-**Problem**
-
-Generic function scheduling awaits a response. Typed function 6 is absent.
-
-**Affected implementation**
-
-Master. [opendnp3/cpp/lib/src/master/MasterContext.cpp:724](../opendnp3/cpp/lib/src/master/MasterContext.cpp#L724) · `void MContext::PerformFunction` at `275300426ed5e210fef69703c99475b11af15408`.
-
-**Engineering decision**
-
-Keep acknowledged commands on existing task ownership. A no-response task needs transmission-based completion without claiming remote execution.
-
-**Implementation**
-
-Existing boundary remains. This slice contains no correction for this issue.
-
-**Validation**
-
-No new issue-specific build or execution result claimed.
-
-**Status**
-
-NOT_YET_IMPLEMENTED
-
-**Remaining dependency**
-
-Implement typed TX completion and SA negative tests when optional Master issuance is selected.
+The Compatibility-mode subset is verified. REQUIRED mode rejects FC6.
+Authenticated FC6 and independent-peer interoperability remain open.
 
 ### IIN-WRITE-SCOPE - NEED_TIME clear and rearm
 

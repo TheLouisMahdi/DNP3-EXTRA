@@ -12,15 +12,15 @@ Implementation progress is not equivalent to IEEE certification or independent i
 
 ![IEEE 1815-2012. Audit in progress.](DNP3_PDD_PLAN/progress-ieee.svg)
 
-![RTU Device Profile. Historical verified 17.39% (12/69), historical implementation coverage 85.51% (59/69).](DNP3_PDD_PLAN/progress-profile.svg)
+![RTU Device Profile. Historical verified 17.39% (12/69), historical implementation coverage 84.06% (58/69).](DNP3_PDD_PLAN/progress-profile.svg)
 
 ![RTU Security Requirements. Historical verified 42.42% (14/33), historical implementation coverage 48.48% (16/33).](DNP3_PDD_PLAN/progress-security.svg)
 
 | Scope | Verified | Implemented, unverified | Partial | Missing | Not audited | Not applicable | Blocked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| IEEE 1815-2012 / Outstation | 39 | 2 | 519 | 0 | 147 | 0 | 0 | 1 | 4 |
-| IEEE 1815-2012 / Master | 40 | 1 | 523 | 1 | 146 | 0 | 0 | 1 | 0 |
-| RTU Device Profile / Outstation | 12 | 0 | 47 | 0 | 8 | 1 | 0 | 0 | 1 |
+| IEEE 1815-2012 / Outstation | 39 | 10 | 511 | 0 | 147 | 0 | 0 | 1 | 4 |
+| IEEE 1815-2012 / Master | 40 | 9 | 523 | 1 | 138 | 0 | 0 | 1 | 0 |
+| RTU Device Profile / Outstation | 12 | 0 | 46 | 0 | 9 | 1 | 0 | 0 | 1 |
 | RTU Device Profile / Master | 11 | 1 | 46 | 0 | 10 | 1 | 0 | 0 | 0 |
 | RTU Security Requirements / Outstation | 14 | 0 | 2 | 0 | 11 | 3 | 5 | 0 | 1 |
 | RTU Security Requirements / Master | 14 | 0 | 2 | 0 | 9 | 2 | 0 | 8 | 1 |
@@ -29,8 +29,8 @@ Implementation progress is not equivalent to IEEE certification or independent i
 | --- | --- | --- | ---: |
 | IEEE 1815-2012 / Outstation (1 not applicable) | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 31 |
 | IEEE 1815-2012 / Master (1 not applicable) | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 31 |
-| RTU Device Profile / Outstation | 17.39% (12/69) | 85.51% (59/69) | 15 |
-| RTU Device Profile / Master | 15.94% (11/69) | 82.61% (57/69) | 15 |
+| RTU Device Profile / Outstation | 17.39% (12/69) | 84.06% (58/69) | 17 |
+| RTU Device Profile / Master | 15.94% (11/69) | 82.61% (57/69) | 17 |
 | RTU Security Requirements / Outstation | 42.42% (14/33) | 48.48% (16/33) | 21 |
 | RTU Security Requirements / Master (8 not applicable) | 51.85% (14/27) | 59.26% (16/27) | 21 |
 | Profile G120 / Outstation | 60.00% (9/15) | 60.00% (9/15) | 5 |
