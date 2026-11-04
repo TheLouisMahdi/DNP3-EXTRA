@@ -39,8 +39,14 @@ namespace
 struct EventStore final : IAuthenticationStatisticsStore
 {
     SecurityStatisticValues saved{};
+    bool available = true;
     bool Load(uint16_t, bool, SecurityStatisticValues& values) override { values = saved; return true; }
-    bool Save(uint16_t, bool, const SecurityStatisticValues&) override { return true; }
+    bool Save(uint16_t, bool, const SecurityStatisticValues& values) override
+    {
+        if (!available) return false;
+        saved = values;
+        return true;
+    }
 };
 
 struct EventsFixture
@@ -190,6 +196,33 @@ TEST_CASE("SecurityStatEvents - reporting equality and immutable occurrence", "[
     f.events.Unselect();
     REQUIRE(f.Select("7A 01 06") == IINField::Empty());
     REQUIRE(f.Write() == "E0 81 00 00 7A 01 28 01 00 00 00 41 00 00 03 00 00 00");
+}
+
+TEST_CASE("SecurityStatEvents - failed save marks later G122 events discontinuous permanently",
+          "[security-stat-events]")
+{
+    auto store = std::make_shared<EventStore>();
+    EventsFixture f(10, store);
+    auto thresholds = DefaultSecurityStatisticThresholds();
+    thresholds[0] = 1;
+    f.statistics.SetReporter(&f.publisher, thresholds);
+
+    f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    store->available = false;
+    f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE_FALSE(f.statistics.Retained());
+    f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+
+    store->available = true;
+    f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE(f.statistics.Retained());
+    REQUIRE(f.Select("7A 01 06") == IINField::Empty());
+    REQUIRE(f.Write()
+            == "E0 81 00 00 7A 01 28 04 00 "
+               "00 00 01 00 00 01 00 00 00 "
+               "00 00 01 00 00 02 00 00 00 "
+               "00 00 41 00 00 03 00 00 00 "
+               "00 00 41 00 00 04 00 00 00");
 }
 
 TEST_CASE("SecurityStatEvents - reporting never resets authentication maxima", "[security-stat-events]")

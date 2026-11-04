@@ -34,6 +34,15 @@ struct StatisticStore final : IAuthenticationStatisticsStore
         return true;
     }
 };
+struct StatisticReporter final : IAuthenticationStatisticsReporter
+{
+    std::vector<uint8_t> flags;
+    bool Report(SecurityStatistic, uint32_t, uint8_t quality) override
+    {
+        flags.push_back(quality);
+        return true;
+    }
+};
 }
 TEST_CASE("Security statistics - IEEE indexes and default thresholds", "[sa-statistics]")
 {
@@ -165,6 +174,34 @@ TEST_CASE("Security statistics - storage failures retain RAM accounting and reco
     statistics.Increment(SecurityStatistic::TOTAL_MESSAGES_RECEIVED);
     REQUIRE(statistics.Retained());
     REQUIRE(store->snapshots.at({7, true}) == statistics.Values());
+}
+
+TEST_CASE("Security statistics - failed persistence makes quality discontinuous permanently", "[sa-statistics]")
+{
+    auto store = std::make_shared<StatisticStore>();
+    auto thresholds = DefaultSecurityStatisticThresholds();
+    thresholds[0] = 1;
+    StatisticReporter reporter;
+    AuthenticationStatistics statistics(7, true, thresholds, store);
+    statistics.SetReporter(&reporter, thresholds);
+
+    statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE(reporter.flags.back() == 0x01);
+    REQUIRE(statistics.Retained());
+
+    store->available = false;
+    statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE_FALSE(statistics.Retained());
+    REQUIRE(statistics.CaptureStaticSnapshot().flags == 0x41);
+
+    statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE(reporter.flags.back() == 0x41);
+
+    store->available = true;
+    statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE(statistics.Retained());
+    REQUIRE(reporter.flags.back() == 0x41);
+    REQUIRE(statistics.CaptureStaticSnapshot().flags == 0x41);
 }
 
 TEST_CASE("Security statistics - successful control authentication requires accepted output", "[sa-statistics]")

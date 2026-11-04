@@ -75,7 +75,7 @@ private:
     uint16_t recoveryUser = 0;
     uint16_t timedOutUser = 0;
     bool timeoutLimitPending = false;
-    bool loaded = false, retained = false;
+    bool loaded = false, retained = false, continuous = false;
 };
 } // namespace opendnp3
 #endif

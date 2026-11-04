@@ -246,9 +246,44 @@ TEST_CASE("SecurityStatRead - association snapshots and retained rollover are is
     first.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     REQUIRE(other.Select("79 01 00 00 00") == ParseResult::OK);
     REQUIRE(Hex(other.Fragment()) == "C0 81 00 00 79 01 00 00 00 41 00 00 00 00 00 00");
-    store->available = false; // Failed Save does not lose already acquired live history.
+    store->available = false; // Live values remain, but uncertain retention is discontinuous.
     first.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     REQUIRE_FALSE(first.statistics.Retained());
     REQUIRE(first.Select("79 01 00 00 00") == ParseResult::OK);
-    REQUIRE(Hex(first.Fragment()) == "C0 81 00 00 79 01 00 00 00 01 00 00 02 00 00 00");
+    REQUIRE(Hex(first.Fragment()) == "C0 81 00 00 79 01 00 00 00 41 00 00 02 00 00 00");
+}
+
+TEST_CASE("SecurityStatRead - failed save marks G121 discontinuous and later save cannot clear it",
+          "[security-stat-read]")
+{
+    auto store = std::make_shared<ReadStore>();
+    SecurityReadFixture fixture(store);
+
+    store->available = false;
+    fixture.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE_FALSE(fixture.statistics.Retained());
+    REQUIRE(fixture.Select("79 01 06") == ParseResult::OK);
+
+    auto bytes = fixture.Fragment();
+    auto input = rseq_t(bytes.data(), bytes.size()).skip(9);
+    for (size_t n = 0; n < 18; ++n)
+    {
+        Group121Var1 value;
+        REQUIRE(Group121Var1::Read(input, value));
+        REQUIRE(value.flags == 0x41);
+    }
+
+    store->available = true;
+    fixture.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    REQUIRE(fixture.statistics.Retained());
+    REQUIRE(fixture.Select("79 01 06") == ParseResult::OK);
+
+    bytes = fixture.Fragment();
+    input = rseq_t(bytes.data(), bytes.size()).skip(9);
+    for (size_t n = 0; n < 18; ++n)
+    {
+        Group121Var1 value;
+        REQUIRE(Group121Var1::Read(input, value));
+        REQUIRE(value.flags == 0x41);
+    }
 }

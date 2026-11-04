@@ -24,7 +24,11 @@ AuthenticationStatistics::AuthenticationStatistics(uint16_t association_, bool m
         try
         {
             retained = loaded = store->Load(association, master, snapshot);
-            if (loaded) values = snapshot;
+            if (loaded)
+            {
+                values = snapshot;
+                continuous = true;
+            }
         }
         catch (...) {}
     }
@@ -43,7 +47,7 @@ const AuthenticationStatistics::StaticSnapshot& AuthenticationStatistics::Captur
     // A failed Save does not lose the still-live RAM history. A missing/failed
     // initial Load cannot establish continuity with pre-startup values. Keep DC
     // conservative: P6a has no per-point acquisition/transmission quality latch.
-    staticSnapshot.flags = loaded ? 0x01 : 0x41;
+    staticSnapshot.flags = continuous ? 0x01 : 0x41;
     return staticSnapshot;
 }
 void AuthenticationStatistics::Persist()
@@ -51,6 +55,7 @@ void AuthenticationStatistics::Persist()
     if (!store || !loaded) return; // Never overwrite unread totals with startup zeros.
     try { retained = store->Save(association, master, values); }
     catch (...) { retained = false; }
+    if (!retained) continuous = false;
 }
 void AuthenticationStatistics::Increment(SecurityStatistic statistic)
 {
@@ -145,7 +150,7 @@ void AuthenticationStatistics::Publish(SecurityStatistic statistic)
     const auto snapshot = Value(statistic);
     try
     {
-        if (reporter->Report(statistic, snapshot, loaded ? 0x01 : 0x41))
+        if (reporter->Report(statistic, snapshot, continuous ? 0x01 : 0x41))
             ReportGenerated(statistic, snapshot);
     }
     catch (...) {} // Reporting cannot interrupt security accounting or rejection.
