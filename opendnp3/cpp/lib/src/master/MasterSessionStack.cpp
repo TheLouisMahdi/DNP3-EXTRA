@@ -262,6 +262,17 @@ void MasterSessionStack::DirectOperate(CommandSet&& commands,
     executor->post(action);
 }
 
+bool MasterSessionStack::DirectOperateNoAck(CommandSet&& commands,
+                                            const CommandResultCallbackT& callback,
+                                            const TaskConfig& config)
+{
+    auto set = std::make_shared<CommandSet>(std::move(commands));
+    auto action = [self = shared_from_this(), set, config, callback]() {
+        return self->context->DirectOperateNoAck(std::move(*set), callback, config);
+    };
+    return executor->return_from<bool>(action);
+}
+
 StackStatistics MasterSessionStack::CreateStatistics() const
 {
     return StackStatistics(this->stack.link->GetStatistics(), this->stack.transport->GetStatistics());

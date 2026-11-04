@@ -65,6 +65,20 @@ class Peer:
             assert (result.endswith(" SUCCESS")) == success, "\n".join(self.lines[max(0, cursor - 20):])
         return cursor
 
+    def noack(self, command, timeout=25):
+        cursor = self.send(command)
+        completion = self.wait(
+            r"\[FC6\] local transmission complete; remote execution unknown$", cursor, timeout)
+        self.wait(r"\[SUBMITTED\].*FC6 locally accepted; remote execution unknown\)$", cursor, timeout)
+        assert not any("[RESULT]" in line or "status=SUCCESS" in line
+                       for line in self.lines[cursor:]), self.lines[cursor:]
+        return completion
+
+    def rejected_noack(self, command, timeout=25):
+        cursor = self.send(command)
+        self.wait(r"\[ERROR\] FC6 noack rejected: unavailable when authentication is REQUIRED$", cursor, timeout)
+        assert not any("[SUBMITTED]" in line and command in line for line in self.lines[cursor:]), self.lines[cursor:]
+
     def executed(self, expected):
         cursor = self.send("status")
         self.wait(r"channel=.* executed=" + str(expected) + r"$", cursor)
@@ -148,7 +162,10 @@ def compatibility(exe):
         master.task("analog 2 2 -12 direct")
         master.task("analog 3 2 4.25")
         master.task("analog 4 2 8.5 direct")
-        out.executed(6)
+        master.noack("crob 4 on noack")
+        out.executed(7)
+        master.noack("analog 1 4 77 noack")
+        out.executed(8)
         cursor = master.task("read 13 0")
         master.wait(r"Group13Var2.*BinaryCommandEvent\[3\]=ON.*SUCCESS", cursor)
         master.wait(r"Group13Var2.*BinaryCommandEvent\[3\]=OFF.*SUCCESS", cursor)
@@ -159,6 +176,10 @@ def compatibility(exe):
         master.wait(r"BinaryOutput\[3\]=OFF", cursor)
         cursor = master.task("read 40 3 2 2")
         master.wait(r"AnalogOutput\[2\]=8.5", cursor)
+        cursor = master.task("read 10 2 4 4")
+        master.wait(r"BinaryOutput\[4\]=ON", cursor)
+        cursor = master.task("read 40 1 4 4")
+        master.wait(r"AnalogOutput\[4\]=77", cursor)
         cursor = master.task("attr 210")
         master.wait(r"\[ATTR\].*Group0Var210.*value=0$", cursor)
         cursor = master.task("attr 254")
@@ -190,6 +211,9 @@ def secure(exe, method):
         master, out = connected(exe, options)
         master.task("read 1 2 0 0")
         master.task("crob 0 on")
+        out.executed(1)
+        master.rejected_noack("crob 0 off noack")
+        master.rejected_noack("analog 1 0 7 noack")
         out.executed(1)
         out.wait(r"\[SA-OBJECT\] TX G120V1$")
         master.wait(r"\[SA-OBJECT\] TX G120V2$")

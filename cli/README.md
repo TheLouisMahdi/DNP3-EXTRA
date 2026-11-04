@@ -115,8 +115,8 @@ and provisioning service are outside this console.
 | --- | --- |
 | `read <g> <v> [start stop]` | Native all-objects or indexed READ. |
 | `scan integrity`, `scan class0` ... `scan class3` | Native class scans; actual measurement/event flags and timestamps. |
-| `crob <index> on\|off [sbo\|direct]` | G12 SELECT/OPERATE by default; `direct` uses acknowledged DIRECT_OPERATE. |
-| `analog <variation:1..4> <index> <value> [sbo\|direct]` | Native G41 typed command, range-checked. |
+| `crob <index> on\|off [sbo\|direct\|noack]` | G12 SELECT/OPERATE by default; `direct` uses acknowledged DIRECT_OPERATE (FC5); `noack` uses DIRECT_OPERATE_NO_ACK (FC6). |
+| `analog <variation:1..4> <index> <value> [sbo\|direct\|noack]` | Native G41 typed command, range-checked; `direct` uses FC5 and `noack` uses FC6. |
 | `attr 210`, `attr 254`, `attr 255` | Actual security-stat count and attribute discovery. `attr 209` reports peer response; local Outstation omits unsupported version advertisement. |
 | `stats`, `events` | Native G121/G122, including actual wire association, flags and time. |
 | `user <number>`, `users`, `auth` | Select task user, inspect durable status and actual session/readiness/exchange/statistics metadata. |
@@ -139,12 +139,24 @@ of the simulated operation. `[DENIED]` reports native authorization denial.
 SA trace prints only G120 object identifiers and direction, no APDU hex or
 payload. Compatibility trace may print unprotected protocol bytes.
 
+The optional `noack` mode is available only in explicit Compatibility mode:
+
+```text
+crob 0 on noack
+analog 1 0 42 noack
+```
+
+FC5 (`direct`) waits for an application response; FC6 (`noack`) does not. FC6 is
+rejected locally when authentication is REQUIRED. Its `[SUBMITTED]` line means
+only that local scheduling was accepted, and `[FC6] local transmission complete`
+means the lower layer completed transmission. **No acknowledgment means remote
+execution is unknown**; FC6 never reports a successful remote command status.
+
 Options: `--host`, `--port`, `--local`, `--remote`, `--auth compat|method4|method68`,
 `--association`, `--user`, `--response-ms`, `--reply-ms`, `--renewal-ms`,
 `--message-count`, `--trace`, `--aggressive`, `--unsolicited`, `--deny-controls`.
 Timeouts/counts must be positive. Default user is 2 for interactive tasks;
-startup tasks use Common. No-response typed controls and arbitrary time WRITE
-are not exposed. G120V8 remains codec only. See the remote-update report for
+startup tasks use Common. Arbitrary time WRITE is not exposed. G120V8 remains codec only. See the remote-update report for
 SCS wrap, DSA DER interoperability and statistics retention limitations.
 
 ## Mutual TLS on port 19999

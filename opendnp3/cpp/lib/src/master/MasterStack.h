@@ -167,6 +167,10 @@ public:
                        const CommandResultCallbackT& callback,
                        const TaskConfig& config) override;
 
+    bool DirectOperateNoAck(CommandSet&& commands,
+                            const CommandResultCallbackT& callback,
+                            const TaskConfig& config) override;
+
 protected:
     std::shared_ptr<MContext> mcontext;
 };

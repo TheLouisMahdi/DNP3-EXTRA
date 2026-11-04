@@ -111,6 +111,9 @@ public:
                           const CommandResultCallbackT& callback,
                           const TaskConfig& config) final;
     void DirectOperate(CommandSet&& commands, const CommandResultCallbackT& callback, const TaskConfig& config) final;
+    bool DirectOperateNoAck(CommandSet&& commands,
+                            const CommandResultCallbackT& callback,
+                            const TaskConfig& config) final;
 
     MasterSessionStack(const Logger& logger,
                        const std::shared_ptr<exe4cpp::StrandExecutor>& executor,

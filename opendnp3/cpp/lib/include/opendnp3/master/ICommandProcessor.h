@@ -58,6 +58,23 @@ public:
         = 0;
 
     /**
+     * Direct operate a set of commands without application-layer acknowledgment.
+     *
+     * In Compatibility mode, a successful local transmission completes with
+     * TaskCompletion::SUCCESS; this does not confirm that the remote device
+     * executed the command. Scheduling is rejected when authentication is required.
+     *
+     * @param commands Set of command headers
+     * @param callback callback invoked upon local completion or failure
+     * @param config optional configuration that controls normal callbacks and allows the user to be specified for SA
+     * @return true if scheduling was accepted, false if rejected locally
+     */
+    virtual bool DirectOperateNoAck(CommandSet&& commands,
+                                    const CommandResultCallbackT& callback,
+                                    const TaskConfig& config = TaskConfig::Default())
+        = 0;
+
+    /**
      * Select/operate a single command
      *
      * @param command Command to operate
@@ -84,6 +101,16 @@ public:
                        uint16_t index,
                        const CommandResultCallbackT& callback,
                        const TaskConfig& config = TaskConfig::Default());
+
+    /**
+     * Direct operate a single command without application-layer acknowledgment.
+     * TaskCompletion::SUCCESS indicates only local transmission completion, not remote execution.
+     */
+    template<class T>
+    bool DirectOperateNoAck(const T& command,
+                            uint16_t index,
+                            const CommandResultCallbackT& callback,
+                            const TaskConfig& config = TaskConfig::Default());
 };
 
 template<class T>
@@ -104,6 +131,16 @@ void ICommandProcessor::DirectOperate(const T& command,
 {
     CommandSet commands({WithIndex(command, index)});
     this->DirectOperate(std::move(commands), callback, config);
+}
+
+template<class T>
+bool ICommandProcessor::DirectOperateNoAck(const T& command,
+                                           uint16_t index,
+                                           const CommandResultCallbackT& callback,
+                                           const TaskConfig& config)
+{
+    CommandSet commands({WithIndex(command, index)});
+    return this->DirectOperateNoAck(std::move(commands), callback, config);
 }
 
 } // namespace opendnp3

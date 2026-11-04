@@ -257,4 +257,15 @@ void MasterStack::DirectOperate(CommandSet&& commands, const CommandResultCallba
     this->executor->post(action);
 }
 
+bool MasterStack::DirectOperateNoAck(CommandSet&& commands,
+                                     const CommandResultCallbackT& callback,
+                                     const TaskConfig& config)
+{
+    auto set = std::make_shared<CommandSet>(std::move(commands));
+    auto action = [self = this->shared_from_this(), set, config, callback]() {
+        return self->mcontext->DirectOperateNoAck(std::move(*set), callback, config);
+    };
+    return this->executor->return_from<bool>(action);
+}
+
 } // namespace opendnp3

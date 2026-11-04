@@ -389,10 +389,15 @@ public:
 class TaskPrinter final : public ITaskCallback
 {
     const std::string label;
+    const bool noAck;
 public:
-    explicit TaskPrinter(std::string name) : label(std::move(name)) {}
+    explicit TaskPrinter(std::string name, bool noAck = false) : label(std::move(name)), noAck(noAck) {}
     void OnStart() override { Console::Print("TASK", label + " START"); }
-    void OnComplete(TaskCompletion result) override { Console::Print("TASK", label + " " + TaskCompletionSpec::to_string(result)); }
+    void OnComplete(TaskCompletion result) override
+    {
+        if (!noAck)
+            Console::Print("TASK", label + " " + TaskCompletionSpec::to_string(result));
+    }
     void OnDestroyed() override {}
 };
 class Errors final : public IAuthenticationErrorObserver
@@ -456,7 +461,7 @@ void Help(bool master)
     if (master)
     {
         Console::Print("HELP", "read <g> <v> [start stop] | scan integrity|class0|class1|class2|class3 | attr 209|210|254|255");
-        Console::Print("HELP", "crob <index> on|off [sbo|direct] | analog <v:1..4> <index> <value> [sbo|direct]");
+        Console::Print("HELP", "crob <index> on|off [sbo|direct|noack] | analog <v:1..4> <index> <value> [sbo|direct|noack]");
         Console::Print("HELP", "user <number> | ruk add|change|delete <Common|operator|engineer|guest> <scs> <role> <expiry-days>");
         Console::Print("HELP", "ruk verify|change-key <name> | stats | events | assign <group> <class:0..3> <start> <stop>");
         Console::Print("HELP", "unsol on|off | restart cold|warm | time (G50V1 READ)");
@@ -510,8 +515,17 @@ int RunMaster(diagnostic::Options o)
                 if (!user) throw std::runtime_error("User zero is reserved");
                 o.user = static_cast<uint16_t>(user); continue;
             }
-            auto task = TaskConfig::With(std::make_shared<TaskPrinter>(w[0])); task.authenticationUser = o.user;
+            const bool fc6NoAck = (w[0] == "crob" && w.size() == 4 && w[3] == "noack")
+                || (w[0] == "analog" && w.size() == 5 && w[4] == "noack");
+            auto task = TaskConfig::With(std::make_shared<TaskPrinter>(w[0], fc6NoAck)); task.authenticationUser = o.user;
             auto onResult = [name = w[0]](const ICommandTaskResult& result) { CommandResult(name, result); };
+            auto onNoAckResult = [](const ICommandTaskResult& result) {
+                if (result.summary == TaskCompletion::SUCCESS)
+                    Console::Print("FC6", "local transmission complete; remote execution unknown");
+                else
+                    Console::Print("FC6", "local transmission did not complete: "
+                        + std::string(TaskCompletionSpec::to_string(result.summary)));
+            };
             if (w[0] == "read" && (w.size() == 3 || w.size() == 5))
             {
                 const GroupVariationID gv(static_cast<uint8_t>(RequiredNumber(w[1], 255)), static_cast<uint8_t>(RequiredNumber(w[2], 255)));
@@ -542,27 +556,50 @@ int RunMaster(diagnostic::Options o)
                 if (w[2] != "on" && w[2] != "off") throw std::runtime_error("Expected on/off");
                 const auto index = static_cast<uint16_t>(RequiredNumber(w[1], 65535));
                 const ControlRelayOutputBlock command(w[2] == "on" ? OperationType::LATCH_ON : OperationType::LATCH_OFF);
-                if (w.size() == 4 && w[3] == "direct") master->DirectOperate(command, index, onResult, task);
-                else if (w.size() == 3 || w[3] == "sbo") master->SelectAndOperate(command, index, onResult, task);
-                else throw std::runtime_error("Expected sbo/direct");
+                const auto mode = w.size() == 3 ? std::string("sbo") : w[3];
+                if (mode == "noack")
+                {
+                    if (!master->DirectOperateNoAck(command, index, onNoAckResult, task))
+                    {
+                        Console::Print("ERROR", "FC6 noack rejected: unavailable when authentication is REQUIRED");
+                        continue;
+                    }
+                }
+                else if (mode == "direct") master->DirectOperate(command, index, onResult, task);
+                else if (mode == "sbo") master->SelectAndOperate(command, index, onResult, task);
+                else throw std::runtime_error("Expected sbo/direct/noack");
             }
             else if (w[0] == "analog" && (w.size() == 4 || w.size() == 5))
             {
                 const auto variation = RequiredNumber(w[1], 4), index = RequiredNumber(w[2], 65535);
                 double value = 0;
                 if (!Floating(w[3], value) || variation == 0) throw std::runtime_error("Invalid analog command");
-                const bool direct = w.size() == 5 && w[4] == "direct";
-                if (w.size() == 5 && !direct && w[4] != "sbo") throw std::runtime_error("Expected sbo/direct");
+                const auto mode = w.size() == 4 ? std::string("sbo") : w[4];
+                if (mode != "sbo" && mode != "direct" && mode != "noack")
+                    throw std::runtime_error("Expected sbo/direct/noack");
                 auto send = [&](const auto& command) {
-                    if (direct) master->DirectOperate(command, static_cast<uint16_t>(index), onResult, task);
-                    else master->SelectAndOperate(command, static_cast<uint16_t>(index), onResult, task);
+                    if (mode == "noack")
+                        return master->DirectOperateNoAck(command, static_cast<uint16_t>(index), onNoAckResult, task);
+                    if (mode == "direct")
+                    {
+                        master->DirectOperate(command, static_cast<uint16_t>(index), onResult, task);
+                        return true;
+                    }
+                    master->SelectAndOperate(command, static_cast<uint16_t>(index), onResult, task);
+                    return true;
                 };
                 if (variation <= 2 && (value != std::trunc(value) || value < (variation == 1 ? -2147483648.0 : -32768.0)
                     || value > (variation == 1 ? 2147483647.0 : 32767.0))) throw std::runtime_error("Integer command out of range");
-                if (variation == 1) send(AnalogOutputInt32(static_cast<int32_t>(value)));
-                if (variation == 2) send(AnalogOutputInt16(static_cast<int16_t>(value)));
-                if (variation == 3) { if (std::abs(value) > std::numeric_limits<float>::max()) throw std::runtime_error("Float overflow"); send(AnalogOutputFloat32(static_cast<float>(value))); }
-                if (variation == 4) send(AnalogOutputDouble64(value));
+                bool accepted = true;
+                if (variation == 1) accepted = send(AnalogOutputInt32(static_cast<int32_t>(value)));
+                if (variation == 2) accepted = send(AnalogOutputInt16(static_cast<int16_t>(value)));
+                if (variation == 3) { if (std::abs(value) > std::numeric_limits<float>::max()) throw std::runtime_error("Float overflow"); accepted = send(AnalogOutputFloat32(static_cast<float>(value))); }
+                if (variation == 4) accepted = send(AnalogOutputDouble64(value));
+                if (!accepted)
+                {
+                    Console::Print("ERROR", "FC6 noack rejected: unavailable when authentication is REQUIRED");
+                    continue;
+                }
             }
             else if (w[0] == "ruk" && (w.size() == 3 || w.size() == 6))
             {
@@ -587,7 +624,8 @@ int RunMaster(diagnostic::Options o)
                     Console::Print("RESTART", TaskCompletionSpec::to_string(result.summary)); }, task);
             else if (Is(w, {"time"})) master->Scan({Header::Count8(50, 1, 1)}, soe, task);
             else { Console::Print("ERROR", "Unknown command. Type help."); continue; }
-            Console::Print("SUBMITTED", line + " (completion pending)");
+            Console::Print("SUBMITTED", line + (fc6NoAck
+                ? " (FC6 locally accepted; remote execution unknown)" : " (completion pending)"));
         }
         catch (const std::exception& e) { Console::Print("ERROR", e.what()); }
     }
