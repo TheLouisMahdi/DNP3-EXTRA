@@ -48,6 +48,8 @@ TCPServerIOHandler::TCPServerIOHandler(const Logger& logger,
       endpoint(std::move(endpoint)),
       server(std::make_shared<Server>(this->logger, this->executor, this->endpoint, ec))
 {
+    if (!ec)
+        this->endpoint.port = this->server->GetBoundPort();
 }
 
 void TCPServerIOHandler::ShutdownImpl()

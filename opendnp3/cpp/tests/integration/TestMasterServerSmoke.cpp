@@ -103,12 +103,12 @@ struct TestComponents
 {
     TestComponents(DNP3Manager& manager, int numOutstations)
         : listener(manager.CreateListener(
-              "listener", levels::ALL, IPEndpoint::Localhost(20000), std::make_shared<CompatibilityListenCallbacks>()))
+              "listener", levels::ALL, IPEndpoint::Localhost(0), std::make_shared<CompatibilityListenCallbacks>()))
     {
         for (int i = 0; i < numOutstations; ++i)
         {
             auto channel = manager.AddTCPClient("client", levels::ALL, ChannelRetry::Default(),
-                                                {IPEndpoint("127.0.0.1", 20000)}, "0.0.0.0", nullptr);
+                                                {IPEndpoint::Localhost(listener->GetBoundPort())}, "0.0.0.0", nullptr);
             auto outstation = channel->AddOutstation("outstation", SuccessCommandHandler::Create(),
                                                      DefaultOutstationApplication::Create(), GetConfig());
 
@@ -157,14 +157,14 @@ TEST_CASE(SUITE("Double BeginShutdown"))
 
     // Master listener creation
     auto listenCallbacks = std::make_shared<CompatibilityListenCallbacks>(true);
-    auto listener = manager.CreateListener("listener", levels::ALL, IPEndpoint::Localhost(20000), listenCallbacks);
+    auto listener = manager.CreateListener("listener", levels::ALL, IPEndpoint::Localhost(0), listenCallbacks);
 
     // Outstation
     OutstationStackConfig outstationConfig(configure::by_count_of::all_types(0));
     outstationConfig.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
     outstationConfig.outstation.params.allowUnsolicited = true;
     auto channel = manager.AddTCPClient("client", levels::ALL, ChannelRetry::Default(),
-                                        {IPEndpoint("127.0.0.1", 20000)}, "", nullptr);
+                                        {IPEndpoint::Localhost(listener->GetBoundPort())}, "", nullptr);
     auto outstation = channel->AddOutstation("outstation", SuccessCommandHandler::Create(),
                                              DefaultOutstationApplication::Create(), outstationConfig);
 

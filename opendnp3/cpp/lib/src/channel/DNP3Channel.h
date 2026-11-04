@@ -36,14 +36,16 @@ public:
     DNP3Channel(const Logger& logger,
                 const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
                 std::shared_ptr<IOHandler> iohandler,
-                std::shared_ptr<IResourceManager> manager);
+                std::shared_ptr<IResourceManager> manager,
+                uint16_t boundPort = 0);
 
     static std::shared_ptr<DNP3Channel> Create(const Logger& logger,
                                                const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
                                                const std::shared_ptr<IOHandler>& iohandler,
-                                               const std::shared_ptr<IResourceManager>& manager)
+                                               const std::shared_ptr<IResourceManager>& manager,
+                                               uint16_t boundPort = 0)
     {
-        return std::make_shared<DNP3Channel>(logger, executor, iohandler, manager);
+        return std::make_shared<DNP3Channel>(logger, executor, iohandler, manager, boundPort);
     }
 
     ~DNP3Channel();
@@ -51,6 +53,8 @@ public:
     // ----------------------- Implement IChannel -----------------------
 
     void Shutdown() final;
+
+    uint16_t GetBoundPort() const final { return boundPort; }
 
     LinkStatistics GetStatistics() final;
 
@@ -81,6 +85,7 @@ private:
     std::shared_ptr<IOHandler> iohandler;
     std::shared_ptr<IResourceManager> manager;
     std::shared_ptr<ResourceManager> resources;
+    const uint16_t boundPort;
 };
 
 } // namespace opendnp3

@@ -118,10 +118,10 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     DNP3Manager manager(1, trace);
     const auto levels = opendnp3::levels::NORMAL | flags::APP_HEADER_RX | flags::APP_HEADER_TX | flags::APP_OBJECT_RX
         | flags::APP_OBJECT_TX;
-    const uint16_t port = 20197;
     auto server = manager.AddTCPServer("sa-server", levels, ServerAcceptMode::CloseExisting,
-                                       IPEndpoint("127.0.0.1", port), nullptr);
-    auto client = manager.AddTCPClient("sa-client", levels, ChannelRetry::Default(), {IPEndpoint("127.0.0.1", port)},
+                                       IPEndpoint::Localhost(0), nullptr);
+    const auto port = server->GetBoundPort();
+    auto client = manager.AddTCPClient("sa-client", levels, ChannelRetry::Default(), {IPEndpoint::Localhost(port)},
                                        "127.0.0.1", listener);
     OutstationStackConfig oc(DatabaseConfig{});
     oc.link.LocalAddr = 10;
@@ -200,7 +200,7 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     server->Shutdown();
     REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
     server = manager.AddTCPServer("sa-restarted-server", levels, ServerAcceptMode::CloseExisting,
-                                  IPEndpoint("127.0.0.1", port), nullptr);
+                                  IPEndpoint::Localhost(port), nullptr);
     outstation = server->AddOutstation("sa-restarted-outstation", commands, DefaultOutstationApplication::Create(), oc);
     REQUIRE(outstation->Enable());
     REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
@@ -222,11 +222,11 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     auto trace = std::make_shared<AuthenticationTrace>();
     auto commands = std::make_shared<TcpCommands>();
     DNP3Manager manager(1, trace);
-    const uint16_t port = 20196;
     auto server = manager.AddTCPServer("remote-sa-server", levels::NORMAL, ServerAcceptMode::CloseExisting,
-        IPEndpoint("127.0.0.1", port), nullptr);
+        IPEndpoint::Localhost(0), nullptr);
+    const auto port = server->GetBoundPort();
     auto client = manager.AddTCPClient("remote-sa-client", levels::NORMAL, ChannelRetry::Default(),
-        {IPEndpoint("127.0.0.1", port)}, "127.0.0.1", listener);
+        {IPEndpoint::Localhost(port)}, "127.0.0.1", listener);
     OutstationStackConfig outConfig(DatabaseConfig{});
     outConfig.link.LocalAddr = 10;
     outConfig.link.RemoteAddr = 1;
@@ -282,7 +282,7 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     server->Shutdown();
     REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
     server = manager.AddTCPServer("remote-sa-restarted-server", levels::NORMAL, ServerAcceptMode::CloseExisting,
-        IPEndpoint("127.0.0.1", port), nullptr);
+        IPEndpoint::Localhost(port), nullptr);
     outstation = server->AddOutstation("remote-sa-restarted-outstation", commands, DefaultOutstationApplication::Create(), outConfig);
     REQUIRE(outstation->Enable());
     REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));

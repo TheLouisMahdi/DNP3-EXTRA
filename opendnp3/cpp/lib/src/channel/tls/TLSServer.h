@@ -50,6 +50,8 @@ public:
     /// Stop listening for connections, permanently shutting down the listener
     void Shutdown() override;
 
+    uint16_t GetBoundPort() const override final { return endpoint.port(); }
+
 protected:
     // Inherited classes must implement these methods
 

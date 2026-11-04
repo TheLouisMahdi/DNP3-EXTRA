@@ -39,24 +39,25 @@ using namespace opendnp3;
 const auto FILTERS = levels::NOTHING;
 const uint32_t NUM_THREADS = 1;
 
-void start_outstation(DNP3Manager& manager)
+uint16_t start_outstation(DNP3Manager& manager)
 {
     const auto channel
-        = manager.AddTCPServer("server", FILTERS, ServerAcceptMode::CloseNew, IPEndpoint("127.0.0.1", 20000), nullptr);
+        = manager.AddTCPServer("server", FILTERS, ServerAcceptMode::CloseNew, IPEndpoint::Localhost(0), nullptr);
     OutstationStackConfig config(configure::by_count_of::all_types(0));
     config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
     const auto outstation
         = channel->AddOutstation("outstation", SuccessCommandHandler::Create(), DefaultOutstationApplication::Create(),
                                  config);
     outstation->Enable();
+    return channel->GetBoundPort();
 }
 
-void start_master(DNP3Manager& manager)
+void start_master(DNP3Manager& manager, uint16_t port)
 {
     auto soeHandler = std::make_shared<CountingSOEHandler>();
     const auto channel
         = manager.AddTCPClient("client", FILTERS, ChannelRetry(TimeDuration::Seconds(0), TimeDuration::Seconds(0)),
-                               {IPEndpoint("127.0.0.1", 20000)}, "127.0.0.1", nullptr);
+                               {IPEndpoint::Localhost(port)}, "127.0.0.1", nullptr);
     MasterStackConfig config;
     config.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
     const auto master = channel->AddMaster("master", soeHandler, DefaultMasterApplication::Create(), config);
@@ -78,8 +79,8 @@ TEST_CASE("TestDeadlock")
 
         const bool is_even = (i % 2) == 0;
 
-        start_outstation(is_even ? manager1 : manager2);
-        start_master(is_even ? manager2 : manager1);
+        const auto port = start_outstation(is_even ? manager1 : manager2);
+        start_master(is_even ? manager2 : manager1, port);
 
         // give the two sides sufficient time to connect
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -97,7 +98,7 @@ TEST_CASE("TestDeadlock2")
     {
         auto manager2 = std::make_unique<DNP3Manager>(3, ConsoleLogger::Create());
         auto channel2 = manager2->AddTCPServer("server", FILTERS, ServerAcceptMode::CloseNew,
-                                               IPEndpoint("127.0.0.1", 20000), nullptr);
+                                               IPEndpoint::Localhost(0), nullptr);
         OutstationStackConfig config(DatabaseConfig(1));
         config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
         config.link.LocalAddr = 10;
@@ -109,7 +110,7 @@ TEST_CASE("TestDeadlock2")
         auto manager = std::make_unique<DNP3Manager>(3, ConsoleLogger::Create());
         auto channel = manager->AddTCPClient("tcpclient", FILTERS,
                                              ChannelRetry(TimeDuration::Seconds(0), TimeDuration::Seconds(0)),
-                                             {IPEndpoint("127.0.0.1", 20000)}, "127.0.0.1", nullptr);
+                                             {IPEndpoint::Localhost(channel2->GetBoundPort())}, "127.0.0.1", nullptr);
         MasterStackConfig stackConfig;
         stackConfig.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
         stackConfig.link.LocalAddr = 1;

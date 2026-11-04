@@ -36,7 +36,7 @@ using namespace opendnp3;
 PerformanceStackPair::PerformanceStackPair(LogLevels levels,
                                            TimeDuration timeout,
                                            DNP3Manager& manager,
-                                           uint16_t port,
+                                           uint16_t index,
                                            uint16_t numPointsPerType,
                                            uint32_t eventsPerIteration)
     : NUM_POINTS_PER_TYPE(numPointsPerType),
@@ -44,9 +44,12 @@ PerformanceStackPair::PerformanceStackPair(LogLevels levels,
       soeHandler(std::make_shared<CountingSOEHandler>()),
       clientListener(std::make_shared<QueuedChannelListener>()),
       serverListener(std::make_shared<QueuedChannelListener>()),
-      master(CreateMaster(levels, timeout, manager, port, this->soeHandler, this->clientListener)),
-      outstation(CreateOutstation(
-          levels, timeout, manager, port, numPointsPerType, 3 * eventsPerIteration, this->serverListener))
+      serverChannel(manager.AddTCPServer(GetId("server", index), levels, ServerAcceptMode::CloseExisting,
+                                         IPEndpoint::Localhost(0), this->serverListener)),
+      master(CreateMaster(levels, timeout, manager, serverChannel->GetBoundPort(), this->soeHandler, this->clientListener)),
+      outstation(serverChannel->AddOutstation(GetId("outstation", serverChannel->GetBoundPort()),
+          SuccessCommandHandler::Create(), DefaultOutstationApplication::Create(),
+          GetOutstationStackConfig(numPointsPerType, 3 * eventsPerIteration, timeout)))
 {
     this->outstation->Enable();
     this->master->Enable();
@@ -148,22 +151,6 @@ std::shared_ptr<IMaster> PerformanceStackPair::CreateMaster(LogLevels levels,
 
     return channel->AddMaster(GetId("master", port), std::move(soehandler), DefaultMasterApplication::Create(),
                               GetMasterStackConfig(timeout));
-}
-
-std::shared_ptr<IOutstation> PerformanceStackPair::CreateOutstation(LogLevels levels,
-                                                                    TimeDuration timeout,
-                                                                    DNP3Manager& manager,
-                                                                    uint16_t port,
-                                                                    uint16_t numPointsPerType,
-                                                                    uint16_t eventBufferSize,
-                                                                    std::shared_ptr<IChannelListener> listener)
-{
-    auto channel = manager.AddTCPServer(GetId("server", port), levels, ServerAcceptMode::CloseExisting,
-                                        IPEndpoint("127.0.0.1", port), std::move(listener));
-
-    return channel->AddOutstation(GetId("outstation", port), SuccessCommandHandler::Create(),
-                                  DefaultOutstationApplication::Create(),
-                                  GetOutstationStackConfig(numPointsPerType, eventBufferSize, timeout));
 }
 
 std::string PerformanceStackPair::GetId(const char* name, uint16_t port)

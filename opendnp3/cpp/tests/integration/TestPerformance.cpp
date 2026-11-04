@@ -35,7 +35,6 @@ using namespace opendnp3;
 
 TEST_CASE(SUITE("PointsPerSecond"))
 {
-    const uint16_t START_PORT = 20000;
     const uint16_t NUM_STACK_PAIRS = 10;
 
     const uint16_t NUM_POINTS_PER_TYPE = 50;
@@ -58,7 +57,7 @@ TEST_CASE(SUITE("PointsPerSecond"))
 
     for (uint16_t i = 0; i < NUM_STACK_PAIRS; ++i)
     {
-        auto pair = std::make_unique<PerformanceStackPair>(LEVELS, STACK_TIMEOUT, manager, START_PORT + i,
+        auto pair = std::make_unique<PerformanceStackPair>(LEVELS, STACK_TIMEOUT, manager, i,
                                                            NUM_POINTS_PER_TYPE, EVENTS_PER_ITERATION);
         pairs.push_back(std::move(pair));
     }

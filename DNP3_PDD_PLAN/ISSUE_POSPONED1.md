@@ -1390,3 +1390,57 @@ VERIFIED_LOCAL
 **Remaining dependency**
 
 No Method 4 or native TCP failure recurred in the six isolated and three full post-fix runs. Earlier native TCP failures had no equivalent per-peer capture, so their historical cause is not established independently. The earlier Method 68 observation remains separately open. Independent interoperability was not exercised.
+
+### NATIVE-PORT-COLLISION - Windows TCP/TLS test isolation
+
+**Problem**
+
+Native ASIO and integration fixtures shared fixed TCP ports,
+including 20000. Concurrent tests and external listeners could
+interfere with otherwise valid test execution. The ASIO TCP mock
+also ignored the server's effective bound port.
+
+**Implementation**
+
+TCPServer.cpp:85-95 and TLSServer.cpp:79-85 capture the actual
+listener endpoint after binding.
+
+TCPServerIOHandler.cpp:52 and TLSServerIOHandler.cpp:54
+propagate the assigned port.
+
+DNP3ManagerImpl.cpp:93-108 and 204-222 expose the effective
+server port through the channel.
+
+IChannel.h and IListener.h expose GetBoundPort, returning zero
+when no bound listener port is available.
+
+Native ASIO and integration fixtures use isolated dynamic
+loopback ports. Restart scenarios preserve their selected port.
+
+**Validation**
+
+Windows Release build passed.
+
+Focused TCP/TLS tests: 3 passed.
+Integration tests: 12 passed.
+ASIO tests: 7 passed.
+
+Complete CTest: 5 successful runs at each of -j 1, -j 2,
+and -j 4, totaling 15 successful full runs.
+
+Each completed run passed 8/8 targets.
+An occupied-port-20000 parallel run also passed.
+Final serial verification exited 0.
+git diff --check exited 0.
+
+Evidence logs are retained in the local build directory.
+
+**Status**
+
+VERIFIED_LOCAL
+
+**Remaining dependency**
+
+Independent CI validation remains outstanding.
+Adding public virtual interface methods requires rebuilding
+binary consumers of the library.

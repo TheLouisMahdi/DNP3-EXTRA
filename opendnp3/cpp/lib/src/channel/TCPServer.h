@@ -49,6 +49,8 @@ public:
     /// Implement IListener
     void Shutdown() override final;
 
+    uint16_t GetBoundPort() const override final { return endpoint.port(); }
+
 protected:
     /// Inherited classes must define these functions
 

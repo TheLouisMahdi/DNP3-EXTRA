@@ -36,17 +36,19 @@ using namespace opendnp3;
 StackPair::StackPair(LogLevels levels,
                      TimeDuration timeout,
                      DNP3Manager& manager,
-                     uint16_t port,
+                     uint16_t index,
                      uint16_t numPointsPerType,
                      uint32_t eventsPerIteration)
-    : PORT(port),
-      EVENTS_PER_ITERATION(eventsPerIteration),
+    : EVENTS_PER_ITERATION(eventsPerIteration),
       soeHandler(std::make_shared<QueuingSOEHandler>()),
       clientListener(std::make_shared<QueuedChannelListener>()),
       serverListener(std::make_shared<QueuedChannelListener>()),
-      master(CreateMaster(levels, timeout, manager, port, this->soeHandler, this->clientListener)),
-      outstation(CreateOutstation(
-          levels, timeout, manager, port, numPointsPerType, 3 * eventsPerIteration, this->serverListener)),
+      serverChannel(manager.AddTCPServer(GetId("server", index), levels, ServerAcceptMode::CloseExisting,
+                                         IPEndpoint::Localhost(0), this->serverListener)),
+      master(CreateMaster(levels, timeout, manager, serverChannel->GetBoundPort(), this->soeHandler, this->clientListener)),
+      outstation(serverChannel->AddOutstation(GetId("outstation", serverChannel->GetBoundPort()),
+          SuccessCommandHandler::Create(), DefaultOutstationApplication::Create(),
+          GetOutstationStackConfig(numPointsPerType, 3 * eventsPerIteration, timeout))),
       index_distribution(0, numPointsPerType - 1),
       type_distribution(0, 5),
       bool_distribution(0, 1),
@@ -89,7 +91,7 @@ void StackPair::WaitToRxValues(std::chrono::steady_clock::duration timeout)
         if (rx_values.empty())
         {
             std::ostringstream oss;
-            oss << "No values received within timeout: " << PORT;
+            oss << "No values received within timeout: " << serverChannel->GetBoundPort();
             throw std::runtime_error(oss.str());
         }
 
@@ -100,7 +102,7 @@ void StackPair::WaitToRxValues(std::chrono::steady_clock::duration timeout)
             if (tx_values.empty())
             {
                 std::ostringstream oss;
-                oss << "more values received than transmited: " << PORT;
+                oss << "more values received than transmited: " << serverChannel->GetBoundPort();
                 throw std::runtime_error(oss.str());
             }
 
@@ -205,22 +207,6 @@ std::shared_ptr<IMaster> StackPair::CreateMaster(LogLevels levels,
 
     return channel->AddMaster(GetId("master", port), std::move(soehandler), DefaultMasterApplication::Create(),
                               GetMasterStackConfig(timeout));
-}
-
-std::shared_ptr<IOutstation> StackPair::CreateOutstation(LogLevels levels,
-                                                         TimeDuration timeout,
-                                                         DNP3Manager& manager,
-                                                         uint16_t port,
-                                                         uint16_t numPointsPerType,
-                                                         uint16_t eventBufferSize,
-                                                         std::shared_ptr<IChannelListener> listener)
-{
-    auto channel = manager.AddTCPServer(GetId("server", port), levels, ServerAcceptMode::CloseExisting,
-                                        IPEndpoint("127.0.0.1", port), std::move(listener));
-
-    return channel->AddOutstation(GetId("outstation", port), SuccessCommandHandler::Create(),
-                                  DefaultOutstationApplication::Create(),
-                                  GetOutstationStackConfig(numPointsPerType, eventBufferSize, timeout));
 }
 
 std::string StackPair::GetId(const char* name, uint16_t port)

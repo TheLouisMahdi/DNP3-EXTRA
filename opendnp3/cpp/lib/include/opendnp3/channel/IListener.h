@@ -22,6 +22,8 @@
 
 #include "opendnp3/IResource.h"
 
+#include <cstdint>
+
 namespace opendnp3
 {
 
@@ -33,6 +35,9 @@ class IListener : public IResource
 {
 public:
     virtual ~IListener() {}
+
+    /// The port assigned at bind, including an OS-selected port when configured with 0.
+    virtual uint16_t GetBoundPort() const { return 0; }
 };
 
 } // namespace opendnp3

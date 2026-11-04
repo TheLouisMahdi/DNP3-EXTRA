@@ -33,6 +33,7 @@
 #include "opendnp3/outstation/IOutstationApplication.h"
 #include "opendnp3/outstation/OutstationStackConfig.h"
 
+#include <cstdint>
 #include <memory>
 
 namespace opendnp3
@@ -91,6 +92,9 @@ public:
                                                        std::shared_ptr<IOutstationApplication> application,
                                                        const OutstationStackConfig& config)
         = 0;
+
+    /// The port assigned to a TCP/TLS server at creation, or 0 for other channels.
+    virtual uint16_t GetBoundPort() const { return 0; }
 };
 
 } // namespace opendnp3

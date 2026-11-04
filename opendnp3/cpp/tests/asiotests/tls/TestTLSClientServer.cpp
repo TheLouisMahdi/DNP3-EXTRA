@@ -56,7 +56,7 @@ TEST_CASE(SUITE("client and server can connect using self-signed certificate and
             TLSConfig cfg1(cert2, cert1, key1);
             TLSConfig cfg2(cert1, cert2, key2);
 
-            MockTLSPair pair(io, 20001, cfg1, cfg2);
+            MockTLSPair pair(io, cfg1, cfg2);
 
             pair.Connect(1);
         };
@@ -87,7 +87,7 @@ TEST_CASE(SUITE("client and server can connect using certificates signed by comm
             TLSConfig cfg1(ca_cert, cert1, key1);
             TLSConfig cfg2(ca_cert, cert2, key2);
 
-            MockTLSPair pair(io, 20001, cfg1, cfg2);
+            MockTLSPair pair(io, cfg1, cfg2);
 
             pair.Connect(1);
         };

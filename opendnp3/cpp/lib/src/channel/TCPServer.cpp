@@ -92,6 +92,9 @@ void TCPServer::Configure(const std::string& adapter, std::error_code& ec)
     acceptor.listen(asio::socket_base::max_connections, ec);
 
     if (!ec)
+        this->endpoint = this->acceptor.local_endpoint(ec);
+
+    if (!ec)
     {
         std::ostringstream oss;
         oss << this->endpoint;

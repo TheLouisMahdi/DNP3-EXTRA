@@ -33,7 +33,6 @@ class MockTLSPair
 
 public:
     MockTLSPair(const std::shared_ptr<MockIO>& io,
-                uint16_t port,
                 const opendnp3::TLSConfig& client,
                 const opendnp3::TLSConfig& server,
                 std::error_code ec = std::error_code());
@@ -48,7 +47,6 @@ public:
 
 private:
     std::shared_ptr<MockIO> io;
-    uint16_t port;
     std::shared_ptr<MockTLSClientHandler> chandler;
     std::shared_ptr<opendnp3::TLSClient> client;
     std::shared_ptr<MockTLSServer> server;

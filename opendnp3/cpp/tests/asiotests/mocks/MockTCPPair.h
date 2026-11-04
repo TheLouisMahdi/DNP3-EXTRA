@@ -32,7 +32,7 @@ class MockTCPPair
 {
 
 public:
-    MockTCPPair(std::shared_ptr<MockIO> io, uint16_t port, std::error_code ec = std::error_code());
+    MockTCPPair(std::shared_ptr<MockIO> io, std::error_code ec = std::error_code());
 
     ~MockTCPPair();
 
@@ -43,7 +43,6 @@ public:
 private:
     MockLogHandler log;
     std::shared_ptr<MockIO> io;
-    uint16_t port;
     std::shared_ptr<MockTCPClientHandler> chandler;
     std::shared_ptr<opendnp3::TCPClient> client;
     std::shared_ptr<MockTCPServer> server;

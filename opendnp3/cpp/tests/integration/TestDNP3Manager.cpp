@@ -43,15 +43,15 @@ const int ITERATIONS = 100;
 struct Channels
 {
     explicit Channels(DNP3Manager& manager)
-        : client(manager.AddTCPClient(
-              "client", levels::ALL, ChannelRetry::Default(), {opendnp3::IPEndpoint("127.0.0.1", 20000)}, "", nullptr)),
-          server(manager.AddTCPServer(
-              "server", levels::ALL, ServerAcceptMode::CloseExisting, IPEndpoint("0.0.0.0", 20000), nullptr))
+        : server(manager.AddTCPServer(
+              "server", levels::ALL, ServerAcceptMode::CloseExisting, IPEndpoint::Localhost(0), nullptr)),
+          client(manager.AddTCPClient(
+              "client", levels::ALL, ChannelRetry::Default(), {IPEndpoint::Localhost(server->GetBoundPort())}, "", nullptr))
     {
     }
 
-    std::shared_ptr<IChannel> client;
     std::shared_ptr<IChannel> server;
+    std::shared_ptr<IChannel> client;
 };
 
 struct Components : Channels

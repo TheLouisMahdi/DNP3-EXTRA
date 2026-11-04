@@ -105,7 +105,7 @@ std::shared_ptr<IChannel> DNP3ManagerImpl::AddTCPServer(const std::string& id,
         {
             throw DNP3Error(Error::UNABLE_TO_BIND_SERVER, ec);
         }
-        return DNP3Channel::Create(clogger, executor, iohandler, this->resources);
+        return DNP3Channel::Create(clogger, executor, iohandler, this->resources, iohandler->GetBoundPort());
     };
 
     auto channel = this->resources->Bind<IChannel>(create);
@@ -219,7 +219,7 @@ std::shared_ptr<IChannel> DNP3ManagerImpl::AddTLSServer(const std::string& id,
         {
             throw DNP3Error(Error::UNABLE_TO_BIND_SERVER, ec);
         }
-        return DNP3Channel::Create(clogger, executor, iohandler, this->resources);
+        return DNP3Channel::Create(clogger, executor, iohandler, this->resources, iohandler->GetBoundPort());
     };
 
     auto channel = this->resources->Bind<IChannel>(create);

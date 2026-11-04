@@ -50,6 +50,8 @@ TLSServerIOHandler::TLSServerIOHandler(const Logger& logger,
       config(std::move(config)),
       server(std::make_shared<Server>(this->logger, this->executor, this->endpoint, this->config, ec))
 {
+    if (!ec)
+        this->endpoint.port = this->server->GetBoundPort();
 }
 
 void TLSServerIOHandler::ShutdownImpl()

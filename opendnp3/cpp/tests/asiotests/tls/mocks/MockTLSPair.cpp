@@ -23,17 +23,15 @@
 using namespace opendnp3;
 
 MockTLSPair::MockTLSPair(const std::shared_ptr<MockIO>& io,
-                         uint16_t port,
                          const TLSConfig& client,
                          const TLSConfig& server,
                          std::error_code ec)
     : log(),
       io(io),
-      port(port),
       chandler(std::make_shared<MockTLSClientHandler>()),
       client(TLSClient::Create(log.logger, io->GetExecutor(), "127.0.0.1", client, ec)),
       server(ec ? nullptr
-                : MockTLSServer::Create(log.logger, io->GetExecutor(), IPEndpoint::Localhost(port), server, ec))
+                : MockTLSServer::Create(log.logger, io->GetExecutor(), IPEndpoint::Localhost(0), server, ec))
 {
     if (ec)
     {
@@ -53,7 +51,7 @@ void MockTLSPair::Connect(size_t num)
                                                const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>>& stream,
                                                const std::error_code& ec) { handler->OnConnect(executor, stream, ec); };
 
-    if (!this->client->BeginConnect(IPEndpoint::Localhost(this->port), callback))
+    if (!this->client->BeginConnect(IPEndpoint::Localhost(this->server->GetBoundPort()), callback))
     {
         throw std::logic_error("BeginConnect returned false");
     }

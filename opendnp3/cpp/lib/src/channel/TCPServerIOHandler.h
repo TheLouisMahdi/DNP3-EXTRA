@@ -83,6 +83,8 @@ public:
                        IPEndpoint endpoint,
                        std::error_code& ec);
 
+    uint16_t GetBoundPort() const { return endpoint.port; }
+
 protected:
     void ShutdownImpl() final;
     void BeginChannelAccept() final;
@@ -91,7 +93,7 @@ protected:
 
 private:
     const std::shared_ptr<exe4cpp::StrandExecutor> executor;
-    const IPEndpoint endpoint;
+    IPEndpoint endpoint;
     std::shared_ptr<Server> server;
 };
 

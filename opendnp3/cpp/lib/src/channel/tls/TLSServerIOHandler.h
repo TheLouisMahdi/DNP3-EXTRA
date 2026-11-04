@@ -93,6 +93,8 @@ public:
                        TLSConfig config,
                        std::error_code& ec);
 
+    uint16_t GetBoundPort() const { return endpoint.port; }
+
 protected:
     virtual void ShutdownImpl() override;
     virtual void BeginChannelAccept() override;
@@ -101,7 +103,7 @@ protected:
 
 private:
     const std::shared_ptr<exe4cpp::StrandExecutor> executor;
-    const IPEndpoint endpoint;
+    IPEndpoint endpoint;
     const TLSConfig config;
     std::shared_ptr<Server> server;
 };

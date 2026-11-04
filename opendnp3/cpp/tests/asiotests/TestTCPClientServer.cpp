@@ -38,7 +38,7 @@ TEST_CASE(SUITE("Client and server can connect"))
 {
     auto iteration = []() {
         auto test = [](const std::shared_ptr<MockIO>& io) {
-            MockTCPPair pair(io, 20000);
+            MockTCPPair pair(io);
             pair.Connect(1);
         };
 

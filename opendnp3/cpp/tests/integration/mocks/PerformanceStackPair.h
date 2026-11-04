@@ -42,6 +42,7 @@ class PerformanceStackPair final : opendnp3::Uncopyable
     std::shared_ptr<QueuedChannelListener> clientListener;
     std::shared_ptr<QueuedChannelListener> serverListener;
 
+    const std::shared_ptr<opendnp3::IChannel> serverChannel;
     const std::shared_ptr<opendnp3::IMaster> master;
     const std::shared_ptr<opendnp3::IOutstation> outstation;
 
@@ -56,15 +57,6 @@ class PerformanceStackPair final : opendnp3::Uncopyable
                                                            uint16_t port,
                                                            std::shared_ptr<opendnp3::ISOEHandler>,
                                                            std::shared_ptr<opendnp3::IChannelListener> listener);
-    static std::shared_ptr<opendnp3::IOutstation> CreateOutstation(
-        opendnp3::LogLevels levels,
-        opendnp3::TimeDuration timeout,
-        opendnp3::DNP3Manager& manager,
-        uint16_t port,
-        uint16_t numPointsPerType,
-        uint16_t eventBufferSize,
-        std::shared_ptr<opendnp3::IChannelListener> listener);
-
     static std::string GetId(const char* name, uint16_t port);
     void AddValue(uint32_t i, opendnp3::UpdateBuilder& builder);
 
@@ -72,7 +64,7 @@ public:
     PerformanceStackPair(opendnp3::LogLevels levels,
                          opendnp3::TimeDuration timeout,
                          opendnp3::DNP3Manager& manager,
-                         uint16_t port,
+                         uint16_t index,
                          uint16_t numPointsPerType,
                          uint32_t eventsPerIteration);
 

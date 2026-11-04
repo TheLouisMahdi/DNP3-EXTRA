@@ -82,6 +82,10 @@ std::error_code TLSServer::ConfigureListener(const std::string& adapter, std::er
     if (this->acceptor.listen(asio::socket_base::max_connections, ec))
         return ec;
 
+    this->endpoint = this->acceptor.local_endpoint(ec);
+    if (ec)
+        return ec;
+
     std::ostringstream oss;
     oss << this->endpoint;
     FORMAT_LOG_BLOCK(this->logger, flags::INFO, "Listening on: %s", oss.str().c_str());
