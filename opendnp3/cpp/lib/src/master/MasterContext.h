@@ -73,7 +73,8 @@ public:
     {
         IDLE,
         TASK_READY,
-        WAIT_FOR_RESPONSE
+        WAIT_FOR_RESPONSE,
+        WAIT_FOR_TX_COMPLETION
     };
 
     static std::shared_ptr<MContext> Create(const Addresses& addresses,
@@ -130,6 +131,10 @@ public:
     // methods for initiating command sequences
 
     void DirectOperate(CommandSet&& commands, const CommandResultCallbackT& callback, const TaskConfig& config);
+
+    bool DirectOperateNoAck(CommandSet&& commands,
+                            const CommandResultCallbackT& callback,
+                            const TaskConfig& config);
 
     void SelectAndOperate(CommandSet&& commands, const CommandResultCallbackT& callback, const TaskConfig& config);
 
@@ -333,6 +338,7 @@ protected:
     TaskState StartTask_TaskReady();
     TaskState OnResponse_WaitForResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects);
     TaskState OnResponseTimeout_WaitForResponse();
+    TaskState OnResponseTimeout_WaitForTxCompletion();
 };
 
 } // namespace opendnp3

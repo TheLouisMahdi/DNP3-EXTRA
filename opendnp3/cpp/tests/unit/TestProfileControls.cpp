@@ -8,6 +8,7 @@
 
 #include <catch.hpp>
 #include <array>
+#include <sstream>
 #include <string>
 
 using namespace opendnp3;
@@ -45,6 +46,34 @@ MasterParams MasterConfig(bool wide)
 {
     auto params = NoStartupTasks();
     params.controlQualifierMode = wide ? IndexQualifierMode::always_two_bytes : IndexQualifierMode::allow_one_byte;
+    return params;
+}
+struct FC6RequiredCredentials final : IAuthenticationCredentials
+{
+    bool ReadUpdateKey(uint16_t association, uint16_t user, uint8_t* output, size_t capacity,
+                       uint64_t& lifetime) override
+    {
+        if (association != 7 || user < 1 || user > 2 || !output || capacity != 32)
+            return false;
+        for (size_t i = 0; i < capacity; ++i)
+            output[i] = static_cast<uint8_t>(user * 32 + i);
+        lifetime = 10000000;
+        return true;
+    }
+};
+struct FC6RequiredAuthorization final : IAuthenticationAuthorization
+{
+    bool IsAuthorized(uint16_t association, uint16_t user, uint8_t, const uint8_t*, size_t) const override
+    {
+        return association == 7 && user >= 1 && user <= 2;
+    }
+};
+MasterParams RequiredMasterConfig()
+{
+    auto params = MasterConfig(false);
+    params.authentication.association = 7;
+    params.authentication.credentials = std::make_shared<FC6RequiredCredentials>();
+    params.authentication.authorization = std::make_shared<FC6RequiredAuthorization>();
     return params;
 }
 // Valid, different G41V1 commands with the same length and DNP3 CRC-16.
@@ -381,6 +410,106 @@ TEST_CASE("ProfileControls - Master command timeout does not retry control execu
         t.exe->run_many();
         REQUIRE(t.lower->HasNoData());
         REQUIRE(callbacks.values.size() == 1);
+    }
+}
+
+TEST_CASE("ProfileControls - Master FC6 sends typed commands once and completes only on transmit readiness",
+          "[fc6-master][profile-controls]")
+{
+    for (unsigned type = 0; type < 4; ++type)
+        for (bool wide : {false, true})
+        {
+            MasterTestFixture t(MasterConfig(wide));
+            CommandCallbackQueue callbacks;
+            REQUIRE(t.context->OnLowerLayerUp());
+            REQUIRE(t.context->DirectOperateNoAck(Commands(type, wide ? 0x1234 : 3), callbacks.Callback(),
+                                                  TaskConfig::Default()));
+            t.exe->run_many();
+            REQUIRE(t.lower->PopWriteAsHex() == "C0 06 " + Body(type, wide));
+            REQUIRE(callbacks.values.empty());
+            REQUIRE(t.context->OnTxReady());
+            t.exe->run_many();
+            REQUIRE(callbacks.values.size() == 1);
+            REQUIRE(callbacks.values.front().summary == TaskCompletion::SUCCESS);
+            REQUIRE(callbacks.values.front().results[0].status == CommandStatus::UNDEFINED);
+            REQUIRE(t.lower->HasNoData());
+
+            t.context->SelectAndOperate(Commands(type, wide ? 0x1234 : 3), callbacks.Callback(),
+                                        TaskConfig::Default());
+            t.exe->run_many();
+            REQUIRE(t.lower->PopWriteAsHex() == "C1 03 " + Body(type, wide));
+            REQUIRE(t.context->OnTxReady());
+            REQUIRE(t.SendToMaster("C1 81 00 00 " + Body(type, wide)));
+            t.exe->run_many();
+            REQUIRE(t.lower->PopWriteAsHex() == "C2 04 " + Body(type, wide));
+            REQUIRE(t.context->OnTxReady());
+            REQUIRE(t.SendToMaster("C2 81 00 00 " + Body(type, wide)));
+            t.exe->run_many();
+            REQUIRE(callbacks.values.size() == 2);
+            REQUIRE(callbacks.values.back().results[0].status == CommandStatus::SUCCESS);
+        }
+}
+
+TEST_CASE("ProfileControls - Master FC6 transmit timeout does not retry or report operation success",
+          "[fc6-master][profile-controls]")
+{
+    auto params = MasterConfig(false);
+    params.responseTimeout = TimeDuration::Milliseconds(10);
+    MasterTestFixture t(params);
+    CommandCallbackQueue callbacks;
+    REQUIRE(t.context->OnLowerLayerUp());
+    REQUIRE(t.context->DirectOperateNoAck(Commands(0, 3), callbacks.Callback(), TaskConfig::Default()));
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 06 " + Body(0));
+    REQUIRE(callbacks.values.empty());
+
+    t.exe->advance_time(params.responseTimeout.value);
+    t.exe->run_many();
+    REQUIRE(callbacks.values.size() == 1);
+    REQUIRE(callbacks.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(callbacks.values.front().results[0].status == CommandStatus::UNDEFINED);
+    REQUIRE(t.lower->HasNoData());
+    t.exe->advance_time(params.responseTimeout.value);
+    t.exe->run_many();
+    REQUIRE(callbacks.values.size() == 1);
+    REQUIRE(t.lower->HasNoData());
+}
+
+TEST_CASE("ProfileControls - Master FC6 disconnect reports failure before transmit completion",
+          "[fc6-master][profile-controls]")
+{
+    MasterTestFixture t(MasterConfig(false));
+    CommandCallbackQueue callbacks;
+    REQUIRE(t.context->OnLowerLayerUp());
+    REQUIRE(t.context->DirectOperateNoAck(Commands(1, 3), callbacks.Callback(), TaskConfig::Default()));
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 06 " + Body(1));
+    REQUIRE(callbacks.values.empty());
+
+    REQUIRE(t.context->OnLowerLayerDown());
+    REQUIRE(callbacks.values.size() == 1);
+    REQUIRE(callbacks.values.front().summary == TaskCompletion::FAILURE_NO_COMMS);
+    REQUIRE(callbacks.values.front().results[0].status == CommandStatus::UNDEFINED);
+}
+
+TEST_CASE("ProfileControls - Master rejects FC6 when authentication is required", "[fc6-master][profile-controls]")
+{
+    MasterTestFixture t(RequiredMasterConfig());
+    CommandCallbackQueue callbacks;
+    REQUIRE(t.context->params.authentication.mode == AuthenticationConfig::Mode::REQUIRED);
+    REQUIRE(t.context->OnLowerLayerUp());
+    REQUIRE_FALSE(t.context->DirectOperateNoAck(Commands(0, 3), callbacks.Callback(), TaskConfig::Default()));
+    REQUIRE(callbacks.values.empty());
+
+    t.exe->run_many();
+    REQUIRE(callbacks.values.empty());
+    while (!t.lower->HasNoData())
+    {
+        std::istringstream apdu(t.lower->PopWriteAsHex());
+        std::string control;
+        std::string function;
+        if (apdu >> control >> function)
+            REQUIRE(function != "06");
     }
 }
 

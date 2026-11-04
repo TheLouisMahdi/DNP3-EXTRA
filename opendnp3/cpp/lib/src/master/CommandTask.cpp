@@ -46,6 +46,21 @@ std::shared_ptr<IMasterTask> CommandTask::CreateDirectOperate(const std::shared_
     return task;
 }
 
+std::shared_ptr<IMasterTask> CommandTask::CreateDirectOperateNoAck(const std::shared_ptr<TaskContext>& context,
+                                                                   CommandSet&& set,
+                                                                   IndexQualifierMode mode,
+                                                                   IMasterApplication& app,
+                                                                   const CommandResultCallbackT& callback,
+                                                                   const Timestamp& startExpiration,
+                                                                   const TaskConfig& config,
+                                                                   Logger logger)
+{
+    auto task = std::make_shared<CommandTask>(context, std::move(set), mode, app, callback, startExpiration, config,
+                                              logger, true);
+    task->LoadDirectOperateNoAck();
+    return task;
+}
+
 std::shared_ptr<IMasterTask> CommandTask::CreateSelectAndOperate(const std::shared_ptr<TaskContext>& context,
                                                                  CommandSet&& set,
                                                                  IndexQualifierMode mode,
@@ -68,12 +83,14 @@ CommandTask::CommandTask(const std::shared_ptr<TaskContext>& context,
                          CommandResultCallbackT callback,
                          const Timestamp& startExpiration,
                          const TaskConfig& config,
-                         const Logger& logger)
+                         const Logger& logger,
+                         bool noResponse)
     : IMasterTask(context, app, TaskBehavior::SingleExecutionNoRetry(startExpiration), logger, config),
       statusResult(CommandStatus::UNDEFINED),
       commandCallback(std::move(callback)),
       commands(std::move(commands)),
-      mode(mode)
+      mode(mode),
+      noResponse(noResponse)
 {
 }
 
@@ -88,6 +105,12 @@ void CommandTask::LoadDirectOperate()
 {
     functionCodes.clear();
     functionCodes.push_back(FunctionCode::DIRECT_OPERATE);
+}
+
+void CommandTask::LoadDirectOperateNoAck()
+{
+    functionCodes.clear();
+    functionCodes.push_back(FunctionCode::DIRECT_OPERATE_NR);
 }
 
 bool CommandTask::BuildRequest(APDURequest& request, uint8_t seq)

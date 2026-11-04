@@ -358,6 +358,20 @@ void MContext::DirectOperate(CommandSet&& commands, const CommandResultCallbackT
                                                              timeout, config, logger));
 }
 
+bool MContext::DirectOperateNoAck(CommandSet&& commands,
+                                  const CommandResultCallbackT& callback,
+                                  const TaskConfig& config)
+{
+    if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
+        return false;
+
+    const auto timeout = Timestamp(this->executor->get_time()) + params.taskStartTimeout;
+    this->ScheduleAdhocTask(CommandTask::CreateDirectOperateNoAck(
+        this->tasks.context, std::move(commands), this->params.controlQualifierMode, *application, callback, timeout,
+        config, logger));
+    return true;
+}
+
 void MContext::SelectAndOperate(CommandSet&& commands, const CommandResultCallbackT& callback, const TaskConfig& config)
 {
     const auto timeout = Timestamp(this->executor->get_time()) + params.taskStartTimeout;
@@ -952,10 +966,10 @@ MContext::TaskState MContext::ResumeActiveTask()
     }
 #endif
     this->RecordLastRequest(apdu);
-    this->StartResponseTimer(); // All validation/formatting succeeded; a request is about to transmit.
+    this->StartResponseTimer(); // Also bounds waiting for lower-layer transmit completion.
     this->Transmit(apdu);
 
-    return TaskState::WAIT_FOR_RESPONSE;
+    return activeTask->ExpectsResponse() ? TaskState::WAIT_FOR_RESPONSE : TaskState::WAIT_FOR_TX_COMPLETION;
 }
 
 //// --- State tables ---
@@ -966,6 +980,12 @@ MContext::TaskState MContext::OnTransmitComplete()
     {
     case (TaskState::TASK_READY):
         return this->ResumeActiveTask();
+    case (TaskState::WAIT_FOR_TX_COMPLETION):
+        this->responseTimer.cancel();
+        this->solSeq.Increment();
+        this->activeTask->OnTransmitComplete(Timestamp(this->executor->get_time()));
+        this->CompleteActiveTask();
+        return TaskState::IDLE;
     default:
         return tstate;
     }
@@ -992,6 +1012,8 @@ MContext::TaskState MContext::OnResponseTimeoutEvent()
     {
     case (TaskState::WAIT_FOR_RESPONSE):
         return OnResponseTimeout_WaitForResponse();
+    case (TaskState::WAIT_FOR_TX_COMPLETION):
+        return OnResponseTimeout_WaitForTxCompletion();
     default:
         SIMPLE_LOG_BLOCK(logger, flags::ERR, "Unexpected response timeout");
         return tstate;
@@ -1059,6 +1081,16 @@ MContext::TaskState MContext::OnResponseTimeout_WaitForResponse()
     SIMPLE_LOG_BLOCK(logger, flags::WARN, "Timeout waiting for response");
 
     auto now = Timestamp(this->executor->get_time());
+    this->activeTask->OnResponseTimeout(now);
+    this->solSeq.Increment();
+    this->CompleteActiveTask();
+    return TaskState::IDLE;
+}
+
+MContext::TaskState MContext::OnResponseTimeout_WaitForTxCompletion()
+{
+    SIMPLE_LOG_BLOCK(logger, flags::WARN, "Timeout waiting for lower-layer transmit completion");
+    const auto now = Timestamp(this->executor->get_time());
     this->activeTask->OnResponseTimeout(now);
     this->solSeq.Increment();
     this->CompleteActiveTask();

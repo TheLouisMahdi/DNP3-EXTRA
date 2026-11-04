@@ -51,7 +51,8 @@ public:
                 CommandResultCallbackT callback,
                 const Timestamp& startExpiration,
                 const TaskConfig& config,
-                const Logger& logger);
+                const Logger& logger,
+                bool noResponse = false);
 
     static std::shared_ptr<IMasterTask> CreateDirectOperate(const std::shared_ptr<TaskContext>& context,
                                                             CommandSet&& set,
@@ -61,6 +62,14 @@ public:
                                                             const Timestamp& startExpiration,
                                                             const TaskConfig& config,
                                                             Logger logger);
+    static std::shared_ptr<IMasterTask> CreateDirectOperateNoAck(const std::shared_ptr<TaskContext>& context,
+                                                                 CommandSet&& set,
+                                                                 IndexQualifierMode mode,
+                                                                 IMasterApplication& app,
+                                                                 const CommandResultCallbackT& callback,
+                                                                 const Timestamp& startExpiration,
+                                                                 const TaskConfig& config,
+                                                                 Logger logger);
     static std::shared_ptr<IMasterTask> CreateSelectAndOperate(const std::shared_ptr<TaskContext>& context,
                                                                CommandSet&& set,
                                                                IndexQualifierMode mode,
@@ -90,6 +99,11 @@ public:
         return false;
     }
 
+    virtual bool ExpectsResponse() const override final
+    {
+        return !noResponse;
+    }
+
     virtual bool BuildRequest(APDURequest& request, uint8_t seq) override final;
 
 private:
@@ -114,6 +128,7 @@ private:
 
     void LoadSelectAndOperate();
     void LoadDirectOperate();
+    void LoadDirectOperateNoAck();
 
     std::deque<FunctionCode> functionCodes;
 
@@ -122,6 +137,7 @@ private:
     CommandSet commands;
     ser4cpp::Buffer selectObjects;
     const IndexQualifierMode mode;
+    const bool noResponse;
 };
 
 } // namespace opendnp3

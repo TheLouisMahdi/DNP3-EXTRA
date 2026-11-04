@@ -78,6 +78,7 @@ public:
     virtual bool AcceptsAuthenticationResponse(const APDUResponseHeader&, const ser4cpp::rseq_t&) { return false; }
     virtual bool RetryOnResponseTimeout() { return false; }
     virtual uint32_t ResponseTimeoutMs() const { return 0; } // Zero preserves MasterParams.
+    virtual bool ExpectsResponse() const { return true; }
 
     /**
      * The task's priority. Lower numbers are higher priority.
@@ -139,6 +140,8 @@ public:
      * Called when the master is unable to format the request associated with the task
      */
     void OnMessageFormatError(Timestamp now);
+
+    void OnTransmitComplete(Timestamp now);
 
     /**
      * Called when the task first starts, before the first request is formatted
