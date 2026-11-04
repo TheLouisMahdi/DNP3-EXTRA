@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 165" role="img" aria-labelledby="title desc">
 <title id="title">IEEE 1815-2012</title>
-<desc id="desc">AUDIT IN PROGRESS. 11 provisional work packages | Level 4 obligations still being enumerated. Evidence 4d9f7bbaea1f | 13 open issue IDs. Verified: 0, Implemented, unverified: 4, Partial: 6, Missing: 0, Not audited: 1, Not applicable: 0, Blocked: 0</desc>
+<desc id="desc">AUDIT IN PROGRESS. 712 provisional work packages | Level 4 obligations still being enumerated. Evidence 4d9f7bbaea1f | 31 open issue IDs. Verified: 39, Verified subset: 2, Implemented, unverified: 519, Decode only: 0, Partial: 147, Missing: 0, Not audited: 0, Not applicable: 1, Blocked: 4</desc>
 <rect width="700" height="165" rx="14" fill="#101b2d"/>
 <g font-family="system-ui, sans-serif" fill="#f1f6ff">
 <text x="22" y="30" font-size="22" font-weight="700">IEEE 1815-2012</text>
 <text x="22" y="63" font-size="25" font-weight="700">AUDIT IN PROGRESS</text>
-<text x="22" y="91" font-size="17">11 provisional work packages | Level 4 obligations still being enumerated</text>
-<text x="22" y="150" font-size="16" fill="#bdcce2">Evidence 4d9f7bbaea1f | 13 open issue IDs</text>
+<text x="22" y="91" font-size="17">712 provisional work packages | Level 4 obligations still being enumerated</text>
+<text x="22" y="150" font-size="16" fill="#bdcce2">Evidence 4d9f7bbaea1f | 31 open issue IDs</text>
 </g>
 <rect x="22" y="106" width="656" height="22" rx="5" fill="#34425a"/>
 </svg>

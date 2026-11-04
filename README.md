@@ -8,29 +8,29 @@ Implementation progress is not equivalent to IEEE certification or independent i
 
 <!-- progress:start -->
 
-**Historical audit snapshot, not current compliance.** The metrics below reflect audit revision `4d9f7bbaea1f` and have not been revalidated against current source `afe6c386c322`.
+**Historical audit snapshot, not current compliance.** The metrics below reflect audit revision `4d9f7bbaea1f` and have not been revalidated against current source `8200bcdf0a2e`.
 
 ![IEEE 1815-2012. Audit in progress.](DNP3_PDD_PLAN/progress-ieee.svg)
 
-![RTU Device Profile. Historical verified 17.39% (12/69), historical implementation coverage 84.06% (58/69).](DNP3_PDD_PLAN/progress-profile.svg)
+![RTU Device Profile. Historical verified 17.39% (12/69), historical implementation coverage 85.51% (59/69).](DNP3_PDD_PLAN/progress-profile.svg)
 
 ![RTU Security Requirements. Historical verified 42.42% (14/33), historical implementation coverage 48.48% (16/33).](DNP3_PDD_PLAN/progress-security.svg)
 
 | Scope | Verified | Implemented, unverified | Partial | Missing | Not audited | Not applicable | Blocked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| IEEE 1815-2012 / Outstation | 0 | 4 | 6 | 0 | 1 | 0 | 0 |
-| IEEE 1815-2012 / Master | 0 | 4 | 6 | 0 | 1 | 0 | 0 |
-| RTU Device Profile / Outstation | 12 | 46 | 9 | 2 | 0 | 0 | 0 |
-| RTU Device Profile / Master | 12 | 46 | 10 | 1 | 0 | 0 | 0 |
-| RTU Security Requirements / Outstation | 14 | 2 | 11 | 3 | 5 | 0 | 1 |
-| RTU Security Requirements / Master | 14 | 2 | 9 | 2 | 0 | 8 | 1 |
+| IEEE 1815-2012 / Outstation | 39 | 2 | 519 | 0 | 147 | 0 | 0 | 1 | 4 |
+| IEEE 1815-2012 / Master | 40 | 1 | 523 | 1 | 146 | 0 | 0 | 1 | 0 |
+| RTU Device Profile / Outstation | 12 | 0 | 47 | 0 | 8 | 1 | 0 | 0 | 1 |
+| RTU Device Profile / Master | 11 | 1 | 46 | 0 | 10 | 1 | 0 | 0 | 0 |
+| RTU Security Requirements / Outstation | 14 | 0 | 2 | 0 | 11 | 3 | 5 | 0 | 1 |
+| RTU Security Requirements / Master | 14 | 0 | 2 | 0 | 9 | 2 | 0 | 8 | 1 |
 
 | Role and scope | Strict verified | Implementation coverage | Open issue IDs |
 | --- | --- | --- | ---: |
-| IEEE 1815-2012 / Outstation | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 13 |
-| IEEE 1815-2012 / Master | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 13 |
-| RTU Device Profile / Outstation | 17.39% (12/69) | 84.06% (58/69) | 14 |
-| RTU Device Profile / Master | 17.39% (12/69) | 84.06% (58/69) | 14 |
+| IEEE 1815-2012 / Outstation (1 not applicable) | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 31 |
+| IEEE 1815-2012 / Master (1 not applicable) | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 31 |
+| RTU Device Profile / Outstation | 17.39% (12/69) | 85.51% (59/69) | 15 |
+| RTU Device Profile / Master | 15.94% (11/69) | 82.61% (57/69) | 15 |
 | RTU Security Requirements / Outstation | 42.42% (14/33) | 48.48% (16/33) | 21 |
 | RTU Security Requirements / Master (8 not applicable) | 51.85% (14/27) | 59.26% (16/27) | 21 |
 | Profile G120 / Outstation | 60.00% (9/15) | 60.00% (9/15) | 5 |
@@ -39,9 +39,9 @@ Implementation progress is not equivalent to IEEE certification or independent i
 | Security optional rows | 0 rows | Excluded from mandatory metrics | — |
 | Security unresolved rows | 1 partial | Excluded from mandatory metrics | — |
 
-Bar order: verified (green), implemented without verification (cyan), partial (amber), missing (red), not audited (slate), blocked (violet).
+Status colors: verified (green), verified subset (teal), implemented without verification (cyan), decode only (blue), partial (amber), missing (red), not audited (slate), blocked (violet). Subset and decode-only rows do not receive full verification or implementation credit.
 
-Latest tracked source commit **afe6c386c3223a24dccd8493ccb10cc425929845**. Audit revision **4d9f7bbaea1fcf305d942abe7891384df18a6199**.
+Latest tracked source commit **8200bcdf0a2e8fcb24b553d74e96692a93d61b3b**. Audit revision **4d9f7bbaea1fcf305d942abe7891384df18a6199**.
 Last tested revision **4d9f7bbaea1fcf305d942abe7891384df18a6199** on 2026-11-03 (Windows x64 Release).
 Unit **714 cases / 59,048 assertions**. Integration **12 cases / 241 assertions**, including SA TCP. [Execution evidence](cli/README.md)
 Historical SA TCP baseline **2 cases / 240 assertions** at `33d7994ae551e4f3b30b7ddfb894e59c6b9e336d`.
@@ -50,7 +50,7 @@ Historical SA TCP baseline **2 cases / 240 assertions** at `33d7994ae551e4f3b30b
 **Audit refresh required.** Positive and partial assessments await review on this source revision.
 
 Outstation items awaiting audit:
-- **IEEE 1815-2012** — `IEEE-LEVEL4-ENUMERATION`
+- **IEEE 1815-2012** — None within the listed rows
 - **RTU Device Profile** — None within the listed rows
 - **RTU Security Requirements** — `SEC-T3-01`, `SEC-T3-02`, `SEC-T3-06`, `SEC-T3-07`, `SEC-T3-08`
 

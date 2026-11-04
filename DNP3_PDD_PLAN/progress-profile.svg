@@ -1,16 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 165" role="img" aria-labelledby="title desc">
 <title id="title">RTU Device Profile</title>
-<desc id="desc">Historical verified 17.39% (12/69). Last-audited implementation 84.06% (58/69). Evidence 4d9f7bbaea1f | 14 open issue IDs. Verified: 12, Implemented, unverified: 46, Partial: 9, Missing: 2, Not audited: 0, Not applicable: 0, Blocked: 0</desc>
+<desc id="desc">Historical verified 17.39% (12/69). Last-audited implementation 85.51% (59/69). Evidence 4d9f7bbaea1f | 15 open issue IDs. Verified: 12, Verified subset: 0, Implemented, unverified: 47, Decode only: 0, Partial: 8, Missing: 1, Not audited: 0, Not applicable: 0, Blocked: 1</desc>
 <rect width="700" height="165" rx="14" fill="#101b2d"/>
 <g font-family="system-ui, sans-serif" fill="#f1f6ff">
 <text x="22" y="30" font-size="22" font-weight="700">RTU Device Profile</text>
 <text x="22" y="63" font-size="25" font-weight="700">Historical verified 17.39% (12/69)</text>
-<text x="22" y="91" font-size="17">Last-audited implementation 84.06% (58/69)</text>
-<text x="22" y="150" font-size="16" fill="#bdcce2">Evidence 4d9f7bbaea1f | 14 open issue IDs</text>
+<text x="22" y="91" font-size="17">Last-audited implementation 85.51% (59/69)</text>
+<text x="22" y="150" font-size="16" fill="#bdcce2">Evidence 4d9f7bbaea1f | 15 open issue IDs</text>
 </g>
 <rect x="22" y="106" width="656" height="22" rx="5" fill="#34425a"/>
 <rect x="22" y="106" width="114" height="22" fill="#52d39b"/>
-<rect x="136" y="106" width="437" height="22" fill="#55c9ee"/>
-<rect x="573" y="106" width="85" height="22" fill="#ffc465"/>
-<rect x="658" y="106" width="20" height="22" fill="#f38d91"/>
+<rect x="136" y="106" width="446" height="22" fill="#55c9ee"/>
+<rect x="582" y="106" width="76" height="22" fill="#ffc465"/>
+<rect x="658" y="106" width="10" height="22" fill="#f38d91"/>
+<rect x="668" y="106" width="10" height="22" fill="#cc9af2"/>
 </svg>

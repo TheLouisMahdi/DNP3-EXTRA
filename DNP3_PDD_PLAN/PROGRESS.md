@@ -6,7 +6,9 @@ The baseline audit uses the IEEE 1815-2012 parsing obligations in §12.1, the so
 
 `03_SECURITY_MATRIX.md` owns the security requirement text. `SECURITY_PROGRESS.csv` joins to its 36 IDs for classification, source location, role assessments and evidence. The mandatory denominator includes applicable Windows protocol and deferred RTU obligations. The unresolved MAC selection and two recommended firmware rows are displayed separately. Recommended 256-bit lengths and discouraged Aggressive usage are notes within rows and do not create extra denominator items.
 
-Verified means the cited execution evidence exercises the assessed behavior at the stated revision. Implemented without verification means the reviewed path exists and full row execution coverage is unestablished. Partial includes known gaps within a row. Missing includes codec-only objects without an operational path. The assessment of G0V209 distinguishes executed Master decoding from missing Outstation advertisement. G120V10 and G120V14 retain partial status because unresolved sequence-wrap and wire-signature behavior affect their complete rows. TLS versions were executed on Windows, while the contradictory product cipher list remains blocked.
+Full `VERIFIED` means the cited execution evidence exercises the assessed behavior at the stated revision. `VERIFIED_SUBSET` records execution of only part of a row and receives no full-verification or implementation-coverage credit. `DECODE_ONLY` records typed decoding without an operational implementation and also receives no implementation-coverage credit. Implemented without verification means the reviewed path exists and full row execution coverage is unestablished. Partial includes known gaps within a row. Missing includes codec-only objects without an operational path. The assessment of G0V209 distinguishes executed Master decoding from missing Outstation advertisement. G120V10 and G120V14 retain partial status because unresolved sequence-wrap and wire-signature behavior affect their complete rows. TLS versions were executed on Windows, while the contradictory product cipher list remains blocked.
+
+`CONDITIONAL` remains a distinct classification and is not included in mandatory denominators. An IEEE row's `outcome` is an aggregate assessment and may differ from its Outstation status; the Profile and Security outcome columns continue to mirror their Outstation status.
 
 Every strict percentage uses applicable mandatory rows. Verified coverage counts only verified rows. Implementation coverage adds implemented rows awaiting full verification. Partial, missing, blocked and unaudited rows receive zero credit. Role breakdowns exclude rows marked not applicable with a role justification, such as hardware port closure for the Master. No Outstation mandatory rows are excluded in this audit.
 
@@ -50,6 +52,24 @@ The generator tracks the latest commit touching C++ sources, tests, application/
 | RTU-PROVISIONING | Production credential provisioning requires RTU evidence. |
 | RTU-CREDENTIAL-HASH | RTU credential storage policy requires audit. |
 | RTU-FIRMWARE | Recommended firmware signing and verification require RTU audit. |
+| ABSOLUTE-TIME-WRITE-INTEROP | G50V1 WRITE semantics and independent interoperability remain to be validated. |
+| ANY-SOURCE-SAME-SEQ-REPLAY | LAN-time replay behavior for a same-sequence write from another source remains unresolved. |
+| ATTR-WIRE-AUDIT | G0V210/V254/V255 statistic-count and attribute-discovery wire behavior remains unaudited. |
+| CLASS-ASSIGNMENT-WIRE-AUDIT | G12 command class-assignment qualifiers and response wire forms remain unaudited. |
+| COMMAND-EVENT-QUALIFIER-CROSS-PRODUCT | G13 command-event qualifier behavior and cross-product interoperability remain open. |
+| CONFIRMED-USER-DATA | Confirmed user-data handling for self-addressed destination traffic remains unaudited. |
+| CONTROL-WIRE-AUDIT | G12V1 FC3/FC129 qualifier-17 request and response echo wire behavior remains unaudited. |
+| COUNTER-FREEZE-WIRE-AUDIT | G20V0 FC7 qualifier-00 freeze request wire behavior remains unaudited. |
+| COUNTER-WIRE-AUDIT | Listed G20-G23 counter variations and their wire forms remain unaudited. |
+| IEEE-WIRE-AUDIT | Table 14-5 wire forms and malformed-wire coverage remain under audit. |
+| INDEPENDENT-PEER | Independent-peer interoperability remains open for Level 4 command-event behavior. |
+| INITIATOR-DISCOVERY | Self-address initiator discovery behavior remains unaudited. |
+| LAN-TIMESTAMP-ACCURACY | LAN-time timestamp accuracy remains to be assessed. |
+| MASTER-ABSOLUTE-READ | Explicit Master G50V1 READ delivery and independent interoperability remain open. |
+| NO-OBJECT-WIRE-AUDIT | No-object CONFIRM, COLD_RESTART and DELAY_MEASURE wire forms remain unaudited. |
+| PHASE2-SA-V5 | G0V209 advertisement remains gated until Secure Authentication v5 is proven. |
+| STANDARD-SET-VALUES | Standard-set values for the listed G0 attributes remain to be audited. |
+| TIME-WIRE-AUDIT | G51/G52 response qualifier and quantity wire forms remain unaudited. |
 
 ## Regeneration
 

@@ -17,7 +17,9 @@ PLAN = ROOT / "DNP3_PDD_PLAN"
 SOURCE_PATHS = ("opendnp3", "apps", "cli", "CMakeLists.txt", ":(exclude,glob)**/*.md")
 STATUSES = {
     "VERIFIED": ("Verified", "#52d39b"),
+    "VERIFIED_SUBSET": ("Verified subset", "#4fc3b8"),
     "IMPLEMENTED_NOT_VERIFIED": ("Implemented, unverified", "#55c9ee"),
+    "DECODE_ONLY": ("Decode only", "#80b5e8"),
     "PARTIAL": ("Partial", "#ffc465"),
     "NOT_IMPLEMENTED": ("Missing", "#f38d91"),
     "NOT_AUDITED": ("Not audited", "#8191a8"),
@@ -25,7 +27,7 @@ STATUSES = {
     "BLOCKED": ("Blocked", "#cc9af2"),
 }
 COMPLETE = {"VERIFIED", "IMPLEMENTED_NOT_VERIFIED"}
-CLASSIFICATIONS = {"MANDATORY", "RECOMMENDED", "OPTIONAL", "UNRESOLVED"}
+CLASSIFICATIONS = {"MANDATORY", "RECOMMENDED", "OPTIONAL", "UNRESOLVED", "CONDITIONAL"}
 ROLES = ("outstation_status", "master_status")
 COMMON = set("requirement_id classification applicability master_status outstation_status "
              "evidence execution_evidence open_issues last_verified_revision".split())
@@ -45,6 +47,7 @@ def git(*args):
 
 
 def link(value):
+    value = value.strip()
     path = Path(value)
     require(not path.is_absolute() and ".." not in path.parts
             and (ROOT / path).resolve().is_relative_to(ROOT)
@@ -52,7 +55,7 @@ def link(value):
             f"Invalid repository evidence link: {value}")
 
 
-def load_rows(filename, fields, prefix, outcome, issues):
+def load_rows(filename, fields, prefix, outcome, issues, outcome_matches_outstation=True):
     with (PLAN / filename).open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         require(reader.fieldnames and len(reader.fieldnames) == len(fields)
@@ -67,18 +70,28 @@ def load_rows(filename, fields, prefix, outcome, issues):
         require(None not in row and None not in row.values(), f"{key}: malformed CSV row")
         require(row["classification"] in CLASSIFICATIONS and row["applicability"],
                 f"{key}: missing classification/applicability")
-        require(all(row[role] in STATUSES for role in ROLES)
-                and row[outcome] == row["outstation_status"], f"{key}: inconsistent status")
+        require(all(row[role] in STATUSES for role in ROLES) and row[outcome] in STATUSES
+                and (not outcome_matches_outstation or row[outcome] == row["outstation_status"]),
+                f"{key}: inconsistent status")
         if any(row[role] == "NOT_APPLICABLE" for role in ROLES):
             require("excluded because" in row["applicability"], f"{key}: missing exclusion rationale")
-        for value in row["evidence"].split("|"):
+        evidence = [value.strip() for value in row["evidence"].split("|") if value.strip()]
+        for value in evidence:
             link(value)
-        for value in filter(None, row["open_issues"].split("|")):
+        for value in (value.strip() for value in row["open_issues"].split("|") if value.strip()):
             require(value in issues, f"{key}: undocumented issue {value}")
-        if any(row[role] == "VERIFIED" for role in ROLES):
+        if any(row[role] in {"VERIFIED", "VERIFIED_SUBSET"} for role in ROLES):
             require(row["execution_evidence"] and re.fullmatch(r"[0-9a-f]{40}", row["last_verified_revision"]),
-                    f"{key}: VERIFIED requires executed evidence and tested SHA")
-            link(row["execution_evidence"])
+                    f"{key}: verified status requires execution evidence and tested SHA")
+            execution = [value.strip() for value in row["execution_evidence"].split("|") if value.strip()]
+            require(execution, f"{key}: missing execution evidence")
+            paths = all(re.fullmatch(r"(?:[A-Za-z0-9_. -]+/)+[A-Za-z0-9_. -]+\.[A-Za-z0-9]+", value)
+                        for value in execution)
+            if paths:
+                for value in execution:
+                    link(value)
+            else:
+                require(evidence, f"{key}: textual execution evidence requires source evidence")
     return rows
 
 
@@ -202,7 +215,9 @@ def dashboard(scopes, evidence, latest, fresh, tested_current):
         lines.append(f"| Security {kind.lower()} rows | {details or '0 rows'} | Excluded from mandatory metrics | — |")
     lines += [
         "",
-        "Bar order: verified (green), implemented without verification (cyan), partial (amber), missing (red), not audited (slate), blocked (violet).",
+        "Status colors: verified (green), verified subset (teal), implemented without verification (cyan), "
+        "decode only (blue), partial (amber), missing (red), not audited (slate), blocked (violet). "
+        "Subset and decode-only rows do not receive full verification or implementation credit.",
         "",
         f"Latest tracked source commit **{latest}**. Audit revision **{evidence['audit_revision']}**.",
         f"Last tested revision **{evidence['tested_revision']}** on {evidence['date']} ({evidence['platform']}).",
@@ -233,7 +248,7 @@ def dashboard(scopes, evidence, latest, fresh, tested_current):
 def generate():
     issues = set(re.findall(r"^\| ([A-Z0-9-]+) \|", (PLAN / "PROGRESS.md").read_text(encoding="utf-8"), re.M))
     ieee = load_rows("IEEE_TRACEABILITY.csv", COMMON | {"clause", "behavior", "outcome"},
-                     "IEEE", "outcome", issues)
+                     "(?:IEEE|L4)", "outcome", issues, outcome_matches_outstation=False)
     require(ieee and all(row["clause"] and row["behavior"] for row in ieee), "Incomplete IEEE traceability")
     profile = load_rows("02_PROFILE_MATRIX.csv", COMMON | PROFILE, "PROFILE", "local_code_status", issues)
     require({row["requirement_id"] for row in profile} == {f"PROFILE-{n:03}" for n in range(1, 70)}

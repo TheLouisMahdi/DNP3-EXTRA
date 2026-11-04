@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 165" role="img" aria-labelledby="title desc">
 <title id="title">RTU Security Requirements</title>
-<desc id="desc">Historical verified 42.42% (14/33). Last-audited implementation 48.48% (16/33). Evidence 4d9f7bbaea1f | 21 open issue IDs. Verified: 14, Implemented, unverified: 2, Partial: 10, Missing: 3, Not audited: 3, Not applicable: 0, Blocked: 1</desc>
+<desc id="desc">Historical verified 42.42% (14/33). Last-audited implementation 48.48% (16/33). Evidence 4d9f7bbaea1f | 21 open issue IDs. Verified: 14, Verified subset: 0, Implemented, unverified: 2, Decode only: 0, Partial: 10, Missing: 3, Not audited: 3, Not applicable: 0, Blocked: 1</desc>
 <rect width="700" height="165" rx="14" fill="#101b2d"/>
 <g font-family="system-ui, sans-serif" fill="#f1f6ff">
 <text x="22" y="30" font-size="22" font-weight="700">RTU Security Requirements</text>
