@@ -1,154 +1,81 @@
 # Repository Map
 
-C++ DNP3 workspace: three console apps + local OpenDNP3 3.1.2 source.
-Paths are relative to this root; section prefixes apply where stated.
-Read this map first; open only relevant files. Update after structural changes.
-The workspace root is the current Git repository; `opendnp3/` is its library subtree.
-Map baseline: branch `develop`, commit `77980d5a68a1e58e854ed9e6787585a2a75774cb`.
+C++ workspace with two TCP demos, a Windows diagnostic CLI and vendored OpenDNP3 3.1.2. The Git root is the workspace root. `opendnp3/` is the library subtree. Start with `AGENTS.md`, then open the paths for the task at hand.
 
-Status labels: IMPLEMENTED = the native vertical slice exists here and has been reviewed;
-VERIFIED = a report in `DNP3_PDD_PLAN/` records executed passing tests for that slice.
-Neither label asserts IEEE 1815, Level 4, SA v5 or Test Harness conformance.
+Path shorthand in this map is exact. `src/` expands to `opendnp3/cpp/lib/src/`, `api/` to `opendnp3/cpp/lib/include/opendnp3/`, and `tests/` to `opendnp3/cpp/tests/`. The `groups/` prefix expands to `opendnp3/generation/dnp3/src/main/scala/com/automatak/render/dnp3/objects/groups/`. Other paths are workspace-relative.
 
-## Entry Points
-- `apps/master/main.cpp` → TCP client, polls, commands, measurement callbacks.
-- `apps/outstation/main.cpp` → TCP server, point configuration, simulated updates.
-- `cli/main.cpp` → Windows diagnostic Master/Outstation over TCP or mutual TLS; compatibility and explicit SA Methods 4/68. See `cli/README.md` for commands and validation.
-- `cli/Security.*`, `cli/TestTLS.cpp` → isolated TEST credentials/authority process, runtime configuration and short-lived TLS fixtures; native protocol code is reused.
-- `opendnp3/cpp/lib/src/DNP3Manager.cpp` → library startup and channel creation.
+## Entry points and build
 
-## Core
-Prefix: `opendnp3/cpp/lib/src/`
-- `master/` → polling, command tasks, scheduling; start at `MasterContext.cpp`.
-- `master/CommandSet.cpp`, `CommandSetOps.cpp`, `CommandTask.*`, `TypedCommandHeader.h` → G12/G41 typed SELECT/OPERATE/DIRECT_OPERATE request building and per-point response state.
-- `master/MeasurementHandler.*` → typed SOE delivery for measurements, G121/G122 and G0 attributes; preserves raw indexes, Association ID and header metadata.
-- `outstation/` → request handling, responses, unsolicited reporting; start at `OutstationContext.cpp`.
-- `outstation/CommandResponseHandler.h`, `CommandActionAdapter.h`, `ControlState.h`, `RequestHistory.*` → command dispatch to `ICommandHandler`, per-select state and exact retry identity.
-- `outstation/ReadHandler.h`, `WriteHandler.h` → object request dispatch; narrow whitelist guards keep partially invalid mixed WRITEs side-effect free.
-- `outstation/Database.cpp` → in-memory point selection, updates, static responses.
-- `outstation/event/` → event buffering and response serialization.
-- `outstation/UpdateBuilder.cpp` → application measurement update batches.
-- `app/` → APDU construction, object headers, measurement serialization.
-- `app/parsing/APDUParser.cpp` → parsing, handler dispatch and per-group qualifier gates (G51 CTO qualifier 07; G0 request/response qualifiers; G122 READ forms; G120 free-format/UINT8 count). `CountParser.cpp` enforces G51 count 1; `CountIndexParser.*`/`RangeParser.*` supply indexed/range bodies.
-- `app/parsing/DeviceAttributeParser.*`, `app/DeviceAttribute.h` (public include), `app/HeaderWriter.*` → native G0V209/V210 UINTn and V254/V255 list parsing/writing; attribute-set indexes remain separate from security associations.
-- `outstation/DeviceAttributeSelection.*` → bounded standard-set V210 capability and mandatory V254/V255 discovery. V209 remains unadvertised until a complete SA version is supported.
-- `crypto/CryptoProvider.h` → shared internal cryptographic buffer interface.
-- `crypto/OpenSSLCryptoProvider.cpp` → optional OpenSSL SA primitives; see `crypto/README.md`.
-- `auth/SessionKeys.*`, `auth/AuthenticationSession.*` → bounded session-key lifecycle and authorization boundary.
-- `auth/AggressiveMode.*` → authenticated V3/V9 envelopes, separate solicited/unsolicited challenge histories and replay checks.
-- `auth/RemoteUpdateKeys.*`, `auth/UpdateKeyFunctions.*` → opt-in, bounded Method 4/68 remote credential/user lifecycle and IEEE transcripts; `master/UpdateKeyTask.*` reuses native task scheduling.
-- `auth/WindowsAuthenticationCredentials.cpp` → legacy retrieval plus remote-user journal in Windows Credential Manager; trusted clock supplied by the provisioning application.
-- `auth/AuthenticationStatistics.*` → G121 association counters, reporting baselines, five protocol maxima, frozen READ snapshots and synchronous G122 occurrence notifications.
-- `outstation/SecurityStatEventPublisher.*` → copies G122 occurrence snapshots into the native bounded event buffer (application DNP time, Class 1/2/3 config).
-- `master/MasterResponder.*`, `outstation/OutstationChallenger.*` → Control/Monitoring challenge-response cores.
-- `transport/` → fragment segmentation/reassembly.
-- `link/` → frames, CRC, link state; start at `LinkContext.cpp`.
-- `decoder/`, `logging/`, `util/` → diagnostics and shared helpers.
+| Path | Purpose |
+| --- | --- |
+| `apps/master/main.cpp` | TCP client demo with polls, controls and measurement callbacks. |
+| `apps/outstation/main.cpp` | TCP server demo with simulated points and command handling. |
+| `cli/main.cpp`, `cli/Security.cpp`, `cli/README.md` | Windows diagnostic Master and Outstation over TCP or mutual TLS. Explicit compatibility or SA Methods 4/68. See the README for build flags and commands. |
+| `CMakeLists.txt`, `opendnp3/CMakeLists.txt`, `opendnp3/cpp/lib/CMakeLists.txt`, `cli/CMakeLists.txt` | Workspace targets, library options and dependencies, library sources and links, and CLI/CTest registration. Key options are `DNP3_DIAGNOSTIC_CLI`, `DNP3_TESTS`, `DNP3_TLS`, `DNP3_SA_CRYPTO` and `DNP3_FUZZING`. TLS and SA crypto are separate options. |
+| `opendnp3/cpp/examples/`, `opendnp3/java/`, `opendnp3/dotnet/` | Optional upstream examples and bindings. |
 
-## Feature Status (Outstation / Master)
+## Core protocol and application
 
-- G120 SA v5 (`auth/`, `app/parsing/APDUParser.cpp`): native challenge-response, session-key, aggressive and remote Update Key Methods 4/68. G120V8 is codec only. G0V209 remains unavailable (OBJECT_UNKNOWN, omitted from discovery).
-- G121 statistics: Outstation READ/Class 0 IMPLEMENTED and VERIFIED (`P6b-O2_REPORT.md`); Master typed decode/delivery IMPLEMENTED and VERIFIED (`P6b-M1_REPORT.md`).
-- G122V1/V2 events: Outstation selection/publication/CONFIRM IMPLEMENTED and VERIFIED (`P6b-O2_REPORT.md`); Master prefix/range decode IMPLEMENTED and VERIFIED (`P6b-M1_REPORT.md`).
-- G0V210 plus V254/V255 discovery: IMPLEMENTED and VERIFIED on both roles (`P6c_REPORT.md`). G0V209: Master decode VERIFIED; Outstation deliberately unsupported.
-- Measurements/events G1/G2/G3/G4/G10/G30/G32/G40 (31 profile rows): IMPLEMENTED, not VERIFIED per row (`DEVICE_PROFILE_MEASUREMENTS_REPORT.md`). G2V3/G4V3 relative CTO validation has focused passing tests.
-- Controls G12V1/G41V1-V3: IMPLEMENTED and committed at `77980d5` — selection lifecycle, exact retry identity and Master SELECT echo guard included; `[profile-controls]` 21 cases/588 assertions plus 50 command-regression cases PASS (user-run, `DEVICE_PROFILE_MEASUREMENTS_REPORT.md`). Not VERIFIED: no interoperability, Test Harness or full profile/IEEE conformance run.
+| Area | Open these files |
+| --- | --- |
+| Stack assembly | `src/DNP3Manager.cpp` → `src/DNP3ManagerImpl.cpp` → `src/channel/DNP3Channel.cpp` → `src/master/MasterStack.cpp` or `src/outstation/OutstationStack.cpp`. Public entry points are `api/DNP3Manager.h`, `api/channel/IChannel.h` and `api/IStack.h`. |
+| Link and transport | `src/link/LinkContext.cpp`, `src/link/LinkLayerParser.cpp` and `api/link/LinkConfig.h` for frame parsing, addressing and link state. `src/transport/TransportStack.cpp`, `src/transport/TransportLayer.cpp`, `src/transport/TransportRx.cpp` and `src/transport/TransportTx.cpp` for layer wiring, reassembly and segmentation. |
+| APDUs and objects | `src/app/parsing/APDUParser.cpp` gates qualifiers and dispatches to `src/app/parsing/CountParser.cpp`, `src/app/parsing/CountIndexParser.cpp`, `src/app/parsing/RangeParser.cpp` and `src/app/parsing/FreeFormatParser.cpp`. `src/app/HeaderWriter.cpp` is the shared write path. G51 CTO uses qualifier 07 and count 1. |
+| Master | `src/master/MasterContext.cpp`, `src/master/MasterTasks.cpp` and `api/master/MasterStackConfig.h` for polling, scheduling, response ownership and timeouts. `src/master/MeasurementHandler.cpp` delivers typed values, header metadata and security association IDs to `api/master/ISOEHandler.h`. |
+| Outstation | `src/outstation/OutstationContext.cpp`, `src/outstation/ReadHandler.cpp`, `src/outstation/WriteHandler.cpp`, `src/outstation/AssignClassHandler.cpp` and `src/outstation/FreezeRequestHandler.h` for request dispatch, class/freeze operations, responses, unsolicited reporting and application confirms. |
+| Database and events | `src/outstation/Database.cpp`, `src/outstation/UpdateBuilder.cpp`, `api/outstation/DatabaseConfig.h` and `api/outstation/EventBufferConfig.h` for point updates, static reads and capacity. `src/outstation/event/EventBuffer.cpp`, `src/outstation/event/EventStorage.cpp`, `src/outstation/event/EventSelection.cpp` and `src/outstation/event/EventWriting.cpp` for bounded buffering, class/default variation selection and event serialization. |
+| Controls | `src/master/CommandSet.cpp`, `src/master/CommandSetOps.cpp`, `src/master/CommandTask.cpp` and `src/master/TypedCommandHeader.h` for G12/G41 request building and echo/result handling. `src/outstation/CommandResponseHandler.h`, `src/outstation/CommandActionAdapter.h`, `src/outstation/ControlState.h` and `src/outstation/RequestHistory.cpp` for select/operate state, retry identity and dispatch to `api/outstation/ICommandHandler.h`. |
+| Clock, IIN and restart | `src/master/SerialTimeSyncTask.cpp` and `src/master/LANTimeSyncTask.cpp` implement NonLAN and LAN paths. `src/outstation/TimeSyncState.h`, `src/outstation/WriteHandler.cpp` and `api/outstation/IOutstationApplication.h` are the Outstation hooks. G80V1 NEED_TIME clear delegates to the application, with a default implementation in `src/outstation/DefaultOutstationApplication.cpp`. The CLI uses NonLAN. |
+| Object generation | `opendnp3/generation/pom.xml` is the Maven entry. Start with `groups/Group0.scala`, `groups/Group12.scala`, `groups/Group41.scala`, `groups/Group120.scala`, `groups/Group121.scala` or `groups/Group122.scala`. They register in `opendnp3/generation/dnp3/src/main/scala/com/automatak/render/dnp3/objects/ObjectGroup.scala`. Shared renderers live in `opendnp3/generation/render/`. Generated outputs are `src/gen/objects/` and `api/gen/`. |
 
-## Interfaces and Configuration
-Prefix: `opendnp3/cpp/lib/include/opendnp3/`
-- `DNP3Manager.h`, `channel/IChannel.h` → public manager/channel API.
-- `master/` → master API/callbacks; `MasterStackConfig.h` configures the stack, `ISOEHandler.h` receives measurements plus default-no-op typed G121/G122 and G0 attribute overloads.
-- `outstation/` → outstation API/callbacks; `OutstationStackConfig.h`, `DatabaseConfig.h`, `EventBufferConfig.h` (including `maxSecurityStatEvents`), `OutstationConfig.h` (`securityStatConfig[18]`, `securityStatThresholds`) configure points/events/statistics.
-- `outstation/ICommandHandler.h`, `IOutstationApplication.h` → control/application integration hooks; point models, pulse timing, interlocks and NEED_TIME stay application-owned.
-- `outstation/UpdateBuilder.h` → measurement update API.
-- `channel/`, `link/LinkConfig.h` → endpoint, serial, TLS, retry and addressing settings.
-- `auth/AuthenticationConfig.h` → explicit secure/compatibility modes, users, credential retrieval and APDU authorization.
-- `IStack::GetAuthenticationStatus` → strand-serialized read-only session and security-statistics snapshot with no key material.
-- `auth/SecurityStatistic.h` → IEEE indexes/default thresholds and portable durable-retention interface.
-- `auth/WindowsAuthenticationCredentials.h` → Windows credential format and expiry contract.
-- `auth/UpdateKeyConfig.h` → durable users, Outstation-only authority trust and Master authority-material boundary; no production authority keys or external distribution protocol.
-- `app/` → public measurement, command, `SecurityStat.h` and `DeviceAttribute.h` types.
+## Secure Authentication, attributes and platform boundaries
 
-Runtime endpoints and stack settings live in the app entry points.
-The outstation database is in memory; the apps simulate measurements and accept controls without a custom hardware adapter.
-Adding `ISOEHandler` virtuals and G121/G122/G0 typed overloads is source-compatible but requires binary clients to rebuild.
+| Area | Open these files |
+| --- | --- |
+| G120 challenge/reply and sessions | `src/master/MasterResponder.cpp`, `src/outstation/OutstationChallenger.cpp`, `src/auth/AuthenticationSession.cpp`, `src/auth/SessionKeys.cpp` and `src/auth/AuthenticationMAC.h`. Required SA is the default in `api/auth/AuthenticationConfig.h` and fails closed when prerequisites are absent. Legacy compatibility requires explicit selection. |
+| Aggressive mode and remote keys | `src/auth/AggressiveMode.cpp` for V3/V9 envelopes, replay and separate challenge histories. `src/auth/RemoteUpdateKeys.cpp`, `src/auth/UpdateKeyFunctions.cpp`, `src/master/UpdateKeyTask.cpp` and `api/auth/UpdateKeyConfig.h` for opt-in Methods 4/68, authority boundaries and durable user lifecycle. |
+| G121/G122 | `src/auth/AuthenticationStatistics.cpp` tracks per-association counters, reporting baselines and protocol maxima. G121 READ/Class 0 snapshots flow through the database. `src/outstation/SecurityStatEventPublisher.cpp` publishes G122 occurrences into the event buffer. The Master uses typed delivery. See `api/outstation/OutstationConfig.h` and `api/auth/SecurityStatistic.h` for configuration and the retention interface. |
+| G0 attributes | `src/app/parsing/DeviceAttributeParser.cpp`, `src/app/HeaderWriter.cpp`, `api/app/DeviceAttribute.h` and `src/outstation/DeviceAttributeSelection.cpp`. Outstation serves V210 and V254/V255 discovery. Master decodes V209/V210. Attribute-set index and SA association ID are separate fields. |
+| TCP, UDP, serial and TLS | `src/channel/IOHandler.cpp` and `src/channel/` for I/O and reconnect. `src/channel/tls/SSLContext.cpp`, `src/channel/tls/TLSClient.cpp`, `src/channel/tls/TLSServer.cpp` and `api/channel/TLSConfig.h` for peer verification, optional exact SAN matching and separate TLS 1.2 cipher and TLS 1.3 suite settings. TCP/TLS listener ports are exposed through `api/channel/IChannel.h`. |
+| Crypto and credentials | `src/crypto/CryptoProvider.h`, `src/crypto/OpenSSLCryptoProvider.cpp` and `src/crypto/README.md` for SA primitives. `src/auth/WindowsAuthenticationCredentials.cpp` and `api/auth/WindowsAuthenticationCredentials.h` for Windows Credential Manager, expiry and the remote-user journal. `cli/Security.cpp` and `cli/TestTLS.cpp` also contain **test-only** provisioning and short-lived authority/TLS fixtures. |
+| STM32H743/FreeRTOS | No target implementation was identified in the tracked layout. Port boundaries are `src/DNP3ManagerImpl.cpp` and `src/channel/IAsyncChannel.h` for ASIO, executor/timers and I/O, the crypto and credential interfaces above for RNG/storage/trusted time, and the Outstation application and command interfaces for physical I/O, interlocks and restart. Dependency declarations are `opendnp3/deps/asio.cmake`, `opendnp3/deps/exe4cpp.cmake` and `opendnp3/deps/ser4cpp.cmake`. |
 
-## Network / Device I/O
-- `opendnp3/cpp/lib/src/channel/DNP3Channel.cpp` → channel-to-stack assembly.
-- `opendnp3/cpp/lib/src/channel/` → TCP, UDP, serial I/O handlers.
-- `opendnp3/cpp/lib/src/channel/tls/` → optional OpenSSL transport.
-- `TLSConfig.h` → separate TLS 1.2 cipher list and TLS 1.3 suites, optional exact DNS/IP SAN verification with existing chain checks.
+## Test entry points
 
-## Tests
-Prefix: `opendnp3/cpp/tests/`
-- `unit/` → protocol/state tests; `TestAPDUParsing.cpp`, `TestDatabase.cpp` are parser/database starting points.
-- `unit/TestProfileMeasurements.cpp` (`[profile-measurements]`) → G2V3/G4V3 CTO validation, typed time quality, malformed-fragment rejection, native confirmations.
-- `unit/TestProfileControls.cpp` (`[profile-controls]`) → G12/G41 wire controls, exact SBO/retry identity, selection cancellation, malformed commands, statuses, Master echo/IIN checks; 21 cases PASS (user-run, 588 assertions).
-- `unit/TestDeviceAttributes.cpp` (`[device-attributes]`) → G0 wire formats, actual per-association count, discovery, malformed data, typed Master delivery, fragmentation/WRITE protection.
-- `unit/TestMasterSecurityStatistics.cpp` (`[master-security-statistics]`) → Master G121/G122 qualifiers, typed callbacks, association isolation, occurrence time, malformed fragments, mixed-WRITE rejection.
-- `unit/TestSecurityStatEvents.cpp` (`[security-stat-events]`) → G122 codecs, reporting, READ selection, event classes, native responses/CONFIRMs/retries, fragmentation, clock-state cases.
-- `unit/TestRemoteUpdateKeys.cpp` (`[remote-update-keys]`) → Methods 4/68 native runtime, independent cryptographic vectors, persistence faults/recovery, authority/role/expiry/replay checks and actual G121/G122 accounting; `integration/TestSecureAuthentication.cpp` (`[remote-update-tcp]`) exercises both methods across real TCP reconnect/restart.
-- `dnp3mocks/` → shared mocks and stack fixtures (`MockSOEHandler` implements the new overloads).
-- `asiotests/` → asynchronous I/O tests. `integration/` → stack integration tests. `fuzz/` → parser fuzz targets.
-Enable C++ tests with `DNP3_TESTS`; fuzz targets use `DNP3_FUZZING`.
-`cli/tests/ProcessSmoke.py` drives two real Windows processes through CTest
-(`pc-compat`, `pc-method4`, `pc-method68`, `pc-negative`, `pc-tls`). The
-Windows CLI/native build uses `DNP3_DIAGNOSTIC_CLI=ON`; the test driver uses
-the installed Python interpreter and the original Catch unit/integration suites.
-`DNP3_SA_CRYPTO` enables SA cryptographic and runtime components independently of TLS.
-Stacks require credentials and an authorization policy by default; legacy operation must explicitly
-select `AuthenticationConfig::Mode::COMPATIBILITY`. Required SA fails closed when crypto or credentials
-are unavailable. `integration/TestSecureAuthentication.cpp` (`[sa-tcp]`) covers real local TCP
-READ/CONTROL, count renewal, reconnect and Outstation restart with ephemeral keys.
+- Catch/CTest targets are defined in `tests/unit/CMakeLists.txt`, `tests/integration/CMakeLists.txt` and `tests/asiotests/CMakeLists.txt`. Start parser and database investigations at `tests/unit/TestAPDUParsing.cpp` and `tests/unit/TestDatabase.cpp`. Reusable fixtures are in `tests/dnp3mocks/` and fuzz targets in `tests/fuzz/`.
+- `cli/tests/ProcessSmoke.py` runs two local CLI processes through `pc-compat`, `pc-method4`, `pc-method68`, `pc-negative` and `pc-tls`. It selects a free port by binding and releasing a temporary socket before starting the peers. The native TCP/TLS fixtures have access to the actual listener port.
+- `tests/integration/TestSecureAuthentication.cpp` covers native TCP SA, reconnect and restart. `tests/integration/TestEventIntegration.cpp` covers event flow. `tests/asiotests/TestTCPClientServer.cpp` is a socket fixture entry point.
+- Local, untracked acceptance kit in this workspace: `DNP3-AUTOTEST-KIT/dnp3_acceptance.py`, `DNP3-AUTOTEST-KIT/TEST_CASES.json` and `DNP3-AUTOTEST-KIT/FREEBUFF_TEST_GUIDE.md`. The kit exercises local CLI/native binaries. Preserve its separate results directory as evidence.
+- For independent interoperability, use the CLI as one endpoint with an external peer or Triangle MicroWorks Test Harness. The in-repo harnesses exercise local implementations. Consult the issue register for outstanding external validation.
 
-## Known Open Issues
-Unresolved or deliberately deferred work; details live in the linked reports, not here.
-- `P4-OPEN-01` → G120V7 code 5/7 meaning conflict (Annex A.45.7.2.2 vs 7.5.5.7); provisional code 5 = MAC not supported, 7 = authorization failed.
-- `RUK-OPEN-01` → SCS monotonicity versus wrap (7.5.5.5 versus A.45.10); all remote resets/wrap are rejected across certification methods and authority-key changes. Named tombstones are retained. See `DNP3_PDD_PLAN/SA_REMOTE_UPDATE_KEYS_REPORT.md`.
-- `RUK-OPEN-02` → A.45.14 does not specify DSA r/s wire representation; Method 68 provisionally uses strict DER per RFC5758/3279. Independent interoperability remains required.
-- `P6-OPEN-01` → G121 reporting threshold boundary (7.6.1.4.2 vs 11.9.10.2); approved provisional `delta >= threshold`.
-- G121 continuity → without a successful initial retention load snapshots keep DISCONTINUITY; per-point acquisition/transmission rearming and a platform retention backend are missing. Rollover does not set DISCONTINUITY.
-- NEED_TIME → `WriteHandler` G80V1 only clears DEVICE_RESTART; clear/rearm on time request is a pre-existing gap.
-- G122 explicit V2 → untimed historical events are retained unchanged (V1/Class/V0 only); case-C representation limit in `P6b-O2_REPORT.md`.
-- G0V209 → Outstation cannot advertise any SA version yet; discovery excludes it.
-- Master commands → typed function 6 (no-response) API intentionally absent; generic `PerformFunction` awaits a response.
+## Unfinished or unsupported
 
-## Build and Optional Components
-- `CMakeLists.txt` → builds local library, `master`, `outstation`, and `cli/`.
-- `opendnp3/CMakeLists.txt` → library version, optional tests/examples/TLS/bindings, CPack packaging.
-- `opendnp3/cpp/lib/CMakeLists.txt` → library source list, linking, installation.
-- `opendnp3/deps/*.cmake` → dependency acquisition declarations; inspect only for dependency/build work.
-- `opendnp3/cmake/` → formatting, linting, coverage helpers.
-- `opendnp3/.github/workflows/ci.yml` → upstream build/test/package workflow.
-- `opendnp3/cpp/examples/` → optional reference apps; separate from workspace apps.
-- `opendnp3/java/`, `opendnp3/dotnet/` → optional language bindings and their builds.
-- `opendnp3/generation/` → Maven/Scala code generators; protocol models under `dnp3/src/main/scala/com/automatak/render/dnp3/` (`objects/groups/Group0|12|41|120|121|122.scala`, `objects/ObjectGroup.scala`), shared renderers under `render/`.
+- **SA and G0.** G120V8 is codec-only. Outstation G0V209 returns OBJECT_UNKNOWN and is omitted from discovery. Methods 4/68 are the implemented remote-key methods. V7 codes 5/7, SCS wrap and Method 68 DSA signature representation remain tracked as `P4-OPEN-01`, `RUK-OPEN-01` and `RUK-OPEN-02`.
+- **Statistics.** The P1 sticky continuity fix is absent. G121 snapshot and G122 event flags depend on the initial retention load. A later save failure does not latch DISCONTINUITY. Durable target retention and per-point rearming remain open. Increment calls Publish before Persist, so a save failure cannot affect the flags of that same event. G122 explicit V2 does not supply a timestamp for an untimed historical event.
+- **Level 4 and application behavior.** The supplied profile is Level 3 with extensions. Full Table 14-5 coverage remains open, including broader G0 and remaining command and measurement wire audits. G34 wire access and Outstation G13/G43 publication are implemented. The typed Master FC6 API completes on local transmission in Compatibility mode. REQUIRED mode rejects FC6. See `DNP3_PDD_PLAN/FC6_B3_REPORT.md` for local evidence and open interoperability work. The CLI simulates controls and has no remote hardware restart implementation.
+- **Product security.** Cipher-change timeout, scheduled revocation, selected algorithms, RTU provisioning/roles and target hardening remain open. The TLS 1.3 suite list needs product clarification. See the security matrix and issue register for scope.
 
-## Requirements Navigation
-- `DNP3_PDD_PLAN/README.md` → planning scope, evidence labels and reading order.
-- `DNP3_PDD_PLAN/01_SOURCE_MAP.md` → standards/profile PDF page index, not a code index.
-- `DNP3_PDD_PLAN/02_PROFILE_MATRIX.csv` → requested object/variation matrix.
-- `DNP3_PDD_PLAN/03_SECURITY_MATRIX.md` → security requirements.
-- `DNP3_PDD_PLAN/04_G0V209_CONTRACT.md` → device-attribute contract and its P6c resolution.
-- `DNP3_PDD_PLAN/05_PHASES_AND_CODEX.md` → implementation sequence and task-status vocabulary.
-- `DNP3_PDD_PLAN/06_PREVIOUS_GUIDELINE_AUDIT.md` → corrections to the earlier draft.
-- `DNP3_PDD_PLAN/P6b-O2_REPORT.md` → G121 READ and G122 event publication, clock/continuity limits.
-- `DNP3_PDD_PLAN/P6b-M1_REPORT.md` → Master G121/G122 parsing, typed delivery, qualifier whitelists.
-- `DNP3_PDD_PLAN/P6c_REPORT.md` → G0V209/V210 and V254/V255 attributes.
-- `DNP3_PDD_PLAN/DEVICE_PROFILE_MEASUREMENTS_REPORT.md` → G1/G2/G3/G4/G10/G30/G32/G40 rows plus G12/G41 control rows.
-Planning documents and reports describe requirements or past tasks, not current verified support.
+## Requirements and evidence
 
-## Dependency Flow
-- Build: root CMake → OpenDNP3 library → console apps link it.
-- Startup: app → DNP3Manager → channel → master/outstation stack.
-- Protocol: master/outstation ↔ app encoding/parsing ↔ transport ↔ link ↔ channel I/O.
-- Measurements: outstation app → UpdateBuilder → Database/event buffer → responses → master ISOEHandler.
-- Statistics: authentication → AuthenticationStatistics → SecurityStatEventPublisher → event buffer → G122; or frozen snapshot → G121 READ → Master MeasurementHandler.
-- Generation: Scala models/renderers → generated C++ enums/objects.
+- `DNP3_PDD_PLAN/01_SOURCE_MAP.md` indexes the IEEE standard, Device Profile and security addendum. `DNP3_PDD_PLAN/IEEE_TRACEABILITY.csv`, `DNP3_PDD_PLAN/02_PROFILE_MATRIX.csv` and `DNP3_PDD_PLAN/03_SECURITY_MATRIX.md` are requirement navigation.
+- `DNP3_PDD_PLAN/README.md`, `DNP3_PDD_PLAN/05_PHASES_AND_CODEX.md`, `DNP3_PDD_PLAN/06_PREVIOUS_GUIDELINE_AUDIT.md` and `DNP3_PDD_PLAN/ISSUE_POSPONED1.md` cover planning, earlier audit and open decisions. `DNP3_PDD_PLAN/04_G0V209_CONTRACT.md` covers the attribute contract.
+- `DNP3_PDD_PLAN/PROGRESS.md`, `DNP3_PDD_PLAN/PROGRESS_EVIDENCE.json` and `DNP3_PDD_PLAN/SECURITY_PROGRESS.csv` hold revision-scoped assessments and evidence. `scripts/progress.py` and `.github/workflows/progress.yml` maintain the dashboard in `README.md`.
+- Focused reports are `DNP3_PDD_PLAN/DEVICE_PROFILE_MEASUREMENTS_REPORT.md`, `DNP3_PDD_PLAN/SA_REMOTE_UPDATE_KEYS_REPORT.md`, `DNP3_PDD_PLAN/P6b-M1_REPORT.md`, `DNP3_PDD_PLAN/P6b-O2_REPORT.md` and `DNP3_PDD_PLAN/P6c_REPORT.md`. Compare each report's tested revision and scenario to the task. Source support, local execution evidence and external conformance are separate.
 
-## Ignore During Discovery
-- `build/`, `build-*/`, `**/build/`, `dist/`, `target/`, `bin/`, `obj/`, `_deps/` → outputs, logs/dependency caches.
-- `.git/`, `.freebuff/`, caches, virtual environments, logs, temporary files, binaries.
-- `opendnp3/cpp/lib/src/gen/`, `opendnp3/cpp/lib/include/opendnp3/gen/` → generated; use generator sources first.
-- `IEEE 1815/` → reference PDFs; consult the planning page index only when standards work requires them.
-- `steps/` → currently empty.
+## Task-to-file lookup
+
+| Task | Start here |
+| --- | --- |
+| Object qualifier, CTO or typed delivery | `src/app/parsing/APDUParser.cpp`, `src/master/MeasurementHandler.cpp`, `tests/unit/TestProfileMeasurements.cpp` |
+| READ, class assignment, event retry or CONFIRM | `src/outstation/OutstationContext.cpp`, `src/outstation/event/EventSelection.cpp`, `tests/unit/TestProfileClasses.cpp`, `tests/unit/TestOutstationEventResponses.cpp` |
+| SBO, command echo or duplicate execution | `src/master/CommandTask.cpp`, `src/outstation/ControlState.h`, `src/outstation/RequestHistory.cpp`, `tests/unit/TestProfileControls.cpp` |
+| Absolute time, LAN sync or IIN clear | `src/master/LANTimeSyncTask.cpp`, `src/outstation/WriteHandler.cpp`, `tests/unit/TestProfileTime.cpp` |
+| SA handshake, renewals or restart | `src/auth/SessionKeys.cpp`, `tests/unit/TestProductionAuthentication.cpp`, `tests/integration/TestSecureAuthentication.cpp` |
+| Remote Update Key and credential persistence | `src/auth/RemoteUpdateKeys.cpp`, `src/auth/WindowsAuthenticationCredentials.cpp`, `tests/unit/TestRemoteUpdateKeys.cpp` |
+| G121/G122 counters, events or retention | `src/auth/AuthenticationStatistics.cpp`, `src/outstation/SecurityStatEventPublisher.cpp`, `tests/unit/TestAuthenticationStatistics.cpp`, `tests/unit/TestSecurityStatRead.cpp`, `tests/unit/TestSecurityStatEvents.cpp`, `tests/unit/TestMasterSecurityStatistics.cpp` |
+| G0 version, count or discovery | `src/outstation/DeviceAttributeSelection.cpp`, `src/app/parsing/DeviceAttributeParser.cpp`, `tests/unit/TestDeviceAttributes.cpp` |
+| TLS trust, listener ownership or process flake | `src/channel/tls/SSLContext.cpp`, `src/DNP3ManagerImpl.cpp`, `cli/Security.cpp`, `cli/tests/ProcessSmoke.py` |
+
+## Discovery exclusions
+
+Skip .git, .freebuff, build trees, caches, temporary files, binaries and DNP3-AUTOTEST-RESULTS during ordinary source discovery. Use the generator models before inspecting generated C++. Open the IEEE 1815 reference directory only for an assigned requirements check, using the page index above.

@@ -1,0 +1,1316 @@
+{
+  "schema": "dnp3-local-acceptance-v1",
+  "scope": "Windows native OpenDNP3 Master/Outstation; no deployed RTU",
+  "baseline_head_at_design": "aa15ccba701740dd76a2a43f6ff0f58847271983",
+  "status_vocabulary": [
+    "PASS",
+    "FAIL",
+    "NOT_RUN",
+    "NOT_IMPLEMENTED",
+    "BLOCKED_EXTERNAL",
+    "BLOCKED_HARDWARE",
+    "BLOCKED_SPEC",
+    "NOT_AUTOMATABLE_WITH_CLI",
+    "NOT_APPLICABLE"
+  ],
+  "existing_ctest": [
+    {
+      "id": "BASE-01",
+      "runner": "CTest",
+      "ctest_name": "unittests",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "C++ protocol objects/state machines/negative cases; test output and case counts",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-02",
+      "runner": "CTest",
+      "ctest_name": "asiotests",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "TLS/TCP ASIO native tests with provisioned ephemeral fixtures",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-03",
+      "runner": "CTest",
+      "ctest_name": "integrationtests",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "native library integration including secure TCP tests",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-04",
+      "runner": "CTest",
+      "ctest_name": "pc-compat",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "real TCP Master/Outstation compatibility: READ, controls, event/class and readback",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-05",
+      "runner": "CTest",
+      "ctest_name": "pc-method4",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "real TCP SA v5 Method 4 handshake, RUK, restart and role enforcement",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-06",
+      "runner": "CTest",
+      "ctest_name": "pc-method68",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "real TCP SA v5 Method 68 RUK signatures, restart and aggressive exchange",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-07",
+      "runner": "CTest",
+      "ctest_name": "pc-negative",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "SA negative credential, association, denied controls and guarded cleanup",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "BASE-08",
+      "runner": "CTest",
+      "ctest_name": "pc-tls",
+      "oracle": [
+        "CTest result is PASS and exit 0",
+        "No individual failure, timeout or skipped expected suite"
+      ],
+      "description": "TLS1.2/1.3 mutual authentication, trust, SAN, expiry, four CA anchors",
+      "result": "NOT_RUN"
+    }
+  ],
+  "priority_scenarios": [
+    {
+      "id": "TCP-READ-01",
+      "title": "Static inputs and precision",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port; no unsolicited)",
+        "out: set binary 0 on force",
+        "out: set double 0 on force",
+        "out: set analog 0 13.75 force",
+        "master: read 1 2 0 0",
+        "master: read 3 2 0 0",
+        "master: read 30 5 0 0"
+      ],
+      "pass_oracles": [
+        "Group1Var2 Binary[0]=ON",
+        "Group3Var2 DoubleBit[0]=DETERMINED_ON",
+        "Group30Var5 Analog[0]=13.75",
+        "Each relevant TASK read SUCCESS"
+      ],
+      "fail_if": [
+        "Stale value or task-only SUBMITTED"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-EVENT-01",
+      "title": "Solicited time-tagged precision event",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port; no unsolicited)",
+        "out: set analog 0 13.75 force",
+        "master: read 32 7"
+      ],
+      "pass_oracles": [
+        "Group32Var7 EVENT Analog[0]=13.75",
+        "Valid time>0",
+        "TASK read SUCCESS"
+      ],
+      "fail_if": [
+        "Result from an old event or without a valid timestamp"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-EVENT-INT-01",
+      "title": "Integer event conversion distinct from float",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port; no unsolicited)",
+        "out: set analog 0 12.5 force",
+        "master: read 32 4"
+      ],
+      "pass_oracles": [
+        "Group32Var4 EVENT Analog[0]=12",
+        "TASK read SUCCESS"
+      ],
+      "fail_if": [
+        "Treat 12 as if float precision was preserved"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-OUTPUT-01",
+      "title": "SBO CROB and analog output readback",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port)",
+        "master: crob 0 on",
+        "master: analog 3 0 1.5",
+        "out: status",
+        "master: read 10 2 0 0",
+        "master: read 40 3 0 0"
+      ],
+      "pass_oracles": [
+        "Both commands TASK/RESULT SUCCESS",
+        "Outstation executed=2",
+        "Group10Var2 BinaryOutput[0]=ON",
+        "Group40Var3 AnalogOutput[0]=1.5"
+      ],
+      "fail_if": [
+        "Only Master task success without Outstation evidence"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-CLASS-01",
+      "title": "ASSIGN_CLASS and class3 event",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port; no unsolicited)",
+        "master: assign 30 3 0 0",
+        "wait TASK assign SUCCESS",
+        "out: set analog 0 14.25 force",
+        "master: scan class3"
+      ],
+      "pass_oracles": [
+        "TASK assign SUCCESS",
+        "Group32Var7 EVENT Analog[0]=14.25",
+        "TASK scan SUCCESS"
+      ],
+      "fail_if": [
+        "Read of old event or class not genuinely reassigned"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-UNSOL-01",
+      "title": "Unsolicited receive with two-sided application CONFIRM",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; outstation --unsolicited; --trace on both; fresh port)",
+        "master: unsol on",
+        "wait TASK unsol SUCCESS",
+        "out: set binary 3 on force",
+        "capture Master and Outstation traces"
+      ],
+      "pass_oracles": [
+        "Master RX unsolicited G2V2 Binary[3]=ON",
+        "Outstation TX UNSOLICITED_RESPONSE CON=1 SEQ=n",
+        "Master TX CONFIRM UNS=1 SEQ=n",
+        "Outstation RX CONFIRM UNS=1 SEQ=n"
+      ],
+      "fail_if": [
+        "Missing Outstation receive confirmation",
+        "Mismatched SEQ",
+        "False duplicate detection from same value but distinct event timestamps"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-UNSOL-02",
+      "title": "Unsolicited disable and pending-event class poll",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; outstation --unsolicited; fresh port)",
+        "master: unsol on",
+        "wait TASK unsol SUCCESS",
+        "master: unsol off",
+        "wait TASK unsol SUCCESS",
+        "out: set binary 2 on force",
+        "watch Master for a bounded 5 seconds (liveness required)",
+        "master: scan class1"
+      ],
+      "pass_oracles": [
+        "No UNSOLICITED_RESPONSE containing new Binary[2] during bounded interval",
+        "Group2Var2 EVENT Binary[2]=ON after class1 poll",
+        "TASK scan SUCCESS"
+      ],
+      "fail_if": [
+        "Task submitted without completion",
+        "Peer died during absence gate",
+        "Old event confused with new one"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-ATTR-01",
+      "title": "Attribute discovery; truthful SA advertisement",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port)",
+        "master: attr 210",
+        "master: attr 254",
+        "master: attr 255",
+        "master: attr 209"
+      ],
+      "pass_oracles": [
+        "G0V210=0 in compat",
+        "G0V255 discovery contains 210",
+        "G0V209 request rejected/unadvertised by incomplete SA implementation"
+      ],
+      "fail_if": [
+        "Marking G0V209 normative support as PASS"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TCP-TIME-01",
+      "title": "G50V1 and time read",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "connected(auth=compat; fresh port)",
+        "master: time",
+        "observe receive until task completion"
+      ],
+      "pass_oracles": [
+        "G50V1 absolute time is nonzero",
+        "TASK time SUCCESS"
+      ],
+      "fail_if": [
+        "A repeated NEED_TIME bit alone is not evidence of failed synchronization"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "SA-STAT-01",
+      "title": "Security statistics and per-association discovery",
+      "category": "extend_ProcessSmoke",
+      "steps": [
+        "provision unique test-only SA profile using method4",
+        "connected with matching profile/association and trusted clock",
+        "master: attr 210",
+        "master: stats",
+        "master: events"
+      ],
+      "pass_oracles": [
+        "G0V210 count=18 with attached active association",
+        "G121 static typed values for real indices",
+        "G122 events when corresponding statistic thresholds are triggered; absence alone is not a failure"
+      ],
+      "fail_if": [
+        "Compat count zero misclassified as SA failure",
+        "Assume all statistic events must be emitted without generating qualifying activity"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "UNSOL-RETRY-01",
+      "title": "CONFIRM loss, retransmission and event queue persistence",
+      "category": "native_mock_extension",
+      "steps": [
+        "Use existing native unit/integration mocks to deliberately suppress one application CONFIRM",
+        "verify same event retains identity and is retried as permitted",
+        "send correct CONFIRM",
+        "verify event removed exactly once"
+      ],
+      "pass_oracles": [
+        "Repeat count follows configured timeout/retry rules",
+        "No premature deletion",
+        "No double-deletion"
+      ],
+      "fail_if": [
+        "Implement arbitrary packet dropping in production CLI",
+        "Treat test as PASS without injected loss"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "NEG-WIRE-01",
+      "title": "Malformed object/qualifier/function coverage",
+      "category": "native_mock_extension",
+      "steps": [
+        "Enumerate selected profile qualifiers from 02_PROFILE_MATRIX.csv",
+        "use native unit/integration test framework with malformed APDUs",
+        "verify expected IIN and no forbidden side effects"
+      ],
+      "pass_oracles": [
+        "Each explicit malformed input has independent assertion",
+        "No crash, control execution or parser state corruption"
+      ],
+      "fail_if": [
+        "Fabricating a PASS from CLI unknown-command diagnostic"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "LOAD-PORT-01",
+      "title": "Native parallel test isolation and port collision resistance",
+      "category": "existing_ctest_plus",
+      "steps": [
+        "Run full CTest -C Release -j 4",
+        "run repeated CTest only within bounded budget",
+        "if safe, bind localhost:20000 exclusively in a separate test process during CTest run"
+      ],
+      "pass_oracles": [
+        "All expected CTest entries PASS",
+        "No fixed-port collision in native ASIO/integration tests"
+      ],
+      "fail_if": [
+        "Claim all scheduling races eliminated by one pass"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "SA-RETENTION-01",
+      "title": "Security statistics survive restart with honest quality",
+      "category": "implementation_gap",
+      "steps": [
+        "Inspect IAuthenticationStatisticsStore and persistence backend",
+        "provision active profile",
+        "increment selected statistics",
+        "restart peers",
+        "read G121 and G122, verify discontinuity flags and distinct associations"
+      ],
+      "pass_oracles": [
+        "Persisted statistic values per policy",
+        "Correct discontinuity/quality and rearming",
+        "No cross-association contamination"
+      ],
+      "fail_if": [
+        "Mark PASS from current source without persistent store integration"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "SA-G120V8-01",
+      "title": "User certificate runtime exchange",
+      "category": "implementation_gap",
+      "steps": [
+        "Inspect G120V8 runtime lifecycle and validation code",
+        "if codec-only, report implementation gap"
+      ],
+      "pass_oracles": [
+        "No false advertisement of supported runtime certificate handling"
+      ],
+      "fail_if": [
+        "Treat serialization codec as complete SA runtime support"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "SA-FC6-01",
+      "title": "Direct operate no response (FC6) Master API",
+      "category": "implementation_gap",
+      "steps": [
+        "Check Master API and CLI capabilities for no-response DNP3 control",
+        "mark gap if unsupported"
+      ],
+      "pass_oracles": [
+        "Explicit support documented and tested or gap identified"
+      ],
+      "fail_if": [
+        "Mistaking DIRECT_OPERATE with response for FC6"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "TLS-REVOC-01",
+      "title": "Product certificate revocation scheduling",
+      "category": "product_gap",
+      "steps": [
+        "Inspect product config and available revocation policy; no assumptions"
+      ],
+      "pass_oracles": [
+        "Explicit limitation documented if timing/config absent"
+      ],
+      "fail_if": [
+        "Treat mutual TLS handshake as CRL/OCSP scheduling"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "RTU-HARDEN-01",
+      "title": "STM32/RTU device hardening",
+      "category": "external_or_hardware",
+      "steps": [
+        "Hardware-dependent: deployed ports, default SA, production roles, keys and firmware upgrade must be assessed on target RTU"
+      ],
+      "pass_oracles": [
+        "BLOCKED_HARDWARE and specific equipment requirements, unless actual target evidence exists"
+      ],
+      "fail_if": [
+        "Treat Windows localhost simulation as hardware evidence"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "IEEE-INTEROP-01",
+      "title": "Independent Master/Outstation and Level 4 Test Harness",
+      "category": "external_or_hardware",
+      "steps": [
+        "Requires independent DNP3 conformance/interoperability tool and appropriate valid Device Profile"
+      ],
+      "pass_oracles": [
+        "BLOCKED_EXTERNAL unless independent logs and pass criteria are available"
+      ],
+      "fail_if": [
+        "Self-interoperability claimed as certification"
+      ],
+      "constraints": [],
+      "result": "NOT_RUN"
+    }
+  ],
+  "requirements_manifest": {
+    "profile": [
+      {
+        "id": "PROFILE-001",
+        "title": "Secure authentication version",
+        "source": "Device Profile PDF p.4",
+        "baseline_outstation": "NOT_IMPLEMENTED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-002",
+        "title": "Security statistics per association",
+        "source": "Device Profile PDF p.4",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-003",
+        "title": "Binary input any",
+        "source": "Device Profile PDF p.4",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-004",
+        "title": "Binary input packed",
+        "source": "Device Profile PDF p.4",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-005",
+        "title": "Binary input with flags",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-006",
+        "title": "Binary input event any",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-007",
+        "title": "Binary event without time",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-008",
+        "title": "Binary event absolute time",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-009",
+        "title": "Binary event relative time",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-010",
+        "title": "Double-bit input any",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-011",
+        "title": "Double-bit input packed",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-012",
+        "title": "Double-bit input with flags",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-013",
+        "title": "Double-bit event any",
+        "source": "Device Profile PDF p.5",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-014",
+        "title": "Double-bit event without time",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-015",
+        "title": "Double-bit event absolute time",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-016",
+        "title": "Double-bit event relative time",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-017",
+        "title": "Binary output status any",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-018",
+        "title": "Binary output status with flags",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-019",
+        "title": "CROB",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-020",
+        "title": "Analog input any",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-021",
+        "title": "Analog input 32-bit with flags",
+        "source": "Device Profile PDF p.6",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-022",
+        "title": "Analog input 16-bit with flags",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-023",
+        "title": "Analog input 32-bit without flags",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-024",
+        "title": "Analog input 16-bit without flags",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-025",
+        "title": "Analog input float32 with flags",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-026",
+        "title": "Analog input event any",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-027",
+        "title": "Analog event 32-bit without time",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-028",
+        "title": "Analog event 16-bit without time",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-029",
+        "title": "Analog event 16-bit with time",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-030",
+        "title": "Analog event float32 without time",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-031",
+        "title": "Analog output status any",
+        "source": "Device Profile PDF p.7",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-032",
+        "title": "Analog output status 32-bit with flag",
+        "source": "Device Profile PDF p.8",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-033",
+        "title": "Analog output status 16-bit with flag",
+        "source": "Device Profile PDF p.8",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-034",
+        "title": "Analog output status float32 with flag",
+        "source": "Device Profile PDF p.8",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-035",
+        "title": "Analog output 32-bit command",
+        "source": "Device Profile PDF p.8",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-036",
+        "title": "Analog output 16-bit command",
+        "source": "Device Profile PDF p.8",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-037",
+        "title": "Analog output float32 command",
+        "source": "Device Profile PDF p.8",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-038",
+        "title": "Absolute time and date",
+        "source": "Device Profile PDF p.8|9",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-039",
+        "title": "CTO absolute synchronized",
+        "source": "Device Profile PDF p.9",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-040",
+        "title": "CTO absolute unsynchronized",
+        "source": "Device Profile PDF p.9",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-041",
+        "title": "Time delay coarse",
+        "source": "Device Profile PDF p.9",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-042",
+        "title": "Time delay fine",
+        "source": "Device Profile PDF p.9",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-043",
+        "title": "Class 0",
+        "source": "Device Profile PDF p.9",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-044",
+        "title": "Class 1",
+        "source": "Device Profile PDF p.9",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-045",
+        "title": "Class 2",
+        "source": "Device Profile PDF p.9|10",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-046",
+        "title": "Class 3",
+        "source": "Device Profile PDF p.10",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-047",
+        "title": "Internal indications packed",
+        "source": "Device Profile PDF p.10",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-048",
+        "title": "Authentication challenge",
+        "source": "Device Profile PDF p.10",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-049",
+        "title": "Authentication reply",
+        "source": "Device Profile PDF p.10",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-050",
+        "title": "Aggressive mode request",
+        "source": "Device Profile PDF p.10",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-051",
+        "title": "Session key status request",
+        "source": "Device Profile PDF p.10",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-052",
+        "title": "Session key status",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-053",
+        "title": "Session key change",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-054",
+        "title": "Authentication error",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-055",
+        "title": "User certificate",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "NOT_IMPLEMENTED",
+        "baseline_master": "NOT_IMPLEMENTED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-056",
+        "title": "Message authentication code",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-057",
+        "title": "User status change",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-058",
+        "title": "Update key change request",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-059",
+        "title": "Update key change reply",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-060",
+        "title": "Update key change",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-061",
+        "title": "Update key change signature",
+        "source": "Device Profile PDF p.11",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "PARTIAL",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-062",
+        "title": "Update key change confirmation",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-063",
+        "title": "Security statistics 32-bit with flag",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-064",
+        "title": "Security statistics event any",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-065",
+        "title": "Security statistics event with flag",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "IMPLEMENTED_NOT_VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-066",
+        "title": "Security statistics event with flag and time",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-067",
+        "title": "No-object CONFIRM",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-068",
+        "title": "No-object COLD_RESTART",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "PARTIAL",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "PROFILE-069",
+        "title": "No-object DELAY_MEASURE",
+        "source": "Device Profile PDF p.12",
+        "baseline_outstation": "VERIFIED",
+        "baseline_master": "IMPLEMENTED_NOT_VERIFIED",
+        "fresh_execution": "NOT_RUN"
+      }
+    ],
+    "security": [
+      {
+        "id": "SEC-T1-01",
+        "title": "Secure Authentication",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Fixed: Version 5",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-02",
+        "title": "Maximum users",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable, at least 2",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-03",
+        "title": "Security response timeout",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable, 0-120 s",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-04",
+        "title": "Aggressive receive",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Yes, not recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-05",
+        "title": "Aggressive issue",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Yes, not recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-06",
+        "title": "Challenge-response",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-07",
+        "title": "Session key change interval",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable, 15-120 min",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-08",
+        "title": "Session key change count",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable, default 1000 messages",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-09",
+        "title": "Requested MAC",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Selectable SHA-256 (16/8 octets), AES-GMAC",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-10",
+        "title": "Session key wrapping",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "AES-256 mandatory; AES-128 not recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-11",
+        "title": "TLS cipher suites",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "TLS 1.2 and TLS 1.3 lists",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-12",
+        "title": "DNP TCP port using TLS",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Fixed: 19999",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-13",
+        "title": "Cipher-change request timeout",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable, 1-60 s",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-14",
+        "title": "Supported CAs",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "At least 4",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-15",
+        "title": "Certificate revocation check time",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable; numeric value blank",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-16",
+        "title": "Remote update-key changes",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Configurable, symmetric/asymmetric algorithm options",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T1-17",
+        "title": "User-credential expiry",
+        "source": "RTU Security PDF / Table 1 pp.3-4",
+        "source_requirement": "Yes",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-01",
+        "title": "Protocol authentication",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Challenge-response; Aggressive Mode not recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-02",
+        "title": "Protected communications",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "TLS 1.2 and TLS 1.3",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-03",
+        "title": "Session-key encryption and exchange",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Key wrap",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-04",
+        "title": "Update-key protection",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Symmetric and asymmetric approaches indicated; must agree on operative choice",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-05",
+        "title": "Session key length",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "128-bit acceptable; 256-bit recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-06",
+        "title": "Update key length",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "128-bit acceptable; 256-bit recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-07",
+        "title": "Local RTU configuration password",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-08",
+        "title": "Random generation for security keys",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-09",
+        "title": "Authentication enabled by default",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Mandatory; disabling for protocol configuration accepted (as described)",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-10",
+        "title": "Minimum user roles",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Administrator for security settings, ordinary user for technical settings; both may perform ordinary tasks",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T2-11",
+        "title": "Security parameter configurability",
+        "source": "RTU Security PDF / Table 2 p.5",
+        "source_requirement": "Mandatory for all protocol/configuration security parameters",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-01",
+        "title": "Close unused hardware ports",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-02",
+        "title": "Close unused network ports",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-03",
+        "title": "Disable unnecessary users",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-04",
+        "title": "Least privilege for users",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-05",
+        "title": "Do not hardcode credentials",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-06",
+        "title": "Hash stored credentials",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Mandatory",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-07",
+        "title": "Secure firmware update with digital-signature verification",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Recommended",
+        "fresh_execution": "NOT_RUN"
+      },
+      {
+        "id": "SEC-T3-08",
+        "title": "Check digital signature during firmware update",
+        "source": "RTU Security PDF / Table 3 p.6",
+        "source_requirement": "Recommended",
+        "fresh_execution": "NOT_RUN"
+      }
+    ]
+  },
+  "policy": {
+    "require_all_ids_accounted_for": true,
+    "do_not_claim_certification": true,
+    "do_not_edit_production_or_dashboard": true,
+    "no_commit_or_push": true,
+    "expected_test_count": 8,
+    "existing_runner": "cli/tests/ProcessSmoke.py"
+  }
+}
