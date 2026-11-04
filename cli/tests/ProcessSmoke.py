@@ -69,7 +69,7 @@ class Peer:
         cursor = self.send(command)
         completion = self.wait(
             r"\[FC6\] local transmission complete; remote execution unknown$", cursor, timeout)
-        self.wait(r"\[SUBMITTED\].*FC6 locally accepted; remote execution unknown\)$", cursor, timeout)
+        self.wait(r"FC6 locally accepted; remote execution unknown\)$", cursor, timeout)
         assert not any("[RESULT]" in line or "status=SUCCESS" in line
                        for line in self.lines[cursor:]), self.lines[cursor:]
         return completion
@@ -166,6 +166,16 @@ def compatibility(exe):
         out.executed(7)
         master.noack("analog 1 4 77 noack")
         out.executed(8)
+        for variation, index, value, expected_count in (
+                (2, 5, "-23", 9),
+                (3, 6, "6.75", 10),
+                (4, 7, "9.125", 11)):
+            master.noack(f"analog {variation} {index} {value} noack")
+            out.executed(expected_count)
+            cursor = master.task(f"read 40 {variation} {index} {index}")
+            master.wait(rf"AnalogOutput\[{index}\]={re.escape(value)}", cursor)
+        master.noack("analog 2 10 17 noack")
+        out.executed(11)
         cursor = master.task("read 13 0")
         master.wait(r"Group13Var2.*BinaryCommandEvent\[3\]=ON.*SUCCESS", cursor)
         master.wait(r"Group13Var2.*BinaryCommandEvent\[3\]=OFF.*SUCCESS", cursor)

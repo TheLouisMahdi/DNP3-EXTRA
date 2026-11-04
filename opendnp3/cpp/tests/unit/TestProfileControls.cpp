@@ -450,6 +450,55 @@ TEST_CASE("ProfileControls - Master FC6 sends typed commands once and completes 
         }
 }
 
+TEST_CASE("ProfileControls - Master FC6 sequence wraps without retries and preserves following SBO sequence",
+          "[fc6-master][profile-controls]")
+{
+    auto params = MasterConfig(false);
+    params.responseTimeout = TimeDuration::Milliseconds(10);
+    MasterTestFixture t(params);
+    CommandCallbackQueue callbacks;
+    REQUIRE(t.context->OnLowerLayerUp());
+
+    for (unsigned request = 0; request < 17; ++request)
+    {
+        const auto seq = static_cast<uint8_t>(request & 0x0F);
+        const char* hex = "0123456789ABCDEF";
+        REQUIRE(t.context->DirectOperateNoAck(Commands(0, 3), callbacks.Callback(), TaskConfig::Default()));
+        t.exe->run_many();
+        REQUIRE(t.lower->PopWriteAsHex() == std::string("C") + hex[seq] + " 06 " + Body(0));
+        REQUIRE(t.lower->HasNoData());
+        REQUIRE(callbacks.values.size() == request);
+
+        REQUIRE(t.context->OnTxReady());
+        REQUIRE(callbacks.values.size() == request + 1);
+        REQUIRE(callbacks.values.back().summary == TaskCompletion::SUCCESS);
+        REQUIRE(callbacks.values.back().results.size() == 1);
+        REQUIRE(callbacks.values.back().results[0].status == CommandStatus::UNDEFINED);
+        t.exe->run_many();
+        REQUIRE(t.lower->HasNoData());
+        REQUIRE(callbacks.values.size() == request + 1);
+        t.exe->advance_time(params.responseTimeout.value);
+        t.exe->run_many();
+        REQUIRE(t.lower->HasNoData());
+        REQUIRE(callbacks.values.size() == request + 1);
+    }
+
+    t.context->SelectAndOperate(Commands(0, 3), callbacks.Callback(), TaskConfig::Default());
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 03 " + Body(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster("C1 81 00 00 " + Body(0)));
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 04 " + Body(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster("C2 81 00 00 " + Body(0)));
+    t.exe->run_many();
+    REQUIRE(callbacks.values.size() == 18);
+    REQUIRE(callbacks.values.back().summary == TaskCompletion::SUCCESS);
+    REQUIRE(callbacks.values.back().results[0].status == CommandStatus::SUCCESS);
+    REQUIRE(t.lower->HasNoData());
+}
+
 TEST_CASE("ProfileControls - Master FC6 transmit timeout does not retry or report operation success",
           "[fc6-master][profile-controls]")
 {
