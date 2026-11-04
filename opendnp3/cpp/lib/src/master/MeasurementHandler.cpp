@@ -57,6 +57,12 @@ bool MeasurementHandler::IsAllowed(uint32_t, GroupVariation gv, QualifierCode qc
     const bool prefix = qc == QualifierCode::UINT8_CNT_UINT8_INDEX || qc == QualifierCode::UINT16_CNT_UINT16_INDEX;
     switch (gv)
     {
+    case GroupVariation::Group34Var0:
+        return false;
+    case GroupVariation::Group34Var1:
+    case GroupVariation::Group34Var2:
+    case GroupVariation::Group34Var3:
+        return qc == QualifierCode::UINT8_START_STOP || qc == QualifierCode::UINT16_START_STOP;
     case GroupVariation::Group121Var1:
         return prefix || qc == QualifierCode::UINT8_START_STOP || qc == QualifierCode::UINT16_START_STOP;
     case GroupVariation::Group122Var1:
@@ -73,6 +79,12 @@ bool MeasurementHandler::IsAllowed(uint32_t, GroupVariation gv, QualifierCode qc
 TimestampQuality MeasurementHandler::ModeFromType(GroupVariation gv)
 {
     return HasAbsoluteTime(gv) ? TimestampQuality::SYNCHRONIZED : TimestampQuality::INVALID;
+}
+
+IINField MeasurementHandler::ProcessHeader(const RangeHeader& header,
+                                           const ICollection<Indexed<AnalogDeadband>>& values)
+{
+    return this->LoadValues(header, TimestampQuality::INVALID, values);
 }
 
 void MeasurementHandler::CheckForTxStart()

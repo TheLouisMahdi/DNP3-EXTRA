@@ -175,6 +175,14 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
       return GroupVariation::Group32Var7;
     case(0x2008):
       return GroupVariation::Group32Var8;
+    case(0x2200):
+      return GroupVariation::Group34Var0;
+    case(0x2201):
+      return GroupVariation::Group34Var1;
+    case(0x2202):
+      return GroupVariation::Group34Var2;
+    case(0x2203):
+      return GroupVariation::Group34Var3;
     case(0x2800):
       return GroupVariation::Group40Var0;
     case(0x2801):
@@ -458,6 +466,14 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
       return "Group32Var7";
     case(GroupVariation::Group32Var8):
       return "Group32Var8";
+    case(GroupVariation::Group34Var0):
+      return "Group34Var0";
+    case(GroupVariation::Group34Var1):
+      return "Group34Var1";
+    case(GroupVariation::Group34Var2):
+      return "Group34Var2";
+    case(GroupVariation::Group34Var3):
+      return "Group34Var3";
     case(GroupVariation::Group40Var0):
       return "Group40Var0";
     case(GroupVariation::Group40Var1):
@@ -741,6 +757,14 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
       return "Analog Input Event - Single-precision With Flag and Time";
     case(GroupVariation::Group32Var8):
       return "Analog Input Event - Double-precision With Flag and Time";
+    case(GroupVariation::Group34Var0):
+      return "Analog Input Deadband - Any Variation";
+    case(GroupVariation::Group34Var1):
+      return "Analog Input Deadband - 16-bit";
+    case(GroupVariation::Group34Var2):
+      return "Analog Input Deadband - 32-bit";
+    case(GroupVariation::Group34Var3):
+      return "Analog Input Deadband - Single-precision floating point";
     case(GroupVariation::Group40Var0):
       return "Analog Output Status - Any Variation";
     case(GroupVariation::Group40Var1):
@@ -956,6 +980,10 @@ GroupVariation GroupVariationSpec::from_string(const std::string& arg)
   if(arg == "Group32Var6") return GroupVariation::Group32Var6;
   if(arg == "Group32Var7") return GroupVariation::Group32Var7;
   if(arg == "Group32Var8") return GroupVariation::Group32Var8;
+  if(arg == "Group34Var0") return GroupVariation::Group34Var0;
+  if(arg == "Group34Var1") return GroupVariation::Group34Var1;
+  if(arg == "Group34Var2") return GroupVariation::Group34Var2;
+  if(arg == "Group34Var3") return GroupVariation::Group34Var3;
   if(arg == "Group40Var0") return GroupVariation::Group40Var0;
   if(arg == "Group40Var1") return GroupVariation::Group40Var1;
   if(arg == "Group40Var2") return GroupVariation::Group40Var2;

@@ -20,9 +20,12 @@
 
 #include "Database.h"
 
+#include "gen/objects/Group34.h"
 #include "gen/objects/Group50.h"
 #include "gen/objects/Group80.h"
 #include "outstation/StaticWriters.h"
+
+#include <algorithm>
 
 namespace opendnp3
 {
@@ -95,10 +98,89 @@ Database::Database(const DatabaseConfig& config,
       time_and_interval(config.time_and_interval),
       octet_string(config.octet_string)
 {
+    deadbands.reserve(config.analog_input.size());
+}
+
+size_t Database::SelectDeadbands(const Range& range, AnalogDeadbandVariation requested)
+{
+    return analog_input.visit_configs(range, [&](uint16_t index, const AnalogConfig& config) {
+        auto variation = requested;
+        if (variation == AnalogDeadbandVariation::Automatic)
+            variation = config.deadbandVariation;
+        if (variation < AnalogDeadbandVariation::UInt16 || variation > AnalogDeadbandVariation::Float32)
+        {
+            const bool floating = config.svariation == StaticAnalogVariation::Group30Var5
+                || config.svariation == StaticAnalogVariation::Group30Var6;
+            variation = floating ? AnalogDeadbandVariation::Float32 : AnalogDeadbandVariation::UInt32;
+        }
+        const SelectedDeadband selection{index, variation, {config.deadband > 0 ? config.deadband : 0}};
+        const auto position = std::lower_bound(deadbands.begin(), deadbands.end(), index,
+            [](const SelectedDeadband& entry, uint16_t key) { return entry.index < key; });
+        if (position == deadbands.end() || position->index != index)
+            deadbands.insert(position, selection);
+        else
+            *position = selection;
+    });
+}
+
+template<class Index, class Variation>
+bool Database::WriteDeadbandRange(HeaderWriter& writer, QualifierCode qualifier)
+{
+    const auto first = deadbands[nextDeadband];
+    auto range = writer.IterateOverRange<Index>(qualifier, Variation::Inst(),
+                                                static_cast<typename Index::type_t>(first.index));
+    uint32_t expected = first.index;
+    while (nextDeadband < deadbands.size())
+    {
+        const auto& entry = deadbands[nextDeadband];
+        if (entry.index != expected || entry.index > Index::max_value || entry.variation != first.variation)
+            break;
+        if (!range.Write(entry.value))
+            return false;
+        ++nextDeadband;
+        ++expected;
+    }
+    return true;
+}
+
+bool Database::LoadDeadbands(HeaderWriter& writer)
+{
+    while (nextDeadband < deadbands.size())
+    {
+        const auto& entry = deadbands[nextDeadband];
+        const bool narrow = entry.index <= UINT8_MAX;
+        bool complete = false;
+        switch (entry.variation)
+        {
+        case AnalogDeadbandVariation::UInt16:
+            complete = narrow ? WriteDeadbandRange<ser4cpp::UInt8, Group34Var1>(writer, QualifierCode::UINT8_START_STOP)
+                              : WriteDeadbandRange<ser4cpp::UInt16, Group34Var1>(writer, QualifierCode::UINT16_START_STOP);
+            break;
+        case AnalogDeadbandVariation::UInt32:
+            complete = narrow ? WriteDeadbandRange<ser4cpp::UInt8, Group34Var2>(writer, QualifierCode::UINT8_START_STOP)
+                              : WriteDeadbandRange<ser4cpp::UInt16, Group34Var2>(writer, QualifierCode::UINT16_START_STOP);
+            break;
+        case AnalogDeadbandVariation::Float32:
+            complete = narrow ? WriteDeadbandRange<ser4cpp::UInt8, Group34Var3>(writer, QualifierCode::UINT8_START_STOP)
+                              : WriteDeadbandRange<ser4cpp::UInt16, Group34Var3>(writer, QualifierCode::UINT16_START_STOP);
+            break;
+        default:
+            return false;
+        }
+        if (!complete)
+            return false;
+    }
+    return true;
 }
 
 IINField Database::SelectAll(GroupVariation gv)
 {
+    const auto id = GroupVariationSpec::to_type(gv);
+    if ((id >> 8) == 34)
+    {
+        SelectDeadbands(Range::From(0, UINT16_MAX), static_cast<AnalogDeadbandVariation>(id & 0xFF));
+        return IINField::Empty();
+    }
     if (gv == GroupVariation::Group0Var254 || gv == GroupVariation::Group0Var255)
         return attributes.Select(gv == GroupVariation::Group0Var254 ? 254 : 255,
                                  securityStatistics ? static_cast<uint32_t>(securityStatistics->values.size()) : 0);
@@ -215,6 +297,12 @@ IINField Database::SelectAll(GroupVariation gv)
 
 IINField Database::SelectRange(GroupVariation gv, const Range& range)
 {
+    const auto id = GroupVariationSpec::to_type(gv);
+    if ((id >> 8) == 34)
+    {
+        const auto count = SelectDeadbands(range, static_cast<AnalogDeadbandVariation>(id & 0xFF));
+        return count == range.Count() ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
+    }
     if (gv == GroupVariation::Group0Var209 || gv == GroupVariation::Group0Var210
         || gv == GroupVariation::Group0Var254 || gv == GroupVariation::Group0Var255)
     {
@@ -430,6 +518,8 @@ IINField Database::SelectIndices(GroupVariation gv, const ICollection<uint16_t>&
 
 void Database::Unselect()
 {
+    deadbands.clear();
+    nextDeadband = 0;
     attributes.Reset();
     securitySelection = 0;
     securityIndexed = false;
@@ -509,7 +599,7 @@ bool Database::HasAnySelection() const
         || counter.has_any_selection() || frozen_counter.has_any_selection() || binary_output_status.has_any_selection()
         || analog_output_status.has_any_selection() || time_and_interval.has_any_selection()
         || octet_string.has_any_selection() || this->time_selected || this->read_iin_range.IsValid()
-        || securitySelection || attributes.HasSelection();
+        || securitySelection || attributes.HasSelection() || nextDeadband < deadbands.size();
 }
 
 bool Database::Load(HeaderWriter& writer)
@@ -520,7 +610,7 @@ bool Database::Load(HeaderWriter& writer)
         && load_type(this->analog_output_status, writer) && load_type(this->time_and_interval, writer)
         && load_type(this->octet_string, writer);
 
-    if (complete && !attributes.Load(writer)) return false;
+    if (complete && (!LoadDeadbands(writer) || !attributes.Load(writer))) return false;
 
     if (complete && securitySelection && !StaticWriters::WriteSecurityStatistics(
             *securityStatistics, securitySelection, writer,

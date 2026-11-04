@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "WriteHandler.h"
+#include "outstation/Database.h"
 
 #include "logging/LogMacros.h"
 
@@ -25,9 +26,40 @@ namespace opendnp3
 {
 
 WriteHandler::WriteHandler(
-    IOutstationApplication& application, TimeSyncState& timeSyncState, uint16_t source, Timestamp now, IINField* writeIIN)
-    : application(&application), timeSyncState(&timeSyncState), source(source), now(now), writeIIN(writeIIN)
+    IOutstationApplication& application, TimeSyncState& timeSyncState, uint16_t source, Timestamp now, IINField* writeIIN,
+    Database& database)
+    : application(&application), timeSyncState(&timeSyncState), source(source), now(now), writeIIN(writeIIN),
+      database(database)
 {
+}
+
+IINField WriteHandler::StageDeadbands(const ICollection<Indexed<AnalogDeadband>>& values)
+{
+    IINField errors;
+    values.ForeachItem([&](const Indexed<AnalogDeadband>& item) {
+        auto* config = database.FindAnalogConfig(item.index);
+        if (!config)
+            errors.SetBit(IINBit::PARAM_ERROR);
+        else
+            pendingDeadbands.emplace_back(config, item.value.value > 0 ? item.value.value : 0);
+    });
+    return errors;
+}
+
+IINField WriteHandler::ProcessHeader(const RangeHeader&, const ICollection<Indexed<AnalogDeadband>>& values)
+{
+    return StageDeadbands(values);
+}
+
+IINField WriteHandler::ProcessHeader(const PrefixHeader&, const ICollection<Indexed<AnalogDeadband>>& values)
+{
+    return StageDeadbands(values);
+}
+
+void WriteHandler::CommitDeadbands()
+{
+    for (const auto& change : pendingDeadbands)
+        change.first->deadband = change.second;
 }
 
 IINField WriteHandler::ProcessHeader(const RangeHeader& header, const ICollection<Indexed<IINValue>>& values)

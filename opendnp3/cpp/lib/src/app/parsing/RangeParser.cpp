@@ -28,9 +28,12 @@
 #include "gen/objects/Group21.h"
 #include "gen/objects/Group3.h"
 #include "gen/objects/Group30.h"
+#include "gen/objects/Group34.h"
 #include "gen/objects/Group40.h"
 #include "gen/objects/Group50.h"
 #include "logging/LogMacros.h"
+
+#include <cmath>
 
 namespace opendnp3
 {
@@ -84,6 +87,17 @@ ParseResult RangeParser::Process(const HeaderRecord& record,
         return ParseResult::NOT_ENOUGH_DATA_FOR_OBJECTS;
     }
 
+    if (record.enumeration == GroupVariation::Group34Var3)
+    {
+        auto values = buffer.take(requiredSize);
+        while (values.is_not_empty())
+        {
+            Group34Var3 value;
+            if (!Group34Var3::Read(values, value) || std::isnan(value.value))
+                return ParseResult::INVALID_OBJECT;
+        }
+    }
+
     if (pHandler)
     {
         handler(record, range, buffer, *pHandler);
@@ -132,6 +146,10 @@ ParseResult RangeParser::ParseRangeOfObjects(
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group30Var4);
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group30Var5);
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group30Var6);
+
+        MACRO_PARSE_OBJECTS_WITH_RANGE(Group34Var1);
+        MACRO_PARSE_OBJECTS_WITH_RANGE(Group34Var2);
+        MACRO_PARSE_OBJECTS_WITH_RANGE(Group34Var3);
 
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group40Var1);
         MACRO_PARSE_OBJECTS_WITH_RANGE(Group40Var2);

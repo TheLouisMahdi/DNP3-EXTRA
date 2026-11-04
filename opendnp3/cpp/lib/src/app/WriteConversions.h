@@ -36,6 +36,7 @@
 #include "gen/objects/Group3.h"
 #include "gen/objects/Group30.h"
 #include "gen/objects/Group32.h"
+#include "gen/objects/Group34.h"
 #include "gen/objects/Group4.h"
 #include "gen/objects/Group40.h"
 #include "gen/objects/Group41.h"
@@ -45,8 +46,36 @@
 
 #include "opendnp3/app/MeasurementTypes.h"
 
+#include <limits>
+
 namespace opendnp3
 {
+
+template<class Variation> struct ConvertUnsignedDeadband
+{
+    static Variation Apply(const AnalogDeadband& value)
+    {
+        using Value = typename Variation::ValueType;
+        const auto max = std::numeric_limits<Value>::max();
+        Variation result;
+        result.value = !(value.value > 0) ? 0 : value.value >= max ? max : static_cast<Value>(value.value);
+        return result;
+    }
+};
+
+using ConvertGroup34Var1 = ConvertUnsignedDeadband<Group34Var1>;
+using ConvertGroup34Var2 = ConvertUnsignedDeadband<Group34Var2>;
+
+struct ConvertGroup34Var3
+{
+    static Group34Var3 Apply(const AnalogDeadband& value)
+    {
+        Group34Var3 result;
+        result.value = value.value > std::numeric_limits<float>::max() ? std::numeric_limits<float>::infinity()
+                                                                     : static_cast<float>(value.value);
+        return result;
+    }
+};
 
 // Group 121: reserved flag bits are never transmitted (Annex A.46.1).
 struct ConvertGroup121Var1 : private StaticOnly

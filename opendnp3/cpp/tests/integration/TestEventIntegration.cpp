@@ -22,6 +22,9 @@
 
 #include <opendnp3/ConsoleLogger.h>
 #include <opendnp3/DNP3Manager.h>
+#include <opendnp3/master/DefaultMasterApplication.h>
+#include <opendnp3/outstation/DefaultOutstationApplication.h>
+#include <opendnp3/outstation/SimpleCommandHandler.h>
 
 #include <catch.hpp>
 
@@ -91,4 +94,78 @@ TEST_CASE(SUITE("TestEventIntegration"))
 
     std::cout << total_events_transferred << " in " << milliseconds.count() << " ms == " << rate << " events per/sec"
               << std::endl;
+}
+
+TEST_CASE(SUITE("Master G34 writes affect Outstation G32 delivery over TCP"), "[profile-deadband]")
+{
+    const auto timeout = std::chrono::seconds(4);
+    DNP3Manager manager(2);
+    auto server = manager.AddTCPServer("deadband server", levels::NORMAL, ServerAcceptMode::CloseExisting,
+                                       IPEndpoint::Localhost(0), nullptr);
+    auto client = manager.AddTCPClient("deadband client", levels::NORMAL, ChannelRetry::Default(),
+                                       {IPEndpoint::Localhost(server->GetBoundPort())}, "127.0.0.1", nullptr);
+
+    DatabaseConfig database;
+    database.analog_input[1].deadband = 17;
+    database.analog_input[300].deadband = 23;
+    OutstationStackConfig outConfig(database);
+    outConfig.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    outConfig.outstation.eventBufferConfig = EventBufferConfig::AllTypes(8);
+    auto outstation = server->AddOutstation("deadband outstation", SuccessCommandHandler::Create(),
+                                            DefaultOutstationApplication::Create(), outConfig);
+    MasterStackConfig masterConfig;
+    masterConfig.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    masterConfig.master.disableUnsolOnStartup = false;
+    masterConfig.master.unsolClassMask = ClassField::None();
+    masterConfig.master.startupIntegrityClassMask = ClassField::None();
+    masterConfig.master.ignoreRestartIIN = true;
+    auto soe = std::make_shared<QueuingSOEHandler>();
+    auto master = client->AddMaster("deadband master", soe, DefaultMasterApplication::Create(), masterConfig);
+    REQUIRE(outstation->Enable());
+    REQUIRE(master->Enable());
+
+    const auto read = [&](const Header& header) {
+        std::vector<std::pair<HeaderInfo, Indexed<AnalogDeadband>>> records;
+        master->Scan({header}, soe);
+        REQUIRE(soe->deadbands.DrainTo(records, timeout) == 1);
+        return records.front();
+    };
+    REQUIRE(read(Header::Range8(34, 0, 1, 1)).second.value.value == 17);
+    const auto write = [&](AnalogDeadbandVariation variation, QualifierCode qualifier, uint16_t index, double value) {
+        master->PerformFunction("write deadband", FunctionCode::WRITE,
+            {Header::WriteAnalogDeadbands(variation, qualifier, {WithIndex(AnalogDeadband{value}, index)})});
+    };
+    for (auto variation : {AnalogDeadbandVariation::UInt16, AnalogDeadbandVariation::UInt32,
+                           AnalogDeadbandVariation::Float32})
+    {
+        double value = 30;
+        for (auto qualifier : {QualifierCode::UINT8_START_STOP, QualifierCode::UINT16_START_STOP,
+                               QualifierCode::UINT8_CNT_UINT8_INDEX, QualifierCode::UINT16_CNT_UINT16_INDEX})
+        {
+            const bool narrow = qualifier == QualifierCode::UINT8_START_STOP
+                || qualifier == QualifierCode::UINT8_CNT_UINT8_INDEX;
+            const uint16_t index = narrow ? 1 : 300;
+            write(variation, qualifier, index, ++value);
+            const auto wireVariation = static_cast<uint8_t>(variation);
+            const auto result = read(narrow ? Header::Range8(34, wireVariation, 1, 1)
+                                            : Header::Range16(34, wireVariation, 300, 300));
+            REQUIRE(result.first.gv == GroupVariationSpec::from_type(0x2200 | wireVariation));
+            REQUIRE(result.second.index == index);
+            REQUIRE(result.second.value.value == value);
+        }
+    }
+
+    write(AnalogDeadbandVariation::UInt16, QualifierCode::UINT8_START_STOP, 1, 5);
+    REQUIRE(read(Header::Range8(34, 0, 1, 1)).second.value.value == 5);
+    UpdateBuilder updates;
+    updates.Update(Analog(0, Flags(1)), 1, EventMode::Force);
+    updates.Update(Analog(5, Flags(1)), 1);
+    updates.Update(Analog(6, Flags(1)), 1);
+    outstation->Apply(updates.Build());
+    (void)outstation->GetStackStatistics(); // barrier after Apply on the Outstation executor
+    master->Scan({Header::AllObjects(32, 0)}, soe);
+    std::deque<ExpectedValue> events;
+    REQUIRE(soe->values.DrainTo(events, timeout) == 2);
+    CHECK(events[0].Equals(ExpectedValue(Analog(0), 1)));
+    CHECK(events[1].Equals(ExpectedValue(Analog(6), 1)));
 }

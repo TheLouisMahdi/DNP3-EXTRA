@@ -27,6 +27,8 @@
 
 #include <ser4cpp/container/SequenceTypes.h>
 
+#include <limits>
+
 namespace opendnp3
 {
 
@@ -79,7 +81,10 @@ struct AnalogSpec : public AnalogInfo
 
     inline static bool IsEvent(const Analog& old_value, const Analog& new_value, const config_t& config)
     {
-        return measurements::IsEvent(new_value, old_value, config.deadband);
+        const double threshold = config.deadband > 0 ? config.deadband : 0;
+        if (threshold == std::numeric_limits<double>::infinity())
+            return new_value.flags.value != old_value.flags.value;
+        return measurements::IsEvent(new_value, old_value, threshold);
     }
 };
 

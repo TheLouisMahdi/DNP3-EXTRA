@@ -39,6 +39,7 @@ object ObjectGroup {
     Group23,
     Group30,
     Group32,
+    Group34,
     Group40,
     Group41,
     Group42,

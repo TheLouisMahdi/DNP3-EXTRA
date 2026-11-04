@@ -20,11 +20,15 @@
 #ifndef OPENDNP3_HEADERTYPES_H
 #define OPENDNP3_HEADERTYPES_H
 
+#include "opendnp3/app/AnalogDeadband.h"
 #include "opendnp3/app/GroupVariationID.h"
+#include "opendnp3/app/Indexed.h"
 #include "opendnp3/gen/PointClass.h"
 #include "opendnp3/gen/QualifierCode.h"
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace opendnp3
 {
@@ -40,7 +44,8 @@ enum class HeaderType : uint8_t
     Ranged8,
     Ranged16,
     LimitedCount8,
-    LimitedCount16
+    LimitedCount16,
+    AnalogDeadbandWrite
 };
 
 /**
@@ -109,12 +114,24 @@ public:
      */
     static Header Count16(uint8_t group, uint8_t variation, uint16_t count);
 
+    /// Body-bearing header for PerformFunction(WRITE). Range qualifiers require
+    /// consecutive ordered indexes. Values must fit the specified variation.
+    static Header WriteAnalogDeadbands(AnalogDeadbandVariation variation,
+                                      QualifierCode qualifier,
+                                      std::vector<Indexed<AnalogDeadband>> values);
+
     Header() = default;
 
 private:
     GroupVariationID id;
     HeaderType type = HeaderType::AllObjects;
     HeaderUnion value;
+    struct DeadbandWrite
+    {
+        QualifierCode qualifier;
+        std::vector<Indexed<AnalogDeadband>> values;
+    };
+    std::shared_ptr<const DeadbandWrite> deadbandWrite;
 
     Header(uint8_t group, uint8_t var);
 

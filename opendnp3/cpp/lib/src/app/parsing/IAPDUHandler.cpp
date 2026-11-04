@@ -22,6 +22,26 @@
 namespace opendnp3
 {
 
+void IAPDUHandler::OnHeader(const RangeHeader& header, const ICollection<Indexed<AnalogDeadband>>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const RangeHeader&, const ICollection<Indexed<AnalogDeadband>>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogDeadband>>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const PrefixHeader&, const ICollection<Indexed<AnalogDeadband>>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
 IAPDUHandler::IAPDUHandler() : numTotalHeaders(0), numIgnoredHeaders(0) {}
 
 void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var7>& values)

@@ -21,6 +21,7 @@
 #define OPENDNP3_MEASUREMENTFACTORY_H
 
 #include "opendnp3/app/AnalogCommandEvent.h"
+#include "opendnp3/app/AnalogDeadband.h"
 #include "opendnp3/app/AnalogOutput.h"
 #include "opendnp3/app/BinaryCommandEvent.h"
 #include "opendnp3/app/ControlRelayOutputBlock.h"
@@ -30,6 +31,11 @@
 
 namespace opendnp3
 {
+
+struct AnalogDeadbandFactory
+{
+    static AnalogDeadband From(double value) { return {value}; }
+};
 
 struct BinaryFactory : private StaticOnly
 {

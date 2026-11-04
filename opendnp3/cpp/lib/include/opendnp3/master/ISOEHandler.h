@@ -21,6 +21,7 @@
 #define OPENDNP3_ISOEHANDLER_H
 
 #include "opendnp3/app/AnalogCommandEvent.h"
+#include "opendnp3/app/AnalogDeadband.h"
 #include "opendnp3/app/BinaryCommandEvent.h"
 #include "opendnp3/app/Indexed.h"
 #include "opendnp3/app/MeasurementTypes.h"
@@ -70,6 +71,9 @@ public:
     /// conservatively as UNSYNCHRONIZED (accuracy unknown), never inferred from IIN.
     /// The default preserves source compatibility with existing handlers.
     virtual void Process(const HeaderInfo&, const ICollection<Indexed<SecurityStat>>&) {}
+
+    /// Optional Group 34 delivery; HeaderInfo identifies the wire variation.
+    virtual void Process(const HeaderInfo&, const ICollection<Indexed<AnalogDeadband>>&) {}
 
     /// Optional attribute delivery. Index denotes the attribute set (0 = standard).
     /// Attribute value bytes borrow the APDU; copy them before returning.

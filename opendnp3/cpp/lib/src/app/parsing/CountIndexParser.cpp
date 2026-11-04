@@ -30,11 +30,14 @@
 #include "gen/objects/Group22.h"
 #include "gen/objects/Group23.h"
 #include "gen/objects/Group32.h"
+#include "gen/objects/Group34.h"
 #include "gen/objects/Group4.h"
 #include "gen/objects/Group41.h"
 #include "gen/objects/Group42.h"
 #include "gen/objects/Group43.h"
 #include "logging/LogMacros.h"
+
+#include <cmath>
 
 namespace opendnp3
 {
@@ -85,6 +88,18 @@ ParseResult CountIndexParser::Process(const HeaderRecord& record,
         return ParseResult::NOT_ENOUGH_DATA_FOR_OBJECTS;
     }
 
+    if (record.enumeration == GroupVariation::Group34Var3)
+    {
+        auto values = buffer.take(requiredSize);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            values.advance(numparser.NumBytes());
+            Group34Var3 value;
+            if (!Group34Var3::Read(values, value) || std::isnan(value.value))
+                return ParseResult::INVALID_OBJECT;
+        }
+    }
+
     if (pHandler)
     {
         handler(record, count, numparser, buffer, *pHandler);
@@ -102,6 +117,12 @@ ParseResult CountIndexParser::ParseCountOfObjects(ser4cpp::rseq_t& buffer,
 {
     switch (record.enumeration)
     {
+    case GroupVariation::Group34Var1:
+        return CountIndexParser::From<Group34Var1>(count, numparser).Process(record, buffer, pHandler, pLogger);
+    case GroupVariation::Group34Var2:
+        return CountIndexParser::From<Group34Var2>(count, numparser).Process(record, buffer, pHandler, pLogger);
+    case GroupVariation::Group34Var3:
+        return CountIndexParser::From<Group34Var3>(count, numparser).Process(record, buffer, pHandler, pLogger);
     case GroupVariation::Group121Var1:
         return CountIndexParser::From<Group121Var1>(count, numparser).Process(record, buffer, pHandler, pLogger);
     case GroupVariation::Group122Var1:

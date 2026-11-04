@@ -30,6 +30,7 @@
 #include "gen/objects/Group52.h"
 
 #include "opendnp3/app/AnalogCommandEvent.h"
+#include "opendnp3/app/AnalogDeadband.h"
 #include "opendnp3/app/AnalogOutput.h"
 #include "opendnp3/app/DeviceAttribute.h"
 #include "opendnp3/app/BinaryCommandEvent.h"
@@ -54,6 +55,8 @@ public:
     IAPDUHandler();
 
     void OnHeader(const RangeHeader& header, const ICollection<Indexed<DeviceAttribute>>& values);
+    void OnHeader(const RangeHeader& header, const ICollection<Indexed<AnalogDeadband>>& values);
+    void OnHeader(const PrefixHeader& header, const ICollection<Indexed<AnalogDeadband>>& values);
     void OnHeader(const PrefixHeader& header, const ICollection<Indexed<DeviceAttribute>>& values);
 
     // read any accumulated errors
@@ -126,6 +129,8 @@ public:
 
 protected:
     virtual IINField ProcessHeader(const RangeHeader&, const ICollection<Indexed<DeviceAttribute>>&);
+    virtual IINField ProcessHeader(const RangeHeader&, const ICollection<Indexed<AnalogDeadband>>&);
+    virtual IINField ProcessHeader(const PrefixHeader&, const ICollection<Indexed<AnalogDeadband>>&);
     virtual IINField ProcessHeader(const PrefixHeader&, const ICollection<Indexed<DeviceAttribute>>&);
 
     void Reset();

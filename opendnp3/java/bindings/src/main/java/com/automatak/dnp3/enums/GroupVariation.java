@@ -101,6 +101,10 @@ public enum GroupVariation
   Group32Var6(0x2006),
   Group32Var7(0x2007),
   Group32Var8(0x2008),
+  Group34Var0(0x2200),
+  Group34Var1(0x2201),
+  Group34Var2(0x2202),
+  Group34Var3(0x2203),
   Group40Var0(0x2800),
   Group40Var1(0x2801),
   Group40Var2(0x2802),
@@ -302,6 +306,14 @@ public enum GroupVariation
         return Group32Var7;
       case(0x2008):
         return Group32Var8;
+      case(0x2200):
+        return Group34Var0;
+      case(0x2201):
+        return Group34Var1;
+      case(0x2202):
+        return Group34Var2;
+      case(0x2203):
+        return Group34Var3;
       case(0x2800):
         return Group40Var0;
       case(0x2801):

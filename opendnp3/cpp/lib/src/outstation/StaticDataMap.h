@@ -30,6 +30,7 @@
 
 #include <iterator>
 #include <map>
+#include <type_traits>
 
 namespace opendnp3
 {
@@ -120,6 +121,23 @@ public:
     bool update(const typename Spec::meas_t& value, uint16_t index, EventMode mode, IEventReceiver& receiver);
 
     bool modify(uint16_t start, uint16_t stop, uint8_t flags, IEventReceiver& receiver);
+
+    typename Spec::config_t* find_config(uint16_t index)
+    {
+        const auto iter = map.find(index);
+        return iter == map.end() ? nullptr : &iter->second.config;
+    }
+
+    template<class Visitor> size_t visit_configs(const Range& range, Visitor visit) const
+    {
+        size_t count = 0;
+        for (auto iter = map.lower_bound(range.start); iter != map.end() && range.Contains(iter->first); ++iter)
+        {
+            visit(iter->first, iter->second.config);
+            ++count;
+        }
+        return count;
+    }
 
     void clear_selection();
 
@@ -258,12 +276,16 @@ bool StaticDataMap<Spec>::update(const map_iter_t& iter,
 
     if (mode == EventMode::Force || mode == EventMode::EventOnly || Spec::IsEvent(iter->second.event.lastEvent, new_value, iter->second.config))
     {
-        iter->second.event.lastEvent = new_value;
+        // Analog reporting deadband compares with the last queued event.
+        // Preserve existing baseline semantics for the other point families.
+        if (!std::is_same<Spec, AnalogSpec>::value)
+            iter->second.event.lastEvent = new_value;
         if (mode != EventMode::Suppress)
         {
             EventClass ec;
             if (convert_to_event_class(iter->second.config.clazz, ec))
             {
+                iter->second.event.lastEvent = new_value;
                 receiver.Update(Event<Spec>(new_value, iter->first, ec, iter->second.config.evariation));
             }
         }

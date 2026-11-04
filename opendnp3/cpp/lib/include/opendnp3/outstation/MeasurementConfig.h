@@ -21,6 +21,7 @@
 #ifndef OPENDNP3_MEASUREMENTCONFIG_H
 #define OPENDNP3_MEASUREMENTCONFIG_H
 
+#include "opendnp3/app/AnalogDeadband.h"
 #include "opendnp3/app/MeasurementInfo.h"
 #include "opendnp3/gen/PointClass.h"
 
@@ -54,6 +55,8 @@ struct DoubleBitBinaryConfig : public EventConfig<DoubleBitBinaryInfo>
 
 struct AnalogConfig : public DeadbandConfig<AnalogInfo>
 {
+    /// Default READ variation. Automatic uses V3 for floating-point static values, V2 otherwise.
+    AnalogDeadbandVariation deadbandVariation = AnalogDeadbandVariation::Automatic;
 };
 
 struct CounterConfig : public DeadbandConfig<CounterInfo>

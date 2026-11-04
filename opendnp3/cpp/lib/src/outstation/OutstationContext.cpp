@@ -886,9 +886,14 @@ ser4cpp::Pair<IINField, AppControlField> OContext::HandleRead(const ser4cpp::rse
 IINField OContext::HandleWrite(const ParsedRequest& request)
 {
     WriteHandler handler(*this->application, this->time, request.addresses.source, Timestamp(this->executor->get_time()),
-                         &this->staticIIN);
+                         &this->staticIIN, this->database);
     auto result = APDUParser::Parse(request.objects, handler, &this->logger);
-    return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
+    if (result != ParseResult::OK)
+        return IINFromParseResult(result);
+    const auto errors = handler.Errors();
+    if (!errors.Any())
+        handler.CommitDeadbands();
+    return errors;
 }
 
 IINField OContext::HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateType opType, HeaderWriter* pWriter)

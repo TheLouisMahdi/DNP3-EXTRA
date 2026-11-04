@@ -76,6 +76,15 @@ std::string BufferToString(const opendnp3::Buffer& buff)
 
 #define SUITE(name) "APDUParsingTestSuite - " name
 
+TEST_CASE(SUITE("Group 34 rejects invalid bodies before dispatch"), "[profile-deadband]")
+{
+    TestSimple("22 01 00 01 01 FF FF 22 03 00 02 02 00 00 C0 7F", ParseResult::INVALID_OBJECT, 0);
+    TestSimple("22 03 28 01 00 00 01 00 00 C0 7F", ParseResult::INVALID_OBJECT, 0);
+    TestSimple("22 02 17 01 04 FF FF", ParseResult::NOT_ENOUGH_DATA_FOR_OBJECTS, 0);
+    TestSimple("22 00 00 01 01", ParseResult::INVALID_OBJECT_QUALIFIER, 0);
+    TestSimple("22 03 07 01 00 00 00 00", ParseResult::INVALID_OBJECT_QUALIFIER, 0);
+}
+
 TEST_CASE(SUITE("HeaderParsingEmptySring"))
 {
     HexSequence buffer("");

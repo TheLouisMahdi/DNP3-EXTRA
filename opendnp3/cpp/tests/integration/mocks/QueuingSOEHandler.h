@@ -43,6 +43,7 @@ class QueuingSOEHandler final : public opendnp3::ISOEHandler
 
 public:
     SynchronizedQueue<ExpectedValue> values;
+    SynchronizedQueue<std::pair<opendnp3::HeaderInfo, opendnp3::Indexed<opendnp3::AnalogDeadband>>> deadbands;
 
     void BeginFragment(const opendnp3::ResponseInfo& info) override
     {
@@ -72,6 +73,12 @@ public:
                  const opendnp3::ICollection<opendnp3::Indexed<opendnp3::Analog>>& values) override
     {
         this->ProcessAny(values);
+    }
+
+    void Process(const opendnp3::HeaderInfo& info,
+                 const opendnp3::ICollection<opendnp3::Indexed<opendnp3::AnalogDeadband>>& values) override
+    {
+        values.ForeachItem([&](const opendnp3::Indexed<opendnp3::AnalogDeadband>& item) { deadbands.Add({info, item}); });
     }
 
     void Process(const opendnp3::HeaderInfo& info,

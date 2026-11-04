@@ -20,9 +20,74 @@
 #include "opendnp3/master/HeaderTypes.h"
 
 #include "app/HeaderWriter.h"
+#include "gen/objects/Group34.h"
+
+#include <cmath>
+#include <limits>
+#include <type_traits>
+#include <utility>
 
 namespace opendnp3
 {
+
+namespace
+{
+template<class Number> bool FitsDeadband(double value)
+{
+    if (std::is_floating_point<Number>::value)
+        return !std::isnan(value) && (std::isinf(value) || std::abs(value) <= std::numeric_limits<Number>::max());
+    return value >= 0 && value <= std::numeric_limits<Number>::max() && std::trunc(value) == value;
+}
+
+template<class Index, class Variation>
+bool WriteDeadbandValues(HeaderWriter& writer, QualifierCode qualifier, bool range,
+                         const std::vector<Indexed<AnalogDeadband>>& values)
+{
+    if (values.empty() || (!range && values.size() > Index::max_value))
+        return false;
+    uint32_t expected = values.front().index;
+    for (const auto& item : values)
+    {
+        if (item.index > Index::max_value || (range && item.index != expected)
+            || !FitsDeadband<typename Variation::ValueType>(item.value.value))
+            return false;
+        ++expected;
+    }
+    if (range)
+    {
+        auto iter = writer.IterateOverRange<Index>(qualifier, Variation::Inst(),
+                                                  static_cast<typename Index::type_t>(values.front().index));
+        for (const auto& item : values)
+            if (!iter.Write(item.value)) return false;
+    }
+    else
+    {
+        auto iter = writer.IterateOverCountWithPrefix<Index>(qualifier, Variation::Inst());
+        for (const auto& item : values)
+            if (!iter.Write(item.value, static_cast<typename Index::type_t>(item.index))) return false;
+    }
+    return true;
+}
+
+template<class Variation>
+bool WriteDeadbandValues(HeaderWriter& writer, QualifierCode qualifier,
+                         const std::vector<Indexed<AnalogDeadband>>& values)
+{
+    switch (qualifier)
+    {
+    case QualifierCode::UINT8_START_STOP:
+        return WriteDeadbandValues<ser4cpp::UInt8, Variation>(writer, qualifier, true, values);
+    case QualifierCode::UINT16_START_STOP:
+        return WriteDeadbandValues<ser4cpp::UInt16, Variation>(writer, qualifier, true, values);
+    case QualifierCode::UINT8_CNT_UINT8_INDEX:
+        return WriteDeadbandValues<ser4cpp::UInt8, Variation>(writer, qualifier, false, values);
+    case QualifierCode::UINT16_CNT_UINT16_INDEX:
+        return WriteDeadbandValues<ser4cpp::UInt16, Variation>(writer, qualifier, false, values);
+    default:
+        return false;
+    }
+}
+} // namespace
 
 Header Header::AllObjects(uint8_t group, uint8_t variation)
 {
@@ -102,8 +167,30 @@ bool Header::WriteTo(HeaderWriter& writer) const
         return writer.WriteCountHeader<ser4cpp::UInt8>(QualifierCode::UINT8_CNT, id, value.count8.value);
     case (HeaderType::LimitedCount16):
         return writer.WriteCountHeader<ser4cpp::UInt16>(QualifierCode::UINT16_CNT, id, value.count16.value);
+    case HeaderType::AnalogDeadbandWrite:
+        switch (static_cast<AnalogDeadbandVariation>(id.variation))
+        {
+        case AnalogDeadbandVariation::UInt16:
+            return WriteDeadbandValues<Group34Var1>(writer, deadbandWrite->qualifier, deadbandWrite->values);
+        case AnalogDeadbandVariation::UInt32:
+            return WriteDeadbandValues<Group34Var2>(writer, deadbandWrite->qualifier, deadbandWrite->values);
+        case AnalogDeadbandVariation::Float32:
+            return WriteDeadbandValues<Group34Var3>(writer, deadbandWrite->qualifier, deadbandWrite->values);
+        default:
+            return false;
+        }
     default:
         return false;
     }
+}
+
+Header Header::WriteAnalogDeadbands(AnalogDeadbandVariation variation,
+                                    QualifierCode qualifier,
+                                    std::vector<Indexed<AnalogDeadband>> values)
+{
+    Header header(34, static_cast<uint8_t>(variation));
+    header.type = HeaderType::AnalogDeadbandWrite;
+    header.deadbandWrite = std::make_shared<DeadbandWrite>(DeadbandWrite{qualifier, std::move(values)});
+    return header;
 }
 } // namespace opendnp3

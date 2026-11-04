@@ -119,6 +119,11 @@ trait ConversionToDoubleBitBinary extends Conversion {
   def convHeaderIncludes = List(measurementTypeSpecs)
 }
 
+trait ConversionToAnalogDeadband extends Conversion {
+  def target = "AnalogDeadband"
+  def convHeaderIncludes = List(quoted("opendnp3/app/AnalogDeadband.h"))
+}
+
 trait ConversionToAnalog extends Conversion {
   def target = "Analog"
   override def includeSpecTypedef = true

@@ -118,6 +118,17 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
                                        const ParserSettings& settings,
                                        IAPDUHandler* pHandler)
 {
+    if (record.group == 34)
+    {
+        const auto qualifier = record.GetQualifierCode();
+        const bool range = qualifier == QualifierCode::UINT8_START_STOP || qualifier == QualifierCode::UINT16_START_STOP;
+        const bool prefix = qualifier == QualifierCode::UINT8_CNT_UINT8_INDEX
+                            || qualifier == QualifierCode::UINT16_CNT_UINT16_INDEX;
+        if (settings.ExpectsContents() ? record.variation == 0 || !(range || prefix)
+                                      : !(range || qualifier == QualifierCode::ALL_OBJECTS))
+            return ParseResult::INVALID_OBJECT_QUALIFIER;
+    }
+
     // Absolute time and last recorded time use qualifier 07 (Table 12-23).
     if ((record.enumeration == GroupVariation::Group50Var1 || record.enumeration == GroupVariation::Group50Var3)
         && record.GetQualifierCode() != QualifierCode::UINT8_CNT)

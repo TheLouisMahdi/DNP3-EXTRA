@@ -35,6 +35,8 @@
 #include "opendnp3/outstation/IUpdateHandler.h"
 #include "opendnp3/outstation/StaticTypeBitfield.h"
 
+#include <vector>
+
 namespace opendnp3
 {
 
@@ -79,6 +81,7 @@ public:
     bool Modify(FlagsType type, uint16_t start, uint16_t stop, uint8_t flags) override;
 
     bool FreezeSelectedCounters(bool clear, EventMode mode = EventMode::Detect);
+    AnalogConfig* FindAnalogConfig(uint16_t index) { return analog_input.find_config(index); }
 
 private:
     IEventReceiver& event_receiver;
@@ -91,6 +94,21 @@ private:
     uint32_t securitySelection = 0;
     bool securityIndexed = false;
     DeviceAttributeSelection attributes;
+
+    // Only a response snapshot, separate from the measurement selection.
+    // The actual value is stored solely in AnalogConfig.
+    struct SelectedDeadband
+    {
+        uint16_t index;
+        AnalogDeadbandVariation variation;
+        AnalogDeadband value;
+    };
+    std::vector<SelectedDeadband> deadbands;
+    size_t nextDeadband = 0;
+
+    size_t SelectDeadbands(const Range& range, AnalogDeadbandVariation variation);
+    bool LoadDeadbands(HeaderWriter& writer);
+    template<class Index, class Variation> bool WriteDeadbandRange(HeaderWriter& writer, QualifierCode qualifier);
 
     StaticDataMap<BinarySpec> binary_input;
     StaticDataMap<DoubleBitBinarySpec> double_binary;

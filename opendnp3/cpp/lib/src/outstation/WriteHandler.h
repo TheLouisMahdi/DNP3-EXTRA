@@ -28,8 +28,14 @@
 #include "opendnp3/outstation/IOutstationApplication.h"
 #include "opendnp3/util/Timestamp.h"
 
+#include <utility>
+#include <vector>
+
 namespace opendnp3
 {
+
+class Database;
+struct AnalogConfig;
 
 class WriteHandler final : public IAPDUHandler
 {
@@ -38,7 +44,11 @@ public:
                  TimeSyncState& timeSyncState,
                  uint16_t source,
                  Timestamp now,
-                 IINField* pWriteIIN);
+                 IINField* pWriteIIN,
+                 Database& database);
+
+    /// Called after the complete WRITE has passed syntax and point validation.
+    void CommitDeadbands();
 
     virtual bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override
     {
@@ -63,6 +73,10 @@ private:
 
     virtual IINField ProcessHeader(const CountHeader& header, const ICollection<Group50Var3>& values) override;
 
+    IINField ProcessHeader(const RangeHeader&, const ICollection<Indexed<AnalogDeadband>>& values) override;
+    IINField ProcessHeader(const PrefixHeader&, const ICollection<Indexed<AnalogDeadband>>& values) override;
+    IINField StageDeadbands(const ICollection<Indexed<AnalogDeadband>>& values);
+
     virtual IINField ProcessHeader(const PrefixHeader& header,
                                    const ICollection<Indexed<TimeAndInterval>>& values) override;
 
@@ -71,6 +85,8 @@ private:
     uint16_t source;
     Timestamp now;
     IINField* writeIIN;
+    Database& database;
+    std::vector<std::pair<AnalogConfig*, double>> pendingDeadbands;
 
     bool wroteTime = false;
     bool wroteIIN = false;
