@@ -61,6 +61,12 @@ TEST_CASE(SUITE("parses g50v1 correctly"))
     TestObjectHeaders(objects, ParseResult::OK, verify);
 }
 
+TEST_CASE(SUITE("rejects g50v1 with a 16-bit count before delivery"))
+{
+    TestObjectHeaders("32 01 08 01 00 AB AB AB AB AB AB", ParseResult::INVALID_OBJECT_QUALIFIER,
+                      [](MockSOEHandler& soe) { REQUIRE(soe.TotalReceived() == 0); });
+}
+
 TEST_CASE(SUITE("parses g2v1 w/ invalid timestamp quality"))
 {
     auto verify = [](MockSOEHandler& soe) {

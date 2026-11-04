@@ -52,6 +52,7 @@ public:
         return true;
     }
     virtual bool WriteAbsoluteTime(const UTCTimestamp& timestamp) override;
+    bool ClearNeedTime() override;
 
     virtual bool SupportsWriteTimeAndInterval() override
     {
@@ -97,6 +98,8 @@ private:
     UTCTimestamp last_timestamp = UTCTimestamp();
     std::chrono::system_clock::time_point last_update
         = std::chrono::system_clock::time_point(std::chrono::milliseconds(0));
+    std::chrono::steady_clock::time_point last_time_request_ack;
+    bool time_request_acknowledged = false;
 };
 
 } // namespace opendnp3

@@ -118,6 +118,11 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
                                        const ParserSettings& settings,
                                        IAPDUHandler* pHandler)
 {
+    // Absolute time uses qualifier 07 rather than a range or index prefix.
+    if (record.enumeration == GroupVariation::Group50Var1
+        && record.GetQualifierCode() != QualifierCode::UINT8_CNT)
+        return ParseResult::INVALID_OBJECT_QUALIFIER;
+
     // CTO response headers are information objects, not all-objects markers.
     // Table 12-23 permits only qualifier 07; G2V3/G4V3 depend on this reference.
     if (record.group == 51 && settings.ExpectsContents()

@@ -108,3 +108,17 @@ TEST_CASE("ProfileClasses - ASSIGN_CLASS maps G60V1 to class 0 and rejects count
     REQUIRE(Exchange(t, "C2 16 3C 02 07 01") == "C2 81 80 01"); // FUNC_NOT_SUPPORTED
     REQUIRE(t.application->classAssignments.size() == 1);
 }
+
+TEST_CASE("ProfileClasses - ASSIGN_CLASS reports an incomplete trailing pair", "[profile-classes]")
+{
+    OutstationTestObject t(OutstationConfig(), configure::by_count_of::binary_input(2));
+    t.application->supportsAssignClass = true;
+    t.LowerLayerUp();
+
+    REQUIRE(Exchange(t, "C1 16 3C 02 06") == "C1 81 80 04");
+    REQUIRE(t.application->classAssignments.empty());
+    REQUIRE(Exchange(t, "C2 16 3C 02 06 01 00 06 3C 03 06") == "C2 81 80 04");
+    REQUIRE(t.application->classAssignments.size() == 1);
+    REQUIRE(Exchange(t, "C3 16 3C 03 06 01 00 06") == "C3 81 80 00");
+    REQUIRE(t.application->classAssignments.size() == 2);
+}

@@ -79,6 +79,15 @@ public:
         return supportsWriteTimeAndInterval;
     }
 
+    bool allowNeedTimeClear = false;
+    bool ClearNeedTime() final
+    {
+        if (!allowNeedTimeClear)
+            return false;
+        appIIN.needTime = false;
+        return true;
+    }
+
     bool WriteTimeAndInterval(const opendnp3::ICollection<opendnp3::Indexed<opendnp3::TimeAndInterval>>& meas) final
     {
         auto push = [this](const opendnp3::Indexed<opendnp3::TimeAndInterval>& value) {

@@ -4,6 +4,7 @@
 #include "master/TimeSyncHandler.h"
 #include "utils/BufferHelpers.h"
 #include "utils/OutstationTestObject.h"
+#include "opendnp3/outstation/DefaultOutstationApplication.h"
 
 #include <catch.hpp>
 
@@ -74,9 +75,8 @@ TEST_CASE("ProfileTime - G50V1 READ rejects malformed qualifiers and counts with
         REQUIRE(Exchange(t, request) == "C1 81 80 04"); // PARAM_ERROR and no object body
     }
 
-    // An indexed header is a legal READ request, but the database has no index space behind the
-    // time object, so it answers FUNC_NOT_SUPPORTED and selects nothing.
-    REQUIRE(Exchange(t, "C1 01 32 01 17 01 00") == "C1 81 80 01");
+    // Absolute time has no index prefix.
+    REQUIRE(Exchange(t, "C1 01 32 01 17 01 00") == "C1 81 80 04");
 
     // A rejected READ leaves no pending selection for a later valid READ.
     REQUIRE(Exchange(t, "C2 01 " + readTime) == "C2 81 80 00 " + readTime + " " + absoluteTime);
@@ -109,6 +109,20 @@ TEST_CASE("ProfileTime - G50V1 WRITE rejects truncated, duplicate and indexed bo
     REQUIRE(t.application->timestamps.size() == 1);
 }
 
+TEST_CASE("ProfileTime - malformed G50V1 count rejects a mixed WRITE before application callbacks", "[profile-time]")
+{
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+
+    const auto valid = readTime + " " + absoluteTime;
+    REQUIRE(Exchange(t, "C1 02 " + valid + " 32 01 08 01 00 " + absoluteTime) == "C1 81 80 04");
+    REQUIRE(t.application->timestamps.empty());
+    REQUIRE(Exchange(t, "C2 02 32 01 07 02 " + absoluteTime + " " + absoluteTime) == "C2 81 80 04");
+    REQUIRE(t.application->timestamps.empty());
+    REQUIRE(Exchange(t, "C3 02 " + valid) == "C3 81 80 00");
+    REQUIRE(t.application->timestamps.size() == 1);
+}
+
 TEST_CASE("ProfileTime - Master accepts exactly one fine time delay and rejects malformed bodies",
           "[profile-time]")
 {
@@ -131,4 +145,32 @@ TEST_CASE("ProfileTime - Master accepts exactly one fine time delay and rejects 
         REQUIRE_FALSE(response.Parse(wire, unchanged));
         REQUIRE(unchanged == 0xFFFF);
     }
+}
+
+TEST_CASE("ProfileTime - NEED_TIME clear delegates to the application without writing time", "[profile-time]")
+{
+    OutstationTestObject t(OutstationConfig{});
+    t.application->appIIN.needTime = true;
+    t.LowerLayerUp();
+
+    REQUIRE(Exchange(t, "C1 02 50 01 00 04 04 00") == "C1 81 90 01");
+    t.application->allowNeedTimeClear = true;
+    REQUIRE(Exchange(t, "C2 02 50 01 00 04 04 01") == "C2 81 90 04");
+    REQUIRE(Exchange(t, "C3 02 50 01 01 04 00 04 00 00") == "C3 81 90 04");
+    REQUIRE(Exchange(t, "C4 02 50 01 00 04 04 00") == "C4 81 80 00");
+    REQUIRE(t.application->timestamps.empty());
+    REQUIRE(Exchange(t, "C5 01") == "C5 81 80 00");
+}
+
+TEST_CASE("ProfileTime - default NEED_TIME acknowledgment preserves clock quality and rearms", "[profile-time]")
+{
+    DefaultOutstationApplication app(TimeDuration::Minutes(1));
+    REQUIRE(app.GetApplicationIIN().needTime);
+    REQUIRE(app.ClearNeedTime());
+    REQUIRE_FALSE(app.GetApplicationIIN().needTime);
+    REQUIRE(app.Now().quality == TimestampQuality::UNSYNCHRONIZED);
+
+    DefaultOutstationApplication immediate(TimeDuration::Zero());
+    REQUIRE(immediate.ClearNeedTime());
+    REQUIRE(immediate.GetApplicationIIN().needTime);
 }

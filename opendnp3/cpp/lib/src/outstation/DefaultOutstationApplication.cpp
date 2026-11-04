@@ -41,6 +41,17 @@ bool DefaultOutstationApplication::WriteAbsoluteTime(const UTCTimestamp& timesta
 {
     last_timestamp = timestamp;
     last_update = std::chrono::system_clock::now();
+    time_request_acknowledged = false;
+    return true;
+}
+
+bool DefaultOutstationApplication::ClearNeedTime()
+{
+    if (!SupportsWriteAbsoluteTime())
+        return false;
+
+    last_time_request_ack = std::chrono::steady_clock::now();
+    time_request_acknowledged = true;
     return true;
 }
 
@@ -58,6 +69,10 @@ bool DefaultOutstationApplication::IsTimeValid() const
 
 bool DefaultOutstationApplication::NeedsTime() const
 {
+    if (time_request_acknowledged
+        && std::chrono::steady_clock::now() - last_time_request_ack < refresh_rate.value / 2)
+        return false;
+
     return std::chrono::system_clock::now() - last_update > refresh_rate.value / 2;
 }
 

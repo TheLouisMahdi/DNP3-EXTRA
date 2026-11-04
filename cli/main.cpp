@@ -608,6 +608,8 @@ public:
     DNPTime Now() override { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::Now(); }
     bool WriteAbsoluteTime(const UTCTimestamp& time) override
     { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::WriteAbsoluteTime(time); }
+    bool ClearNeedTime() override
+    { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::ClearNeedTime(); }
     ApplicationIIN GetApplicationIIN() const override
     { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::GetApplicationIIN(); }
     void RecordClassAssignment(AssignClassType type, PointClass clazz, uint16_t start, uint16_t stop) override

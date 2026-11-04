@@ -1038,7 +1038,13 @@ IINField OContext::HandleAssignClass(const ser4cpp::rseq_t& objects)
     {
         AssignClassHandler handler(*this->application, this->database);
         auto result = APDUParser::Parse(objects, handler, &this->logger, ParserSettings::NoContents());
-        return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
+        if (result != ParseResult::OK)
+            return IINFromParseResult(result);
+
+        auto errors = handler.Errors();
+        if (handler.HasPendingAssignment())
+            errors.SetBit(IINBit::PARAM_ERROR);
+        return errors;
     }
 
     return IINField(IINBit::FUNC_NOT_SUPPORTED);

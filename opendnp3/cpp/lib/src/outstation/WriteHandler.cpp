@@ -30,7 +30,7 @@ WriteHandler::WriteHandler(
 {
 }
 
-IINField WriteHandler::ProcessHeader(const RangeHeader& /*header*/, const ICollection<Indexed<IINValue>>& values)
+IINField WriteHandler::ProcessHeader(const RangeHeader& header, const ICollection<Indexed<IINValue>>& values)
 {
     Indexed<IINValue> pair;
 
@@ -44,18 +44,27 @@ IINField WriteHandler::ProcessHeader(const RangeHeader& /*header*/, const IColle
         return IINBit::PARAM_ERROR;
     }
 
-    if (pair.index != static_cast<uint16_t>(IINBit::DEVICE_RESTART))
-    {
-        return IINBit::PARAM_ERROR;
-    }
-
     if (pair.value.value)
     {
         return IINBit::PARAM_ERROR;
     }
 
+    if (pair.index == static_cast<uint16_t>(IINBit::DEVICE_RESTART))
+    {
+        writeIIN->ClearBit(IINBit::DEVICE_RESTART);
+    }
+    else if (pair.index == static_cast<uint16_t>(IINBit::NEED_TIME))
+    {
+        if (header.GetQualifierCode() != QualifierCode::UINT8_START_STOP)
+            return IINBit::PARAM_ERROR;
+        if (!application->ClearNeedTime())
+            return IINBit::FUNC_NOT_SUPPORTED;
+    }
+    else
+    {
+        return IINBit::PARAM_ERROR;
+    }
     wroteIIN = true;
-    writeIIN->ClearBit(IINBit::DEVICE_RESTART);
     return IINField();
 }
 

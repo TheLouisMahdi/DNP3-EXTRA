@@ -61,7 +61,7 @@ class Peer:
                 assert not any("state=SUCCESS status=SUCCESS" in line for line in self.lines[cursor:]), self.lines[cursor:]
         else:
             result = self.wait(r"\[TASK\] " + label + r" (?!START)[A-Z_]+", cursor, timeout)
-            assert (result.endswith(" SUCCESS")) == success, result
+            assert (result.endswith(" SUCCESS")) == success, "\n".join(self.lines[max(0, cursor - 20):])
         return cursor
 
     def executed(self, expected):
@@ -276,7 +276,8 @@ def tls(exe, root):
     try:
         tls_cases(exe, owned)
     finally:
-        for name in ("normal", "untrusted", "expired"):
+        (owned / "bundle.pem").unlink(missing_ok=True)
+        for name in ("normal", "untrusted", "expired", "anchor2", "anchor3", "anchor4"):
             directory = owned / name
             if directory.is_dir():
                 for filename in ("ca.pem", "server.pem", "server-key.pem", "client.pem", "client-key.pem"):
@@ -312,6 +313,25 @@ def tls_cases(exe, root):
             master.task("read 30 5 0 0")
         finally:
             stop(out, master)
+    # Exercise each independent trust anchor in both TLS roles with the same
+    # CA bundle. Different client/server issuers rule out a shared-anchor shortcut.
+    anchors = [material, *(root / name for name in ("anchor2", "anchor3", "anchor4"))]
+    for directory in anchors[1:]:
+        run(exe, "test-tls", "--test-only", "--directory", str(directory))
+    bundle = root / "bundle.pem"
+    bundle.write_bytes(b"\n".join((directory / "ca.pem").read_bytes() for directory in anchors))
+    for index, server in enumerate(anchors):
+        client_options = peer_options("master", anchors[(index + 1) % len(anchors)])
+        server_options = peer_options("outstation", server)
+        client_options[1] = server_options[1] = str(bundle)
+        master, out = connected(exe, ["--auth", "compat", "--tls"], client_options, server_options)
+        try:
+            master.task("read 1 2 0 0")
+            master.task("crob 0 on")
+            out.executed(1)
+        finally:
+            stop(out, master)
+    print("PASS four independent CA anchors in both mutual TLS roles", flush=True)
     profile = "tls-sa-" + uuid.uuid4().hex[:10]
     auth = ["--test-only", "--profile", profile, "--auth", "method4"]
     run(exe, "test-provision", *auth)

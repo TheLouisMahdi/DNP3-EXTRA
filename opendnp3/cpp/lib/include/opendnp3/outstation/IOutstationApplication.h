@@ -59,6 +59,13 @@ public:
         return false;
     }
 
+    /// Acknowledge a zero written to NEED_TIME (G80V1). The application owns
+    /// request rearming. This operation does not synchronize the clock.
+    virtual bool ClearNeedTime()
+    {
+        return false;
+    }
+
     /// Queries whether the outstation supports the writing of TimeAndInterval
     /// If this function returns false, WriteTimeAndInterval will never be called
     /// and the outstation will return IIN 2.1 (FUNC_NOT_SUPPORTED) when it receives this request

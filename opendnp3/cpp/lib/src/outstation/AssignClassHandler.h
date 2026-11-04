@@ -37,6 +37,8 @@ class AssignClassHandler : public IAPDUHandler
 public:
     AssignClassHandler(IOutstationApplication& application, IClassAssigner& assigner);
 
+    bool HasPendingAssignment() const { return classHeader >= 0; }
+
     virtual bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override final
     {
         return true;

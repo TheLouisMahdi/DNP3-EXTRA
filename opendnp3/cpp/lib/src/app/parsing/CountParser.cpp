@@ -61,6 +61,9 @@ ParseResult CountParser::ParseHeader(ser4cpp::rseq_t& buffer,
     auto result = numParser.ParseCount(buffer, count, pLogger);
     if (result == ParseResult::OK)
     {
+        if (record.enumeration == GroupVariation::Group50Var1 && !settings.ExpectsContents() && count != 1)
+            return ParseResult::INVALID_OBJECT_QUALIFIER;
+
         if ((record.enumeration == GroupVariation::Group120Var3 ||
              record.enumeration == GroupVariation::Group120Var4) &&
             (record.GetQualifierCode() != QualifierCode::UINT8_CNT || count != 1 ||
