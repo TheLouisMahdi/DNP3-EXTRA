@@ -96,9 +96,55 @@ Database::Database(const DatabaseConfig& config,
       binary_output_status(config.binary_output_status),
       analog_output_status(config.analog_output_status),
       time_and_interval(config.time_and_interval),
-      octet_string(config.octet_string)
+      octet_string(config.octet_string),
+      binary_command_event(config.binary_command_event),
+      analog_command_event(config.analog_command_event)
 {
     deadbands.reserve(config.analog_input.size());
+}
+
+void Database::RecordCommandEvent(const ControlRelayOutputBlock& command, uint16_t index, CommandStatus status)
+{
+    const auto config = binary_command_event.find(index);
+    EventClass clazz;
+    if (config == binary_command_event.end() || !convert_to_event_class(config->second.clazz, clazz))
+        return;
+    const auto state = command.tcc == TripCloseCode::CLOSE
+        || (command.tcc == TripCloseCode::NUL && command.opType == OperationType::LATCH_ON);
+    const auto variation = config->second.withTime ? GroupVariation::Group13Var2 : GroupVariation::Group13Var1;
+    event_receiver.Update(Event<BinaryCommandEventSpec>(BinaryCommandEvent(state, status, time_source.Now()),
+                                                        index, clazz, variation));
+}
+
+void Database::RecordAnalogCommandEvent(double value, uint16_t index, CommandStatus status,
+                                        GroupVariation untimed, GroupVariation timed)
+{
+    const auto config = analog_command_event.find(index);
+    EventClass clazz;
+    if (config == analog_command_event.end() || !convert_to_event_class(config->second.clazz, clazz))
+        return;
+    event_receiver.Update(Event<AnalogCommandEventSpec>(AnalogCommandEvent(value, status, time_source.Now()),
+                                                        index, clazz, config->second.withTime ? timed : untimed));
+}
+
+void Database::RecordCommandEvent(const AnalogOutputInt16& command, uint16_t index, CommandStatus status)
+{
+    RecordAnalogCommandEvent(command.value, index, status, GroupVariation::Group43Var2, GroupVariation::Group43Var4);
+}
+
+void Database::RecordCommandEvent(const AnalogOutputInt32& command, uint16_t index, CommandStatus status)
+{
+    RecordAnalogCommandEvent(command.value, index, status, GroupVariation::Group43Var1, GroupVariation::Group43Var3);
+}
+
+void Database::RecordCommandEvent(const AnalogOutputFloat32& command, uint16_t index, CommandStatus status)
+{
+    RecordAnalogCommandEvent(command.value, index, status, GroupVariation::Group43Var5, GroupVariation::Group43Var7);
+}
+
+void Database::RecordCommandEvent(const AnalogOutputDouble64& command, uint16_t index, CommandStatus status)
+{
+    RecordAnalogCommandEvent(command.value, index, status, GroupVariation::Group43Var6, GroupVariation::Group43Var8);
 }
 
 size_t Database::SelectDeadbands(const Range& range, AnalogDeadbandVariation requested)
@@ -547,6 +593,18 @@ void Database::SetReadIIN(const IINField& value)
     this->read_iin = value;
 }
 
+namespace
+{
+Range AssignCommandClass(std::map<uint16_t, CommandEventConfig>& points, PointClass clazz, const Range& requested)
+{
+    if (points.empty())
+        return Range::Invalid();
+    for (auto iter = points.lower_bound(requested.start); iter != points.end() && requested.Contains(iter->first); ++iter)
+        iter->second.clazz = clazz;
+    return requested.Intersection(Range::From(points.begin()->first, points.rbegin()->first));
+}
+}
+
 Range Database::AssignClassToAll(AssignClassType type, PointClass clazz)
 {
     switch (type)
@@ -565,6 +623,10 @@ Range Database::AssignClassToAll(AssignClassType type, PointClass clazz)
         return this->binary_output_status.assign_class(clazz);
     case (AssignClassType::AnalogOutputStatus):
         return this->analog_output_status.assign_class(clazz);
+    case AssignClassType::BinaryCommandEvent:
+        return AssignCommandClass(binary_command_event, clazz, Range::From(0, UINT16_MAX));
+    case AssignClassType::AnalogCommandEvent:
+        return AssignCommandClass(analog_command_event, clazz, Range::From(0, UINT16_MAX));
     default:
         return Range::Invalid();
     }
@@ -588,6 +650,10 @@ Range Database::AssignClassToRange(AssignClassType type, PointClass clazz, const
         return this->binary_output_status.assign_class(clazz, range);
     case (AssignClassType::AnalogOutputStatus):
         return this->analog_output_status.assign_class(clazz, range);
+    case AssignClassType::BinaryCommandEvent:
+        return AssignCommandClass(binary_command_event, clazz, range);
+    case AssignClassType::AnalogCommandEvent:
+        return AssignCommandClass(analog_command_event, clazz, range);
     default:
         return Range::Invalid();
     }

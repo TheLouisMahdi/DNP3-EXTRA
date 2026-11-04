@@ -21,6 +21,9 @@
 #define OPENDNP3_IEVENTWRITEHANDLER_H
 
 #include "opendnp3/app/MeasurementTypes.h"
+#include "opendnp3/app/AnalogCommandEvent.h"
+#include "opendnp3/app/BinaryCommandEvent.h"
+#include "opendnp3/gen/GroupVariation.h"
 #include "opendnp3/app/OctetString.h"
 #include "opendnp3/app/SecurityStat.h"
 #include "opendnp3/gen/EventSecurityStatVariation.h"
@@ -51,6 +54,14 @@ public:
 class IEventWriteHandler
 {
 public:
+    virtual uint16_t Write(GroupVariation, const BinaryCommandEvent&, IEventCollection<BinaryCommandEvent>&)
+    {
+        return 0;
+    }
+    virtual uint16_t Write(GroupVariation, const AnalogCommandEvent&, IEventCollection<AnalogCommandEvent>&)
+    {
+        return 0;
+    }
     virtual uint16_t Write(EventSecurityStatVariation, const SecurityStat&, IEventCollection<SecurityStat>&)
     {
         return 0;

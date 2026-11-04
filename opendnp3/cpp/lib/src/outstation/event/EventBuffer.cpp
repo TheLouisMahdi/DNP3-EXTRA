@@ -67,6 +67,16 @@ void EventBuffer::Update(const Event<OctetStringSpec>& evt)
     this->UpdateAny(evt);
 }
 
+void EventBuffer::Update(const Event<BinaryCommandEventSpec>& evt)
+{
+    this->UpdateAny(evt);
+}
+
+void EventBuffer::Update(const Event<AnalogCommandEventSpec>& evt)
+{
+    this->UpdateAny(evt);
+}
+
 void EventBuffer::Unselect()
 {
     this->storage.Unselect();
@@ -86,6 +96,23 @@ IINField EventBuffer::SelectMaxCount(GroupVariation gv, uint32_t maximum)
 {
     switch (gv)
     {
+    case GroupVariation::Group13Var0:
+        return this->SelectByType(maximum, EventType::BinaryCommand);
+    case GroupVariation::Group43Var0:
+        return this->SelectByType(maximum, EventType::AnalogCommand);
+    case GroupVariation::Group13Var1:
+    case GroupVariation::Group13Var2:
+    case GroupVariation::Group43Var1:
+    case GroupVariation::Group43Var2:
+    case GroupVariation::Group43Var3:
+    case GroupVariation::Group43Var4:
+    case GroupVariation::Group43Var5:
+    case GroupVariation::Group43Var6:
+    case GroupVariation::Group43Var7:
+    case GroupVariation::Group43Var8:
+        this->storage.SelectCommandEvents(gv, maximum);
+        return IINField::Empty();
+
     case (GroupVariation::Group2Var0):
         return this->SelectByType(maximum, EventType::Binary);
     case (GroupVariation::Group2Var1):

@@ -195,6 +195,7 @@ private:
     bool ProcessBroadcastRequest(const ParsedRequest& request);
 
     bool ProcessRequestNoAck(const ParsedRequest& request);
+    bool ProcessDirectOperateNoAck(const ParsedRequest& request);
 
     bool ProcessConfirm(const ParsedRequest& request);
 
@@ -282,6 +283,8 @@ private:
     IINField staticIIN;
     exe4cpp::Timer confirmTimer;
     RequestHistory history;
+    RequestHistory noAckHistory;
+    Addresses noAckPeer;
     DeferredRequest deferred;
 
     // ------ Dynamic state related to controls ------

@@ -61,6 +61,8 @@ struct EventBufferConfig
     uint32_t TotalEvents() const;
 
     uint16_t maxSecurityStatEvents = 0;
+    uint16_t maxBinaryCommandEvents = 0;
+    uint16_t maxAnalogCommandEvents = 0;
 
     // The number of binary events the outstation will buffer before overflowing
     uint16_t maxBinaryEvents;

@@ -21,6 +21,7 @@
 
 #include "gen/objects/Group12.h"
 #include "gen/objects/Group41.h"
+#include "outstation/Database.h"
 
 #include <ser4cpp/serialization/LittleEndian.h>
 
@@ -29,9 +30,18 @@ namespace opendnp3
 
 CommandResponseHandler::CommandResponseHandler(uint32_t maxCommands_,
                                                ICommandAction* pCommandAction_,
-                                               HeaderWriter* pWriter_)
-    : pCommandAction(pCommandAction_), numRequests(0), numSuccess(0), maxCommands(maxCommands_), pWriter(pWriter_)
+                                               HeaderWriter* pWriter_,
+                                               Database* commandEvents,
+                                               bool isSelect)
+    : pCommandAction(pCommandAction_), numRequests(0), numSuccess(0), maxCommands(maxCommands_), pWriter(pWriter_),
+      commandEvents(commandEvents), isSelect(isSelect)
 {
+}
+
+template<class Target>
+void CommandResponseHandler::RecordCommandEvent(const Target& command, uint16_t index, CommandStatus status)
+{
+    commandEvents->RecordCommandEvent(command, index, status);
 }
 
 bool CommandResponseHandler::IsAllowed(uint32_t /*headerCount*/, GroupVariation gv, QualifierCode qc)

@@ -120,7 +120,7 @@ def connected(exe, options, master_options=(), out_options=()):
 
 
 def compatibility(exe):
-    master, out = connected(exe, ["--auth", "compat"], out_options=["--unsolicited"])
+    master, out = connected(exe, ["--auth", "compat"], out_options=["--unsolicited", "--command-events"])
     try:
         master.task("scan integrity")
         out.send("set analog 3 12.5 force")
@@ -149,6 +149,12 @@ def compatibility(exe):
         master.task("analog 3 2 4.25")
         master.task("analog 4 2 8.5 direct")
         out.executed(6)
+        cursor = master.task("read 13 0")
+        master.wait(r"Group13Var2.*BinaryCommandEvent\[3\]=ON.*SUCCESS", cursor)
+        master.wait(r"Group13Var2.*BinaryCommandEvent\[3\]=OFF.*SUCCESS", cursor)
+        cursor = master.task("read 43 0")
+        for variation, value in ((3, "42"), (4, "-12"), (7, "4.25"), (8, "8.5")):
+            master.wait(rf"Group43Var{variation}.*AnalogCommandEvent\[2\]={re.escape(value)}.*SUCCESS", cursor)
         cursor = master.task("read 10 2 3 3")
         master.wait(r"BinaryOutput\[3\]=OFF", cursor)
         cursor = master.task("read 40 3 2 2")
@@ -171,7 +177,7 @@ def compatibility(exe):
         master.wait(r"Binary\[7\]=ON")
     finally:
         stop(out, master)
-    print("PASS compatibility: real READ/events/classes/attributes/controls/output readback", flush=True)
+    print("PASS compatibility: real READ/events/classes/attributes/controls/command events/output readback", flush=True)
 
 
 def secure(exe, method):

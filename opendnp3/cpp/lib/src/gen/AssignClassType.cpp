@@ -57,6 +57,10 @@ AssignClassType AssignClassTypeSpec::from_type(uint8_t arg)
       return AssignClassType::BinaryOutputStatus;
     case(0x6):
       return AssignClassType::AnalogOutputStatus;
+    case(0x7):
+      return AssignClassType::BinaryCommandEvent;
+    case(0x8):
+      return AssignClassType::AnalogCommandEvent;
     default:
       throw new std::invalid_argument("Unknown value");
   }
@@ -80,6 +84,10 @@ char const* AssignClassTypeSpec::to_string(AssignClassType arg)
       return "BinaryOutputStatus";
     case(AssignClassType::AnalogOutputStatus):
       return "AnalogOutputStatus";
+    case(AssignClassType::BinaryCommandEvent):
+      return "BinaryCommandEvent";
+    case(AssignClassType::AnalogCommandEvent):
+      return "AnalogCommandEvent";
     default:
       return "UNDEFINED";
   }
@@ -103,6 +111,10 @@ char const* AssignClassTypeSpec::to_human_string(AssignClassType arg)
       return "BinaryOutputStatus";
     case(AssignClassType::AnalogOutputStatus):
       return "AnalogOutputStatus";
+    case(AssignClassType::BinaryCommandEvent):
+      return "BinaryCommandEvent";
+    case(AssignClassType::AnalogCommandEvent):
+      return "AnalogCommandEvent";
     default:
       return "UNDEFINED";
   }
@@ -117,6 +129,8 @@ AssignClassType AssignClassTypeSpec::from_string(const std::string& arg)
   if(arg == "AnalogInput") return AssignClassType::AnalogInput;
   if(arg == "BinaryOutputStatus") return AssignClassType::BinaryOutputStatus;
   if(arg == "AnalogOutputStatus") return AssignClassType::AnalogOutputStatus;
+  if(arg == "BinaryCommandEvent") return AssignClassType::BinaryCommandEvent;
+  if(arg == "AnalogCommandEvent") return AssignClassType::AnalogCommandEvent;
   else throw std::invalid_argument(std::string("Unknown value: ") + arg);
 }
 

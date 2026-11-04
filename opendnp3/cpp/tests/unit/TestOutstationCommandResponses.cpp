@@ -374,12 +374,21 @@ TEST_CASE(SUITE("DirectOperateNoResponseGroup12Var1"))
     t.LowerLayerUp();
 
     // Direct operate (no response) group 12 Var 1, count = 1, index = 3
-    auto directOperateNoACK = "C1 06 0C 01 17 01 03 01 01 01 00 00 00 01 00 00 00 00";
+    std::string directOperateNoACK = "C1 06 0C 01 17 01 03 01 01 01 00 00 00 01 00 00 00 00";
 
-    /// no-ack codes ignore sequence numbers and repeat requests
+    // A new unicast direct operate uses a fresh sequence number (IEEE 1815-2012, 4.4.5).
     for (uint32_t i = 1; i < 5; ++i)
     {
+        directOperateNoACK[1] = static_cast<char>('0' + i);
         t.SendToOutstation(directOperateNoACK);
+        REQUIRE(t.lower->PopWriteAsHex().empty());
+        REQUIRE(t.cmdHandler->NumInvocations() == i);
+    }
+
+    // Broadcasts ignore sequence numbers, including when two operations use the same number.
+    for (uint32_t i = 5; i < 7; ++i)
+    {
+        t.BroadcastToOutstation(LinkBroadcastAddress::DontConfirm, directOperateNoACK);
         REQUIRE(t.lower->PopWriteAsHex().empty());
         REQUIRE(t.cmdHandler->NumInvocations() == i);
     }

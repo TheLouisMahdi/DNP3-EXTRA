@@ -425,3 +425,146 @@ TEST_CASE("ProfileControls - Master direct response rejects extra headers and re
         if (extra) REQUIRE(callbacks.values.front().summary == TaskCompletion::FAILURE_BAD_RESPONSE);
     }
 }
+
+namespace
+{
+std::string ReadCommandEvents(OutstationTestObject& outstation, const std::string& request)
+{
+    const auto response = Exchange(outstation, request);
+    if (!response.empty() && response.front() == 'E')
+        outstation.SendToOutstation("C" + response.substr(1, 1) + " 00");
+    return response;
+}
+
+OutstationConfig CommandEventBuffers()
+{
+    OutstationConfig config;
+    config.eventBufferConfig.maxBinaryCommandEvents = 2;
+    config.eventBufferConfig.maxAnalogCommandEvents = 2;
+    return config;
+}
+}
+
+TEST_CASE("ProfileControls - G13 reports processed commands without duplicating retries", "[command-events]")
+{
+    DatabaseConfig database;
+    database.binary_command_event[3];
+    OutstationTestObject t(CommandEventBuffers(), database);
+    t.application->SetTime(DNPTime(0x010203040506));
+    t.LowerLayerUp();
+    const auto crob = Body(0, false);
+
+    REQUIRE_FALSE(Exchange(t, "C0 03 " + crob).empty());
+    REQUIRE(ReadCommandEvents(t, "C1 01 0D 00 06") == "C1 81 80 00"); // successful SELECT alone
+    REQUIRE_FALSE(Exchange(t, "C2 03 " + crob).empty());
+    const auto operate = Exchange(t, "C3 04 " + crob);
+    REQUIRE_FALSE(operate.empty());
+    REQUIRE(Exchange(t, "C3 04 " + crob) == operate);
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+    REQUIRE(ReadCommandEvents(t, "C4 01 0D 00 06") == "E4 81 80 00 0D 02 28 01 00 03 00 80 06 05 04 03 02 01");
+
+    t.cmdHandler->SetResponse(CommandStatus::NOT_SUPPORTED);
+    REQUIRE_FALSE(Exchange(t, "C5 03 " + crob).empty());
+    REQUIRE(ReadCommandEvents(t, "C6 01 0D 01 07 01") == "E6 81 80 00 0D 01 28 01 00 03 00 84");
+    REQUIRE(ReadCommandEvents(t, "C7 01 0D 02 08 01 00") == "C7 81 80 00");
+    REQUIRE(ReadCommandEvents(t, "C8 01 0B 00 06") == "C8 81 80 00"); // independent of output status
+}
+
+TEST_CASE("ProfileControls - FC6 reports once and G12 class assignment changes future command events", "[command-events]")
+{
+    DatabaseConfig database;
+    database.binary_command_event[3].withTime = false;
+    OutstationTestObject t(CommandEventBuffers(), database);
+    t.application->supportsAssignClass = true;
+    t.LowerLayerUp();
+    const auto crob = Body(0, false);
+
+    REQUIRE(Exchange(t, "C0 16 3C 03 06 0C 00 00 03 03") == "C0 81 80 00");
+    REQUIRE(t.application->classAssignments.size() == 1);
+    REQUIRE(std::get<0>(t.application->classAssignments.front()) == AssignClassType::BinaryCommandEvent);
+    REQUIRE(Exchange(t, "C1 06 " + crob).empty());
+    REQUIRE(Exchange(t, "C1 06 " + crob).empty());
+    REQUIRE(Exchange(t, "C2 06 " + crob + " 0C 01 17 01 03").empty()); // truncated second object
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+    REQUIRE(ReadCommandEvents(t, "C3 01 3C 02 06") == "C3 81 84 00");
+    REQUIRE(ReadCommandEvents(t, "C4 01 3C 03 06") == "E4 81 80 00 0D 01 28 01 00 03 00 80");
+    REQUIRE(ReadCommandEvents(t, "C5 01 3C 03 06") == "C5 81 80 00");
+}
+
+TEST_CASE("ProfileControls - G43 preserves commanded values and status in all wire variations", "[command-events]")
+{
+    DatabaseConfig database;
+    database.analog_command_event[0x1234].clazz = PointClass::Class2;
+    OutstationTestObject t(CommandEventBuffers(), database);
+    t.application->SetTime(DNPTime(0x010203040506));
+    t.LowerLayerUp();
+    t.cmdHandler->SetResponse(CommandStatus::NOT_SUPPORTED);
+
+    struct Example { unsigned commandType; unsigned variation; const char* payload; };
+    const Example examples[] = {
+        {1, 1, "64 00 00 00"}, {2, 2, "64 00"},
+        {1, 3, "64 00 00 00 06 05 04 03 02 01"}, {2, 4, "64 00 06 05 04 03 02 01"},
+        {3, 5, "00 00 C8 42"}, {3, 6, "00 00 00 00 00 00 59 40"},
+        {3, 7, "00 00 C8 42 06 05 04 03 02 01"}, {3, 8, "00 00 00 00 00 00 59 40 06 05 04 03 02 01"}
+    };
+    unsigned seq = 0;
+    for (const auto& example : examples)
+    {
+        const auto command = Byte(0xC0 + seq++);
+        const auto query = Byte(0xC0 + seq);
+        const auto response = Byte(0xE0 + seq++);
+        REQUIRE_FALSE(Exchange(t, command + " 05 " + Body(example.commandType, true)).empty());
+        const std::string qualifier = example.variation % 3 == 0 ? " 06"
+            : example.variation % 3 == 1 ? " 07 01" : " 08 01 00";
+        REQUIRE(ReadCommandEvents(t, query + " 01 2B " + Byte(example.variation) + qualifier)
+                == response + " 81 80 00 2B " + Byte(example.variation) + " 28 01 00 34 12 04 " + example.payload);
+    }
+}
+
+TEST_CASE("ProfileControls - command event buffer bounds and default-off operation", "[command-events]")
+{
+    DatabaseConfig database;
+    database.binary_command_event[3].withTime = false;
+    auto config = CommandEventBuffers();
+    config.eventBufferConfig.maxBinaryCommandEvents = 1;
+    OutstationTestObject t(config, database);
+    t.LowerLayerUp();
+    REQUIRE_FALSE(Exchange(t, "C0 05 " + Body(0, false)).empty());
+    t.cmdHandler->SetResponse(CommandStatus::NOT_SUPPORTED);
+    REQUIRE_FALSE(Exchange(t, "C1 05 " + Body(0, false)).empty());
+    const auto event = ReadCommandEvents(t, "C2 01 0D 00 06");
+    REQUIRE(event == "E2 81 80 08 0D 01 28 01 00 03 00 84");
+    REQUIRE(ReadCommandEvents(t, "C3 01 0D 00 06") == "C3 81 80 00");
+
+    OutstationTestObject off(config);
+    off.LowerLayerUp();
+    REQUIRE_FALSE(Exchange(off, "C0 05 " + Body(0, false)).empty());
+    REQUIRE(ReadCommandEvents(off, "C1 01 0D 00 06") == "C1 81 80 00");
+}
+
+TEST_CASE("ProfileControls - command events use native unsolicited retries and confirmation", "[command-events]")
+{
+    DatabaseConfig database;
+    database.binary_command_event[3].withTime = false;
+    auto config = CommandEventBuffers();
+    config.params.allowUnsolicited = true;
+    config.params.unsolClassMask = ClassField::AllEventClasses();
+    config.params.unsolConfirmTimeout = TimeDuration::Seconds(5);
+    config.params.numUnsolRetries = NumRetries::Fixed(1);
+    OutstationTestObject t(config, database);
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == "F0 82 80 00");
+    t.OnTxReady();
+    t.SendToOutstation("D0 00");
+
+    t.SendToOutstation("C0 06 " + Body(0, false));
+    const std::string event = "F1 82 80 00 0D 01 28 01 00 03 00 80";
+    REQUIRE(t.lower->PopWriteAsHex() == event); // FC6 has no solicited response.
+    t.OnTxReady();
+    REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
+    REQUIRE(t.lower->PopWriteAsHex() == event);
+    t.OnTxReady();
+    t.SendToOutstation("D1 00");
+    REQUIRE(ReadCommandEvents(t, "C1 01 0D 00 06") == "C1 81 80 00");
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+}

@@ -61,6 +61,7 @@ public enum GroupVariation
   Group11Var2(0xB02),
   Group12Var0(0xC00),
   Group12Var1(0xC01),
+  Group13Var0(0xD00),
   Group13Var1(0xD01),
   Group13Var2(0xD02),
   Group20Var0(0x1400),
@@ -124,6 +125,7 @@ public enum GroupVariation
   Group42Var6(0x2A06),
   Group42Var7(0x2A07),
   Group42Var8(0x2A08),
+  Group43Var0(0x2B00),
   Group43Var1(0x2B01),
   Group43Var2(0x2B02),
   Group43Var3(0x2B03),
@@ -226,6 +228,8 @@ public enum GroupVariation
         return Group12Var0;
       case(0xC01):
         return Group12Var1;
+      case(0xD00):
+        return Group13Var0;
       case(0xD01):
         return Group13Var1;
       case(0xD02):
@@ -352,6 +356,8 @@ public enum GroupVariation
         return Group42Var7;
       case(0x2A08):
         return Group42Var8;
+      case(0x2B00):
+        return Group43Var0;
       case(0x2B01):
         return Group43Var1;
       case(0x2B02):

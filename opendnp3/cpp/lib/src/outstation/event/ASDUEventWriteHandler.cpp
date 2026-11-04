@@ -26,12 +26,54 @@
 #include "gen/objects/Group2.h"
 #include "gen/objects/Group22.h"
 #include "gen/objects/Group23.h"
+#include "gen/objects/Group13.h"
+#include "gen/objects/Group43.h"
 #include "gen/objects/Group32.h"
 #include "gen/objects/Group4.h"
 #include "gen/objects/Group42.h"
 
 namespace opendnp3
 {
+uint16_t ASDUEventWriteHandler::Write(GroupVariation variation, const BinaryCommandEvent&,
+                                     IEventCollection<BinaryCommandEvent>& items)
+{
+    switch (variation)
+    {
+    case GroupVariation::Group13Var1:
+        return EventWriters::Write(this->writer, items, Group13Var1::Inst());
+    case GroupVariation::Group13Var2:
+        return EventWriters::Write(this->writer, items, Group13Var2::Inst());
+    default:
+        return 0;
+    }
+}
+
+uint16_t ASDUEventWriteHandler::Write(GroupVariation variation, const AnalogCommandEvent&,
+                                     IEventCollection<AnalogCommandEvent>& items)
+{
+    switch (variation)
+    {
+    case GroupVariation::Group43Var1:
+        return EventWriters::Write(this->writer, items, Group43Var1::Inst());
+    case GroupVariation::Group43Var2:
+        return EventWriters::Write(this->writer, items, Group43Var2::Inst());
+    case GroupVariation::Group43Var3:
+        return EventWriters::Write(this->writer, items, Group43Var3::Inst());
+    case GroupVariation::Group43Var4:
+        return EventWriters::Write(this->writer, items, Group43Var4::Inst());
+    case GroupVariation::Group43Var5:
+        return EventWriters::Write(this->writer, items, Group43Var5::Inst());
+    case GroupVariation::Group43Var6:
+        return EventWriters::Write(this->writer, items, Group43Var6::Inst());
+    case GroupVariation::Group43Var7:
+        return EventWriters::Write(this->writer, items, Group43Var7::Inst());
+    case GroupVariation::Group43Var8:
+        return EventWriters::Write(this->writer, items, Group43Var8::Inst());
+    default:
+        return 0;
+    }
+}
+
 uint16_t ASDUEventWriteHandler::Write(EventBinaryVariation variation,
                                       const Binary& first,
                                       IEventCollection<Binary>& items)

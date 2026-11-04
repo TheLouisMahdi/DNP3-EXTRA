@@ -630,10 +630,23 @@ int RunOutstation(const diagnostic::Options& o)
     for (auto& p : database.double_binary) { p.second.clazz = PointClass::Class1; p.second.evariation = EventDoubleBinaryVariation::Group4Var2; }
     for (auto& p : database.analog_input) { p.second.clazz = PointClass::Class2; p.second.svariation = StaticAnalogVariation::Group30Var5; p.second.evariation = EventAnalogVariation::Group32Var7; }
     for (auto& p : database.counter) p.second.clazz = PointClass::Class3;
+    if (o.commandEvents)
+    {
+        for (uint16_t index = 0; index < 10; ++index)
+        {
+            database.binary_command_event[index].clazz = PointClass::Class1;
+            database.analog_command_event[index].clazz = PointClass::Class2;
+        }
+    }
     OutstationStackConfig config(database);
     config.outstation.params.authentication = auth;
     config.outstation.eventBufferConfig = EventBufferConfig::AllTypes(100);
     config.outstation.eventBufferConfig.maxSecurityStatEvents = 100;
+    if (o.commandEvents)
+    {
+        config.outstation.eventBufferConfig.maxBinaryCommandEvents = 100;
+        config.outstation.eventBufferConfig.maxAnalogCommandEvents = 100;
+    }
     config.outstation.params.allowUnsolicited = o.unsolicited;
     config.link.LocalAddr = o.local; config.link.RemoteAddr = o.remote; config.link.KeepAliveTimeout = TimeDuration::Max();
     auto application = std::make_shared<OutstationApplication>();

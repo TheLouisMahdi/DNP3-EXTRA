@@ -29,10 +29,13 @@
 namespace opendnp3
 {
 
+class Database;
+
 class CommandResponseHandler : public IAPDUHandler
 {
 public:
-    CommandResponseHandler(uint32_t maxCommands_, ICommandAction* pCommandAction_, HeaderWriter* pWriter_);
+    CommandResponseHandler(uint32_t maxCommands_, ICommandAction* pCommandAction_, HeaderWriter* pWriter_,
+                           Database* commandEvents = nullptr, bool isSelect = false);
 
     bool AllCommandsSuccessful() const
     {
@@ -76,6 +79,10 @@ private:
     uint32_t numSuccess;
     const uint32_t maxCommands;
     HeaderWriter* pWriter;
+    Database* commandEvents;
+    bool isSelect;
+
+    template<class Target> void RecordCommandEvent(const Target& command, uint16_t index, CommandStatus status);
 
     template<class T> IINField ProcessAny(const HeaderRecord& record, const ICollection<Indexed<T>>& meas);
 
@@ -117,6 +124,8 @@ IINField CommandResponseHandler::RespondToHeaderWithIterator(QualifierCode quali
     auto process = [this, pIterator, &ret](const Indexed<Target>& pair) {
         Target response(pair.value);
         response.status = this->ProcessCommand(pair.value, pair.index);
+        if (commandEvents && (!isSelect || response.status != CommandStatus::SUCCESS))
+            RecordCommandEvent(pair.value, pair.index, response.status);
 
         switch (response.status)
         {

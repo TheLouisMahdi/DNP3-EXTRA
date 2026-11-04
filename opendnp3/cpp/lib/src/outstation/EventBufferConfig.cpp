@@ -53,7 +53,8 @@ EventBufferConfig::EventBufferConfig(uint16_t maxBinaryEvents,
 uint32_t EventBufferConfig::TotalEvents() const
 {
     return maxBinaryEvents + maxDoubleBinaryEvents + maxAnalogEvents + maxCounterEvents + maxFrozenCounterEvents
-        + maxBinaryOutputStatusEvents + maxAnalogOutputStatusEvents + maxOctetStringEvents + maxSecurityStatEvents;
+        + maxBinaryOutputStatusEvents + maxAnalogOutputStatusEvents + maxOctetStringEvents + maxSecurityStatEvents
+        + maxBinaryCommandEvents + maxAnalogCommandEvents;
 }
 
 } // namespace opendnp3

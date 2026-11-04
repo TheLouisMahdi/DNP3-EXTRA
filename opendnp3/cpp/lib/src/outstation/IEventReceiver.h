@@ -52,6 +52,8 @@ public:
 
     // Unlike legacy void Update overloads, return true only after acceptance.
     virtual bool Update(const Event<SecurityStatSpec>&) { return false; }
+    virtual void Update(const Event<BinaryCommandEventSpec>&) {}
+    virtual void Update(const Event<AnalogCommandEventSpec>&) {}
 };
 
 } // namespace opendnp3

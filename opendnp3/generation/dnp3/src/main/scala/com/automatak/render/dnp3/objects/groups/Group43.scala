@@ -20,19 +20,20 @@
 package com.automatak.render.dnp3.objects.groups
 
 import com.automatak.render.dnp3.objects.generators.ConversionToAnalogCommandEvent
-import com.automatak.render.dnp3.objects.{FixedSize, FixedSizeField, ObjectGroup}
+import com.automatak.render.dnp3.objects.{AnyVariation, FixedSize, FixedSizeField, ObjectGroup}
 
 import FixedSizeField._
 import com.automatak.render.dnp3.objects.VariationNames._
 
 //analog output events
 object Group43 extends ObjectGroup {
-  def objects = List(Group43Var1, Group43Var2, Group43Var3, Group43Var4, Group43Var5, Group43Var6, Group43Var7, Group43Var8)
+  def objects = List(Group43Var0, Group43Var1, Group43Var2, Group43Var3, Group43Var4, Group43Var5, Group43Var6, Group43Var7, Group43Var8)
   def group: Byte = 43
   def desc: String = "Analog Command Event"
   def isEventGroup: Boolean = true
 }
 
+object Group43Var0 extends AnyVariation(Group43, 0)
 object Group43Var1 extends FixedSize(Group43, 1, bit32)(commandStatus, value32) with ConversionToAnalogCommandEvent
 object Group43Var2 extends FixedSize(Group43, 2, bit16)(commandStatus, value16) with ConversionToAnalogCommandEvent
 object Group43Var3 extends FixedSize(Group43, 3, bit32WithTime)(commandStatus, value32, time48) with ConversionToAnalogCommandEvent

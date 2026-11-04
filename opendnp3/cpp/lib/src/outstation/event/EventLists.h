@@ -60,6 +60,8 @@ private:
     List<TypedEventRecord<AnalogOutputStatusSpec>> analogOutputStatus;
     List<TypedEventRecord<OctetStringSpec>> octetString;
     List<TypedEventRecord<SecurityStatSpec>> securityStat;
+    List<TypedEventRecord<BinaryCommandEventSpec>> binaryCommand;
+    List<TypedEventRecord<AnalogCommandEventSpec>> analogCommand;
 };
 
 } // namespace opendnp3

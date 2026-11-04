@@ -30,6 +30,8 @@
 #include "outstation/StaticDataMap.h"
 
 #include "opendnp3/gen/FlagsType.h"
+#include "opendnp3/app/AnalogOutput.h"
+#include "opendnp3/app/ControlRelayOutputBlock.h"
 #include "opendnp3/outstation/DatabaseConfig.h"
 #include "opendnp3/outstation/IDnpTimeSource.h"
 #include "opendnp3/outstation/IUpdateHandler.h"
@@ -82,6 +84,11 @@ public:
 
     bool FreezeSelectedCounters(bool clear, EventMode mode = EventMode::Detect);
     AnalogConfig* FindAnalogConfig(uint16_t index) { return analog_input.find_config(index); }
+    void RecordCommandEvent(const ControlRelayOutputBlock& command, uint16_t index, CommandStatus status);
+    void RecordCommandEvent(const AnalogOutputInt16& command, uint16_t index, CommandStatus status);
+    void RecordCommandEvent(const AnalogOutputInt32& command, uint16_t index, CommandStatus status);
+    void RecordCommandEvent(const AnalogOutputFloat32& command, uint16_t index, CommandStatus status);
+    void RecordCommandEvent(const AnalogOutputDouble64& command, uint16_t index, CommandStatus status);
 
 private:
     IEventReceiver& event_receiver;
@@ -119,6 +126,11 @@ private:
     StaticDataMap<AnalogOutputStatusSpec> analog_output_status;
     StaticDataMap<TimeAndIntervalSpec> time_and_interval;
     StaticDataMap<OctetStringSpec> octet_string;
+    std::map<uint16_t, CommandEventConfig> binary_command_event;
+    std::map<uint16_t, CommandEventConfig> analog_command_event;
+
+    void RecordAnalogCommandEvent(double value, uint16_t index, CommandStatus status,
+                                  GroupVariation untimed, GroupVariation timed);
 
     // ----- helper methods ------
 

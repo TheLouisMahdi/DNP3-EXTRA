@@ -40,6 +40,12 @@
 
 namespace opendnp3 {
 
+// Analog Command Event - Any Variation
+struct Group43Var0
+{
+  static GroupVariationID ID() { return GroupVariationID(43,0); }
+};
+
 // Analog Command Event - 32-bit
 struct Group43Var1
 {

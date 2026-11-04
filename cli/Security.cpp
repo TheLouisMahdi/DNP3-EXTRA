@@ -295,6 +295,7 @@ Options ParseOptions(int argc, char** argv)
         if (option == "--aggressive") { o.aggressive = true; continue; }
         if (option == "--deny-controls") { o.denyControls = true; continue; }
         if (option == "--unsolicited") { o.unsolicited = true; continue; }
+        if (option == "--command-events") { o.commandEvents = true; continue; }
         if (option == "--trace") { o.trace = true; continue; }
         if (option == "--tls") { o.tls = true; continue; }
         if (option == "--expired-test-certificate") { o.expiredTestCertificate = true; continue; }

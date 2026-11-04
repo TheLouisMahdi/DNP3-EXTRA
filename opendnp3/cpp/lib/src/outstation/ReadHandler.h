@@ -37,6 +37,10 @@ public:
 
     bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override final
     {
+        const auto group = GroupVariationSpec::to_type(gv) >> 8;
+        if (group == 13 || group == 43)
+            return qc == QualifierCode::ALL_OBJECTS || qc == QualifierCode::UINT8_CNT
+                || qc == QualifierCode::UINT16_CNT;
         return true;
     }
 

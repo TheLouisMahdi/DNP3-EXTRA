@@ -47,6 +47,8 @@
 #include "opendnp3/app/MeasurementTypes.h"
 
 #include <limits>
+#include <cmath>
+#include <type_traits>
 
 namespace opendnp3
 {
@@ -220,12 +222,27 @@ typedef ConvertQVTRangeCheck<Group42Var7, AnalogOutputStatus, 0x20> ConvertGroup
 typedef ConvertQVT<Group42Var8, AnalogOutputStatus> ConvertGroup42Var8;
 
 // Group 43
+template<class Number> void ConvertCommandEventValue(double value, Number& target)
+{
+    if (std::is_floating_point<Number>::value && !std::isfinite(value))
+    {
+        // Preserve the original float's non-finite value on a floating-point wire form.
+        // Only cast in the floating-point instantiations.
+        target = static_cast<Number>(value);
+        return;
+    }
+    if (std::isnan(value))
+        target = 0; // An explicit integer variation cannot represent NaN.
+    else
+        DownSampling<double, Number>::Apply(value, target);
+}
+
 template<class Target> struct ConvertGroup43RangeCheck : private StaticOnly
 {
     static Target Apply(const AnalogCommandEvent& src)
     {
         Target t;
-        DownSampling<double, typename Target::ValueType>::Apply(src.value, t.value);
+        ConvertCommandEventValue(src.value, t.value);
         t.status = CommandStatusSpec::to_type(src.status);
         return t;
     }
@@ -236,7 +253,7 @@ template<class Target> struct ConvertGroup43WithTimeRangeCheck : private StaticO
     static Target Apply(const AnalogCommandEvent& src)
     {
         Target t;
-        DownSampling<double, typename Target::ValueType>::Apply(src.value, t.value);
+        ConvertCommandEventValue(src.value, t.value);
         t.status = CommandStatusSpec::to_type(src.status);
         t.time = src.time;
         return t;

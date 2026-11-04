@@ -27,6 +27,14 @@
 namespace opendnp3
 {
 
+/// A configured entry enables command events for the corresponding output index.
+/// Command event indexes/classes are independent of G11/G42 output status.
+struct CommandEventConfig
+{
+    PointClass clazz = PointClass::Class1;
+    bool withTime = true;
+};
+
 struct DatabaseConfig
 {
     DatabaseConfig() = default;
@@ -42,6 +50,8 @@ struct DatabaseConfig
     std::map<uint16_t, AOStatusConfig> analog_output_status;
     std::map<uint16_t, TimeAndIntervalConfig> time_and_interval;
     std::map<uint16_t, OctetStringConfig> octet_string;
+    std::map<uint16_t, CommandEventConfig> binary_command_event;
+    std::map<uint16_t, CommandEventConfig> analog_command_event;
 };
 
 } // namespace opendnp3

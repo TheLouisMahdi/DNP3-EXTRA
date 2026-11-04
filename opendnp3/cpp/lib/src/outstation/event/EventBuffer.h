@@ -58,6 +58,8 @@ public:
     virtual void Update(const Event<AnalogOutputStatusSpec>& evt) override;
     virtual void Update(const Event<OctetStringSpec>& evt) override;
     bool Update(const Event<SecurityStatSpec>& evt) override;
+    void Update(const Event<BinaryCommandEventSpec>& evt) override;
+    void Update(const Event<AnalogCommandEventSpec>& evt) override;
     IINField SelectRange(GroupVariation gv, const Range& range) override;
     IINField SelectIndices(GroupVariation gv, const ICollection<uint16_t>& indices) override;
 

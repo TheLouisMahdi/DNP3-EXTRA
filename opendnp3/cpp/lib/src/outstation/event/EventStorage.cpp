@@ -84,6 +84,17 @@ bool EventStorage::Update(const Event<OctetStringSpec>& evt)
     return EventUpdate::Update(state, evt);
 }
 
+bool EventStorage::Update(const Event<BinaryCommandEventSpec>& evt)
+{
+    return EventUpdate::Update(state, evt);
+}
+
+bool EventStorage::Update(const Event<AnalogCommandEventSpec>& evt)
+{
+    return EventUpdate::Update(state, evt);
+}
+
+
 uint32_t EventStorage::SelectByType(EventBinaryVariation variation, uint32_t max)
 {
     return EventSelection::SelectByType<BinarySpec>(this->state, variation, max);
@@ -145,11 +156,22 @@ uint32_t EventStorage::SelectByType(EventType type, uint32_t max)
         return EventSelection::SelectByType<AnalogOutputStatusSpec>(this->state, max);
     case (EventType::SecurityStat):
         return EventSelection::SelectByType<SecurityStatSpec>(this->state, max);
+    case EventType::BinaryCommand:
+        return EventSelection::SelectByType<BinaryCommandEventSpec>(this->state, max);
+    case EventType::AnalogCommand:
+        return EventSelection::SelectByType<AnalogCommandEventSpec>(this->state, max);
     case (EventType::OctetString):
         return EventSelection::SelectByType<OctetStringSpec>(this->state, max);
     default:
         return 0;
     }
+}
+
+uint32_t EventStorage::SelectCommandEvents(GroupVariation variation, uint32_t max)
+{
+    if (variation == GroupVariation::Group13Var1 || variation == GroupVariation::Group13Var2)
+        return EventSelection::SelectByType<BinaryCommandEventSpec>(this->state, variation, max);
+    return EventSelection::SelectByType<AnalogCommandEventSpec>(this->state, variation, max);
 }
 
 uint32_t EventStorage::SelectByClass(const EventClass& clazz)
@@ -199,7 +221,9 @@ void EventStorage::Unselect()
         record.state = EventState::unselected;
         // Class polls must restore G122's configured default after an explicit
         // variation READ. Preserve all other types' existing selection behavior.
-        if (record.type->IsEqual(EventType::SecurityStat)) record.type->SelectDefaultVariation(record);
+        if (record.type->IsEqual(EventType::SecurityStat) || record.type->IsEqual(EventType::BinaryCommand)
+            || record.type->IsEqual(EventType::AnalogCommand))
+            record.type->SelectDefaultVariation(record);
     };
 
     this->state.events.Foreach(clear);

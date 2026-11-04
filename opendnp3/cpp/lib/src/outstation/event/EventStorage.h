@@ -73,6 +73,8 @@ public:
     bool Update(const Event<AnalogOutputStatusSpec>& evt);
     bool Update(const Event<OctetStringSpec>& evt);
     bool Update(const Event<SecurityStatSpec>& evt);
+    bool Update(const Event<BinaryCommandEventSpec>& evt);
+    bool Update(const Event<AnalogCommandEventSpec>& evt);
     uint32_t SelectSecurityRange(const Range& range);
 
     // ---- function used to select distinct types ----
@@ -88,6 +90,7 @@ public:
     uint32_t SelectByType(EventSecurityStatVariation variation, uint32_t max);
 
     uint32_t SelectByType(EventType type, uint32_t max);
+    uint32_t SelectCommandEvents(GroupVariation variation, uint32_t max);
 
     // ---- function used to select by event class ----
 

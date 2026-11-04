@@ -20,7 +20,10 @@
 #ifndef OPENDNP3_MEASUREMENTTYPESPECS_H
 #define OPENDNP3_MEASUREMENTTYPESPECS_H
 
+#include "opendnp3/app/AnalogCommandEvent.h"
+#include "opendnp3/app/BinaryCommandEvent.h"
 #include "opendnp3/app/EventCells.h"
+#include "opendnp3/gen/GroupVariation.h"
 #include "opendnp3/app/EventTriggers.h"
 #include "opendnp3/app/OctetString.h"
 #include "opendnp3/outstation/MeasurementConfig.h"
@@ -31,6 +34,22 @@
 
 namespace opendnp3
 {
+
+struct BinaryCommandEventSpec
+{
+    using meas_t = BinaryCommandEvent;
+    using event_variation_t = GroupVariation;
+    static constexpr EventType EventTypeEnum = EventType::BinaryCommand;
+    static constexpr GroupVariation DefaultEventVariation = GroupVariation::Group13Var1;
+};
+
+struct AnalogCommandEventSpec
+{
+    using meas_t = AnalogCommandEvent;
+    using event_variation_t = GroupVariation;
+    static constexpr EventType EventTypeEnum = EventType::AnalogCommand;
+    static constexpr GroupVariation DefaultEventVariation = GroupVariation::Group43Var1;
+};
 
 struct BinarySpec : public BinaryInfo
 {

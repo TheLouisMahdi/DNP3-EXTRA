@@ -33,7 +33,9 @@ EventLists::EventLists(const EventBufferConfig& config)
       binaryOutputStatus(config.maxBinaryOutputStatusEvents),
       analogOutputStatus(config.maxAnalogOutputStatusEvents),
       octetString(config.maxOctetStringEvents),
-      securityStat(config.maxSecurityStatEvents)
+      securityStat(config.maxSecurityStatEvents),
+      binaryCommand(config.maxBinaryCommandEvents),
+      analogCommand(config.maxAnalogCommandEvents)
 {
 }
 
@@ -43,7 +45,8 @@ bool EventLists::IsAnyTypeFull() const
         || this->counter.IsFullAndCapacityNotZero() || this->frozenCounter.IsFullAndCapacityNotZero()
         || this->analog.IsFullAndCapacityNotZero() || this->binaryOutputStatus.IsFullAndCapacityNotZero()
         || this->analogOutputStatus.IsFullAndCapacityNotZero() || this->octetString.IsFullAndCapacityNotZero()
-        || this->securityStat.IsFullAndCapacityNotZero();
+        || this->securityStat.IsFullAndCapacityNotZero() || this->binaryCommand.IsFullAndCapacityNotZero()
+        || this->analogCommand.IsFullAndCapacityNotZero();
 }
 
 template<> List<TypedEventRecord<BinarySpec>>& EventLists::GetList()
@@ -84,6 +87,16 @@ template<> List<TypedEventRecord<AnalogOutputStatusSpec>>& EventLists::GetList()
 template<> List<TypedEventRecord<OctetStringSpec>>& EventLists::GetList()
 {
     return this->octetString;
+}
+
+template<> List<TypedEventRecord<BinaryCommandEventSpec>>& EventLists::GetList()
+{
+    return this->binaryCommand;
+}
+
+template<> List<TypedEventRecord<AnalogCommandEventSpec>>& EventLists::GetList()
+{
+    return this->analogCommand;
 }
 
 template<> List<TypedEventRecord<SecurityStatSpec>>& EventLists::GetList()

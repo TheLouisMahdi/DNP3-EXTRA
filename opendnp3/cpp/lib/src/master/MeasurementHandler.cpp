@@ -55,6 +55,9 @@ bool MeasurementHandler::IsAllowed(uint32_t, GroupVariation gv, QualifierCode qc
 {
     // Table 12-63 response qualifiers. Keep request parsing and other types unchanged.
     const bool prefix = qc == QualifierCode::UINT8_CNT_UINT8_INDEX || qc == QualifierCode::UINT16_CNT_UINT16_INDEX;
+    const auto id = GroupVariationSpec::to_type(gv);
+    if ((id >> 8) == 13 || (id >> 8) == 43)
+        return prefix && (id & 0xFF) != 0;
     switch (gv)
     {
     case GroupVariation::Group34Var0:

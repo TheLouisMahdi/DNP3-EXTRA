@@ -14,6 +14,7 @@ struct Options
     uint32_t responseMs = 2000, replyMs = 2000, renewalMs = 900000, messageCount = 1000;
     bool aggressive = false, trustedTime = false, testOnly = false, denyControls = false;
     bool unsolicited = false, trace = false, tls = false;
+    bool commandEvents = false;
     bool expiredTestCertificate = false, selfSignedTestCertificate = false;
 };
 Options ParseOptions(int argc, char** argv);

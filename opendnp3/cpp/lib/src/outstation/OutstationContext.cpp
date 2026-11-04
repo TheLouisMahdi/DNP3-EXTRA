@@ -75,6 +75,7 @@ OContext::OContext(const Addresses& addresses,
       isTransmitting(false),
       staticIIN(IINBit::DEVICE_RESTART),
       history(config.params.maxRxFragSize),
+      noAckHistory(config.params.maxRxFragSize),
       deferred(config.params.maxRxFragSize),
       control(config.params.maxRxFragSize),
       sol(config.params.maxTxFragSize),
@@ -166,6 +167,7 @@ bool OContext::OnLowerLayerDown()
     unsol.Reset();
     time = TimeSyncState();
     history.Reset();
+    noAckHistory.Reset();
     control.Unselect();
     deferred.Reset();
     eventBuffer.Unselect();
@@ -259,6 +261,9 @@ bool OContext::ProcessObjects(const ParsedRequest& request)
 {
     if (!control.OnRequest(request.header.function, AppSeqNum(request.header.control.SEQ), request.objects))
         return true; // Changed same-sequence SELECT: discard per Table 4-9.
+
+    if (request.header.function != FunctionCode::DIRECT_OPERATE_NR && request.header.function != FunctionCode::CONFIRM)
+        noAckHistory.Reset();
 
     if (request.addresses.IsBroadcast())
     {
@@ -747,8 +752,7 @@ bool OContext::ProcessBroadcastRequest(const ParsedRequest& request)
         this->HandleWrite(request);
         return true;
     case (FunctionCode::DIRECT_OPERATE_NR):
-        this->HandleDirectOperate(request.objects, OperateType::DirectOperateNoAck, nullptr);
-        return true;
+        return this->ProcessDirectOperateNoAck(request);
     case (FunctionCode::IMMED_FREEZE_NR):
         this->HandleFreeze(request.objects);
         return true;
@@ -803,9 +807,7 @@ bool OContext::ProcessRequestNoAck(const ParsedRequest& request)
     switch (request.header.function)
     {
     case (FunctionCode::DIRECT_OPERATE_NR):
-        this->HandleDirectOperate(request.objects, OperateType::DirectOperateNoAck,
-                                  nullptr); // no object writer, this is a no ack code
-        return true;
+        return this->ProcessDirectOperateNoAck(request);
     case (FunctionCode::IMMED_FREEZE_NR):
         this->HandleFreeze(request.objects);
         return true;
@@ -817,6 +819,21 @@ bool OContext::ProcessRequestNoAck(const ParsedRequest& request)
                          FunctionCodeSpec::to_human_string(request.header.function));
         return false;
     }
+}
+
+bool OContext::ProcessDirectOperateNoAck(const ParsedRequest& request)
+{
+    // Broadcast sequence numbers are ignored (IEEE 1815-2012, 4.3.4 Rule 19).
+    if (!request.addresses.IsBroadcast())
+    {
+        if (noAckPeer.source == request.addresses.source && noAckPeer.destination == request.addresses.destination
+            && noAckHistory.FullyEqualsLastRequest(request.header, request.objects))
+            return true;
+        noAckPeer = request.addresses;
+        noAckHistory.RecordLastProcessedRequest(request.header, request.objects);
+    }
+    this->HandleDirectOperate(request.objects, OperateType::DirectOperateNoAck, nullptr);
+    return true;
 }
 
 IINField OContext::HandleNonReadResponse(const ParsedRequest& request, HeaderWriter& writer)
@@ -909,7 +926,7 @@ IINField OContext::HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateTy
     }
 
     CommandActionAdapter adapter(*this->commandHandler, false, this->database, opType);
-    CommandResponseHandler handler(this->params.maxControlsPerRequest, &adapter, pWriter);
+    CommandResponseHandler handler(this->params.maxControlsPerRequest, &adapter, pWriter, &this->database);
     auto result = APDUParser::Parse(objects, handler, &this->logger);
     this->shouldCheckForUnsolicited = true;
     return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
@@ -930,13 +947,17 @@ IINField OContext::HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& wr
 
     // the 'OperateType' is just ignored  since it's a select
     CommandActionAdapter adapter(*this->commandHandler, true, this->database, OperateType::DirectOperate);
-    CommandResponseHandler handler(this->params.maxControlsPerRequest, &adapter, &writer);
+    CommandResponseHandler handler(this->params.maxControlsPerRequest, &adapter, &writer, &this->database, true);
     auto result = APDUParser::Parse(objects, handler, &this->logger);
     if (result == ParseResult::OK)
     {
         if (handler.AllCommandsSuccessful())
         {
             this->control.Select(this->sol.seq.num, Timestamp(this->executor->get_time()), objects);
+        }
+        else
+        {
+            this->shouldCheckForUnsolicited = true;
         }
 
         return handler.Errors();
@@ -969,7 +990,7 @@ IINField OContext::HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& w
     if (result == CommandStatus::SUCCESS)
     {
         CommandActionAdapter adapter(*this->commandHandler, false, this->database, OperateType::SelectBeforeOperate);
-        CommandResponseHandler handler(this->params.maxControlsPerRequest, &adapter, &writer);
+        CommandResponseHandler handler(this->params.maxControlsPerRequest, &adapter, &writer, &this->database);
         auto result = APDUParser::Parse(objects, handler, &this->logger);
         this->shouldCheckForUnsolicited = true;
         return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
@@ -1082,8 +1103,9 @@ IINField OContext::HandleEnableUnsolicited(const ser4cpp::rseq_t& objects, Heade
 IINField OContext::HandleCommandWithConstant(const ser4cpp::rseq_t& objects, HeaderWriter& writer, CommandStatus status)
 {
     ConstantCommandAction constant(status);
-    CommandResponseHandler handler(this->params.maxControlsPerRequest, &constant, &writer);
+    CommandResponseHandler handler(this->params.maxControlsPerRequest, &constant, &writer, &this->database);
     auto result = APDUParser::Parse(objects, handler, &this->logger);
+    this->shouldCheckForUnsolicited = true;
     return IINFromParseResult(result);
 }
 

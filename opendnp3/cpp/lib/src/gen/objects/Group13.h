@@ -40,6 +40,12 @@
 
 namespace opendnp3 {
 
+// Binary Command Event - Any Variation
+struct Group13Var0
+{
+  static GroupVariationID ID() { return GroupVariationID(13,0); }
+};
+
 // Binary Command Event - Without Time
 struct Group13Var1
 {

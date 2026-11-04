@@ -44,6 +44,10 @@ IINField AssignClassHandler::ProcessHeader(const AllObjectsHeader& header)
             return this->ProcessAssignAll(AssignClassType::DoubleBinaryInput, clazz);
         case (GroupVariation::Group10Var0):
             return this->ProcessAssignAll(AssignClassType::BinaryOutputStatus, clazz);
+        case GroupVariation::Group12Var0:
+            return this->ProcessAssignAll(AssignClassType::BinaryCommandEvent, clazz);
+        case GroupVariation::Group41Var0:
+            return this->ProcessAssignAll(AssignClassType::AnalogCommandEvent, clazz);
         case (GroupVariation::Group20Var0):
             return this->ProcessAssignAll(AssignClassType::Counter, clazz);
         case (GroupVariation::Group21Var0):
@@ -75,6 +79,10 @@ IINField AssignClassHandler::ProcessHeader(const RangeHeader& header)
             return ProcessAssignRange(AssignClassType::DoubleBinaryInput, clazz, header.range);
         case (GroupVariation::Group10Var0):
             return ProcessAssignRange(AssignClassType::BinaryOutputStatus, clazz, header.range);
+        case GroupVariation::Group12Var0:
+            return ProcessAssignRange(AssignClassType::BinaryCommandEvent, clazz, header.range);
+        case GroupVariation::Group41Var0:
+            return ProcessAssignRange(AssignClassType::AnalogCommandEvent, clazz, header.range);
         case (GroupVariation::Group20Var0):
             return ProcessAssignRange(AssignClassType::Counter, clazz, header.range);
         case (GroupVariation::Group21Var0):

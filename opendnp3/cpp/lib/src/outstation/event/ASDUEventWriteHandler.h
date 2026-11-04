@@ -35,6 +35,11 @@ class ASDUEventWriteHandler final : public IEventWriteHandler, private Uncopyabl
 public:
     explicit ASDUEventWriteHandler(const HeaderWriter& writer) : writer(writer) {}
 
+    uint16_t Write(GroupVariation variation, const BinaryCommandEvent& first,
+                   IEventCollection<BinaryCommandEvent>& items) override;
+    uint16_t Write(GroupVariation variation, const AnalogCommandEvent& first,
+                   IEventCollection<AnalogCommandEvent>& items) override;
+
     virtual uint16_t Write(EventBinaryVariation variation,
                            const Binary& first,
                            IEventCollection<Binary>& items) override;

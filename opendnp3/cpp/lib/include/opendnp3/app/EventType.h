@@ -35,7 +35,9 @@ enum class EventType : uint16_t
     BinaryOutputStatus = 5,
     AnalogOutputStatus = 6,
     OctetString = 7,
-    SecurityStat = 8
+    SecurityStat = 8,
+    BinaryCommand = 9,
+    AnalogCommand = 10
 };
 
 enum class EventClass : uint8_t

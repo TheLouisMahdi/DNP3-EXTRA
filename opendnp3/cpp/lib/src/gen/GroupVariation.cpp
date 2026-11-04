@@ -95,6 +95,8 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
       return GroupVariation::Group12Var0;
     case(0xC01):
       return GroupVariation::Group12Var1;
+    case(0xD00):
+      return GroupVariation::Group13Var0;
     case(0xD01):
       return GroupVariation::Group13Var1;
     case(0xD02):
@@ -221,6 +223,8 @@ GroupVariation GroupVariationSpec::from_type(uint16_t arg)
       return GroupVariation::Group42Var7;
     case(0x2A08):
       return GroupVariation::Group42Var8;
+    case(0x2B00):
+      return GroupVariation::Group43Var0;
     case(0x2B01):
       return GroupVariation::Group43Var1;
     case(0x2B02):
@@ -386,6 +390,8 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
       return "Group12Var0";
     case(GroupVariation::Group12Var1):
       return "Group12Var1";
+    case(GroupVariation::Group13Var0):
+      return "Group13Var0";
     case(GroupVariation::Group13Var1):
       return "Group13Var1";
     case(GroupVariation::Group13Var2):
@@ -512,6 +518,8 @@ char const* GroupVariationSpec::to_string(GroupVariation arg)
       return "Group42Var7";
     case(GroupVariation::Group42Var8):
       return "Group42Var8";
+    case(GroupVariation::Group43Var0):
+      return "Group43Var0";
     case(GroupVariation::Group43Var1):
       return "Group43Var1";
     case(GroupVariation::Group43Var2):
@@ -677,6 +685,8 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
       return "Binary Command - Any Variation";
     case(GroupVariation::Group12Var1):
       return "Binary Command - CROB";
+    case(GroupVariation::Group13Var0):
+      return "Binary Command Event - Any Variation";
     case(GroupVariation::Group13Var1):
       return "Binary Command Event - Without Time";
     case(GroupVariation::Group13Var2):
@@ -803,6 +813,8 @@ char const* GroupVariationSpec::to_human_string(GroupVariation arg)
       return "Analog Output Event - Single-precision With Flag and Time";
     case(GroupVariation::Group42Var8):
       return "Analog Output Event - Double-precision With Flag and Time";
+    case(GroupVariation::Group43Var0):
+      return "Analog Command Event - Any Variation";
     case(GroupVariation::Group43Var1):
       return "Analog Command Event - 32-bit";
     case(GroupVariation::Group43Var2):
@@ -940,6 +952,7 @@ GroupVariation GroupVariationSpec::from_string(const std::string& arg)
   if(arg == "Group11Var2") return GroupVariation::Group11Var2;
   if(arg == "Group12Var0") return GroupVariation::Group12Var0;
   if(arg == "Group12Var1") return GroupVariation::Group12Var1;
+  if(arg == "Group13Var0") return GroupVariation::Group13Var0;
   if(arg == "Group13Var1") return GroupVariation::Group13Var1;
   if(arg == "Group13Var2") return GroupVariation::Group13Var2;
   if(arg == "Group20Var0") return GroupVariation::Group20Var0;
@@ -1003,6 +1016,7 @@ GroupVariation GroupVariationSpec::from_string(const std::string& arg)
   if(arg == "Group42Var6") return GroupVariation::Group42Var6;
   if(arg == "Group42Var7") return GroupVariation::Group42Var7;
   if(arg == "Group42Var8") return GroupVariation::Group42Var8;
+  if(arg == "Group43Var0") return GroupVariation::Group43Var0;
   if(arg == "Group43Var1") return GroupVariation::Group43Var1;
   if(arg == "Group43Var2") return GroupVariation::Group43Var2;
   if(arg == "Group43Var3") return GroupVariation::Group43Var3;
