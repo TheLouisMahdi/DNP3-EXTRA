@@ -282,6 +282,87 @@ def secure(exe, method):
     print("PASS " + method + ": session/C-R/RUK/ADD/CHANGE/DELETE/role denial/stats/reconnect/restart/aggressive", flush=True)
 
 
+def renewal(exe):
+    profile = "renewal-" + uuid.uuid4().hex[:12]
+    provision = ["--test-only", "--profile", profile, "--auth", "method4"]
+
+    def snapshot(peer, limit):
+        deadline = time.monotonic() + 20
+        while True:
+            cursor = peer.send("auth")
+            users = {}
+            for user in (1, 2):
+                line = peer.wait(r"\[SESSION\] user=" + str(user)
+                                 + r" ready=[01] exchanging=[01] remaining=\d+$",
+                                 cursor, max(0, deadline - time.monotonic()))
+                match = re.search(r"ready=([01]) exchanging=([01]) remaining=(\d+)$", line)
+                users[user] = tuple(map(int, match.groups()))
+            line = peer.wait(r"\[LOCAL-STAT\] index=13 value=\d+$", cursor,
+                             max(0, deadline - time.monotonic()))
+            changes = int(re.search(r"value=(\d+)$", line).group(1))
+            peer.wait(r"\[LOCAL-STAT\] index=17 value=\d+$", cursor,
+                      max(0, deadline - time.monotonic()))
+            if all(ready and not exchanging for ready, exchanging, _ in users.values()):
+                assert changes >= 2, (profile, changes, users)
+                assert all(0 < remaining <= limit for _, _, remaining in users.values()), users
+                return {user: value[2] for user, value in users.items()}
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, ("SA users did not become ready", profile, users, changes)
+            with peer.cv:
+                peer.cv.wait(min(0.05, remaining))
+
+    try:
+        run(exe, "test-provision", *provision)
+        # Verify the CLI's existing restrictions, not a restriction on the generic
+        # SessionKeys count-only capability. Provision valid credentials so failure
+        # cannot be explained by a missing profile or clock.
+        invalid = (
+            ("--renewal-ms", "0", "Zero port/user/timeout/count is unsupported"),
+            ("--renewal-ms", "7200001", "Numeric option out of range"),
+            ("--message-count", "0", "Zero port/user/timeout/count is unsupported"),
+            ("--message-count", "-1", "Invalid numeric option"),
+            ("--message-count", "2147483648", "SA credentials or policy unavailable"),
+            ("--message-count", "4294967296", "Numeric option out of range"),
+        )
+        for role in ("master", "outstation"):
+            for option, value, reason in invalid:
+                result = run(exe, role, *provision, *loopback_port(), "--trust-system-time",
+                             option, value, success=False)
+                assert "ERROR: " + reason in result.stdout + result.stderr, (role, option, value, result)
+
+        # Two pairs cover both interval endpoints and default/configured counts.
+        # Omit --message-count in the first case to exercise the actual CLI default.
+        for interval, explicit_count in ((900000, None), (7200000, 2000)):
+            limit = 1000 if explicit_count is None else explicit_count
+            options = [*provision, *loopback_port(), "--trust-system-time", "--reply-ms", "5000",
+                       "--renewal-ms", str(interval)]
+            if explicit_count is not None:
+                options += ["--message-count", str(explicit_count)]
+            master = out = None
+            try:
+                master, out = connected(exe, options)
+                before = [snapshot(peer, limit) for peer in (master, out)]
+                # Startup tasks use Common/user 1. No explicit user-2 command has
+                # run yet, so its unused budget identifies the configured limit.
+                assert all(value[2] == limit for value in before), (interval, before)
+                out.executed(0)
+                master.task("read 1 2 0 0")
+                after_read = [snapshot(peer, limit) for peer in (master, out)]
+                assert all(after[2] < initial[2] for initial, after in zip(before, after_read)), (before, after_read)
+                out.executed(0)
+                master.task("crob 0 on")
+                out.executed(1)
+                after_control = [snapshot(peer, limit) for peer in (master, out)]
+                assert all(after[2] < initial[2] for initial, after in zip(after_read, after_control)), (after_read, after_control)
+                # No equality between peer counters or one-ASDU-per-command assumption.
+            finally:
+                stop(out, master)
+            print(f"PASS renewal configuration: interval={interval} count={limit} "
+                  f"budgets={before}->{after_read}->{after_control}", flush=True)
+    finally:
+        run(exe, "test-cleanup", *provision)
+
+
 def invalid_credentials(exe):
     profiles = ["bad-" + uuid.uuid4().hex[:10] for _ in range(2)]
     for profile in profiles:
@@ -460,7 +541,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "tls", "asio", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "tls", "asio", "all"), default="all")
     args = parser.parse_args()
     assert args.exe.is_file(), args.exe
     if args.only == "asio":
@@ -471,6 +552,7 @@ def main():
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")
     if args.only in ("negative", "all"): invalid_credentials(args.exe)
+    if args.only in ("renewal", "all"): renewal(args.exe)
     if args.only in ("tls", "all"): tls(args.exe, args.work_dir)
     print("CLI PROCESS ACCEPTANCE PASS; native callbacks/readbacks, clean peer shutdowns and expected failure exits checked.", flush=True)
 
