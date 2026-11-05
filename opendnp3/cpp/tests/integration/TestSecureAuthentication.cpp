@@ -6,6 +6,8 @@
 #include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
 
 #include <opendnp3/DNP3Manager.h>
+#include <opendnp3/auth/SecurityStatistic.h>
+#include <opendnp3/auth/AuthenticationStatus.h>
 #include <opendnp3/master/DefaultMasterApplication.h>
 #include <opendnp3/outstation/DefaultOutstationApplication.h>
 #include <opendnp3/outstation/SimpleCommandHandler.h>
@@ -15,6 +17,10 @@
 #include <array>
 #include <atomic>
 #include <deque>
+#include <chrono>
+#include <condition_variable>
+#include <thread>
+#include <utility>
 #include <future>
 #include <mutex>
 #include <sstream>
@@ -50,7 +56,8 @@ class TcpCredentials final : public IAuthenticationCredentials
 public:
     std::array<std::array<uint8_t, 32>, 2> keys{};
     size_t keyLength = 32;
-    TcpCredentials()
+    const uint64_t lifetimeMs;
+    explicit TcpCredentials(uint64_t lifetimeMs_ = 3600000) : lifetimeMs(lifetimeMs_)
     {
         for (auto& key : keys)
             REQUIRE(crypto::GenerateRandom(ser4cpp::wseq_t(key.data(), key.size())) == crypto::Result::OK);
@@ -66,7 +73,7 @@ public:
         if (association != 7 || user < 1 || user > 2 || !output || capacity != keyLength)
             return false;
         std::copy_n(keys[user - 1].begin(), capacity, output);
-        lifetime = 3600000;
+        lifetime = lifetimeMs;
         return true;
     }
 };
@@ -289,4 +296,378 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     control();
     REQUIRE(commands->operated.load() == 3);
     manager.Shutdown();
+}
+
+namespace
+{
+// Metadata only: never retain APDU bytes, nonces, wrapped keys or MACs.
+class RenewalTrace final : public ILogHandler
+{
+public:
+    using Clock = std::chrono::steady_clock;
+    void log(ModuleId, const char* id, LogLevel level, const char*, const char* message) override
+    {
+        if (!(level == flags::APP_OBJECT_TX)) return;
+        const std::string name(id), text(message);
+        const bool master = name.find("renewal-master") != std::string::npos;
+        const bool outstation = name.find("renewal-outstation") != std::string::npos;
+        if (!master && !outstation) return;
+        const bool v1 = text.find("120,001 ") == 0;
+        const bool v2 = text.find("120,002 ") == 0;
+        const bool v3 = text.find("120,003 ") == 0;
+        const bool v4 = master && text.find("120,004 ") == 0;
+        const bool v5 = outstation && text.find("120,005 ") == 0;
+        const bool v6 = master && text.find("120,006 ") == 0;
+        std::unique_lock<std::mutex> lock(mutex);
+        // Count each authenticated ASDU once at its sender. V3/V9 is one ASDU.
+        if (outstation && v1) ++traffic[0]; // Control Challenge
+        if (master && v2) ++traffic[1];     // Control Reply
+        if (master && v1) ++traffic[2];     // Monitoring Challenge
+        if (outstation && v2) ++traffic[3]; // Monitoring Reply
+        if (outstation && v3) ++traffic[4]; // Aggressive Monitoring response
+        if (v4) { ++requests; lastRequest = Clock::now(); awaitingConfirmation = false; }
+        if (v6) { ++changes; awaitingConfirmation = true; }
+        if (v5 && awaitingConfirmation)
+        {
+            // The Outstation installed V6 before emitting this final V5. The
+            // Master installs upon receiving it, before it can issue new traffic.
+            confirmationTraffic = traffic;
+            awaitingConfirmation = false;
+        }
+        if (v6 && armed)
+        {
+            armed = false;
+            held = true;
+            cv.notify_all();
+            if (!cv.wait_for(lock, std::chrono::seconds(10), [this] { return released; })) gateExpired = true;
+        }
+    }
+    void Arm()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        armed = true; held = released = gateExpired = false;
+    }
+    bool WaitHeld()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(10), [this] { return held; });
+    }
+    void Release()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+        cv.notify_all();
+    }
+    bool Expired()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return gateExpired;
+    }
+    std::pair<size_t, size_t> Counts()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return {requests, changes};
+    }
+    std::array<size_t, 5> SinceConfirmation()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::array<size_t, 5> result{};
+        for (size_t n = 0; n < result.size(); ++n) result[n] = traffic[n] - confirmationTraffic[n];
+        return result;
+    }
+    Clock::time_point LastRequest()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return lastRequest;
+    }
+private:
+    std::mutex mutex;
+    std::condition_variable cv;
+    size_t requests = 0, changes = 0;
+    bool armed = false, held = false, released = false, gateExpired = false;
+    bool awaitingConfirmation = false;
+    std::array<size_t, 5> traffic{}, confirmationTraffic{};
+    Clock::time_point lastRequest{};
+};
+
+size_t CountedASDUs(const std::array<size_t, 5>& traffic, size_t user)
+{
+    // Only user 1 owns Monitoring authentication. User 2 owns the control
+    // Challenge/Reply pair in this fixture's non-aggressive Master commands.
+    const auto control = traffic[0] + traffic[1];
+    return user == 0 ? control + traffic[2] + traffic[3] + traffic[4] : control;
+}
+
+uint32_t KeyChanges(const AuthenticationStatus& status)
+{
+    return status.statistics[static_cast<size_t>(SecurityStatistic::SESSION_KEY_CHANGES)];
+}
+bool ReadyUsers(const AuthenticationStatus& status)
+{
+    return status.available && status.size == 2 && status.users[0].number == 1 && status.users[1].number == 2
+        && status.users[0].ready && status.users[1].ready
+        && !status.users[0].exchanging && !status.users[1].exchanging;
+}
+
+struct RenewalTcpPair
+{
+    std::shared_ptr<RenewalTrace> trace = std::make_shared<RenewalTrace>();
+    std::shared_ptr<TcpCredentials> credentials = std::make_shared<TcpCredentials>(14400000);
+    std::shared_ptr<TcpPolicy> policy = std::make_shared<TcpPolicy>();
+    std::shared_ptr<TcpCommands> commands = std::make_shared<TcpCommands>();
+    std::shared_ptr<QueuedChannelListener> listener = std::make_shared<QueuedChannelListener>();
+    // Separate workers allow peer shutdown while the Master's pre-TX log gate is held.
+    DNP3Manager masterManager{1, trace}, outManager{1, trace};
+    std::shared_ptr<IChannel> server, client;
+    std::shared_ptr<IMaster> master;
+    std::shared_ptr<IOutstation> outstation;
+    OutstationStackConfig oc{DatabaseConfig{}};
+    uint16_t port = 0;
+    RenewalTrace::Clock::time_point enabled;
+    explicit RenewalTcpPair(uint32_t count = 1000, uint32_t intervalMs = 900000)
+    {
+        oc.link.LocalAddr = 10; oc.link.RemoteAddr = 1;
+        auto& auth = oc.outstation.params.authentication;
+        auth.association = 7; auth.credentials = credentials; auth.authorization = policy;
+        REQUIRE(auth.renewalMessageCount == 1000);
+        if (count != 1000) auth.renewalMessageCount = count; // Exercise the actual default too.
+        auth.renewalIntervalMs = intervalMs;
+        auth.replyTimeoutMs = 1000;
+        // Responses use the existing aggressive path after its real initial Challenge.
+        // Thus Control user 2 can exhaust its own C/R budget while Common stays valid.
+        auth.aggressiveTransmit = true;
+        oc.outstation.params.allowUnsolicited = false;
+        server = outManager.AddTCPServer("renewal-server", levels::NORMAL | flags::APP_HEADER_TX | flags::APP_OBJECT_TX, ServerAcceptMode::CloseExisting,
+                                         IPEndpoint::Localhost(0), nullptr);
+        port = server->GetBoundPort();
+        client = masterManager.AddTCPClient("renewal-client", levels::NORMAL | flags::APP_HEADER_TX | flags::APP_OBJECT_TX,
+            ChannelRetry::Default(), {IPEndpoint::Localhost(port)}, "127.0.0.1", listener);
+        MasterStackConfig mc;
+        mc.link.LocalAddr = 1; mc.link.RemoteAddr = 10;
+        mc.master.authentication = auth;
+        mc.master.authentication.aggressiveTransmit = false;
+        mc.master.authentication.aggressiveReceive = true;
+        mc.master.disableUnsolOnStartup = false;
+        mc.master.startupIntegrityClassMask = ClassField::None();
+        mc.master.unsolClassMask = ClassField::None();
+        mc.master.ignoreRestartIIN = true;
+        mc.master.taskStartTimeout = TimeDuration::Seconds(1);
+        mc.master.responseTimeout = TimeDuration::Seconds(1);
+        outstation = server->AddOutstation("renewal-outstation", commands, DefaultOutstationApplication::Create(), oc);
+        master = client->AddMaster("renewal-master", NullSOEHandler::Create(), DefaultMasterApplication::Create(), mc);
+        enabled = RenewalTrace::Clock::now();
+        REQUIRE(outstation->Enable());
+        REQUIRE(master->Enable());
+        REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+        Until([&] { return ReadyUsers(master->GetAuthenticationStatus()) && ReadyUsers(outstation->GetAuthenticationStatus()); });
+    }
+    ~RenewalTcpPair()
+    {
+        trace->Release(); // Also releases the worker after a fatal test assertion.
+        masterManager.Shutdown();
+        outManager.Shutdown();
+    }
+    template<class Predicate> void Until(Predicate predicate)
+    {
+        const auto deadline = RenewalTrace::Clock::now() + std::chrono::seconds(10);
+        while (!predicate())
+        {
+            if (RenewalTrace::Clock::now() >= deadline)
+            {
+                INFO(Diagnostics());
+                FAIL("Timed out waiting for renewal state");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    std::string Diagnostics()
+    {
+        std::ostringstream result;
+        for (const auto& stack : {std::static_pointer_cast<IStack>(master), std::static_pointer_cast<IStack>(outstation)})
+        {
+            const auto status = stack->GetAuthenticationStatus();
+            result << " changes=" << KeyChanges(status);
+            for (size_t n = 0; n < status.size; ++n)
+                result << " user=" << status.users[n].number << " ready=" << status.users[n].ready
+                    << " exchanging=" << status.users[n].exchanging << " remaining=" << status.users[n].remainingMessages;
+        }
+        const auto wire = trace->Counts();
+        result << " Master V4=" << wire.first << " V6=" << wire.second;
+        return result.str();
+    }
+    void Read()
+    {
+        auto callback = std::make_shared<ScanResult>();
+        auto future = callback->result.get_future();
+        master->ScanClasses(ClassField::AllClasses(), NullSOEHandler::Create(), TaskConfig::With(callback));
+        REQUIRE(future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        REQUIRE(future.get() == TaskCompletion::SUCCESS);
+    }
+    std::future<TaskCompletion> BeginControl()
+    {
+        auto result = std::make_shared<std::promise<TaskCompletion>>();
+        auto future = result->get_future();
+        auto config = TaskConfig::Default(); config.authenticationUser = 2;
+        master->SelectAndOperate(ControlRelayOutputBlock(OperationType::LATCH_ON), 0,
+            [result](const ICommandTaskResult& value) { result->set_value(value.summary); }, config);
+        return future;
+    }
+    void Control()
+    {
+        auto future = BeginControl();
+        REQUIRE(future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        REQUIRE(future.get() == TaskCompletion::SUCCESS);
+    }
+};
+} // namespace
+
+TEST_CASE("SecureAuthenticationTCP - default and configured counts replace each user's keys", "[sa-tcp][sa-renewal-tcp]")
+{
+    const auto count = GENERATE(1000u, 2000u);
+    RenewalTcpPair pair(count);
+    REQUIRE(pair.master->GetAuthenticationStatus().users[0].remainingMessages == count);
+    REQUIRE(pair.master->GetAuthenticationStatus().users[1].remainingMessages == count);
+    for (size_t user = 0; user < 2; ++user)
+    {
+        const auto beforeMaster = pair.master->GetAuthenticationStatus();
+        const auto beforeOut = pair.outstation->GetAuthenticationStatus();
+        const auto wire = pair.trace->Counts();
+        const auto deadline = RenewalTrace::Clock::now() + std::chrono::seconds(120);
+        size_t operations = 0;
+        while (KeyChanges(pair.master->GetAuthenticationStatus()) == KeyChanges(beforeMaster))
+        {
+            CAPTURE(count, user, operations);
+            REQUIRE(RenewalTrace::Clock::now() < deadline);
+            REQUIRE(++operations <= 2 * count);
+            const auto current = pair.master->GetAuthenticationStatus();
+            if (!current.users[user].ready) break; // Wait for the actual replacement, not another application operation.
+            const auto otherOutBudget = pair.outstation->GetAuthenticationStatus().users[0].remainingMessages;
+            if (user == 0) pair.Read(); else pair.Control();
+            if (user == 0)
+            {
+                REQUIRE(pair.master->GetAuthenticationStatus().users[1].remainingMessages == beforeMaster.users[1].remainingMessages);
+                REQUIRE(pair.outstation->GetAuthenticationStatus().users[1].remainingMessages == beforeOut.users[1].remainingMessages);
+            }
+            else
+            {
+                // Common legitimately accounts for response authentication, but must not be reset/cancelled.
+                const auto m = pair.master->GetAuthenticationStatus();
+                const auto o = pair.outstation->GetAuthenticationStatus();
+                REQUIRE(m.users[0].ready);
+                REQUIRE(o.users[0].ready);
+                REQUIRE(m.users[0].remainingMessages <= current.users[0].remainingMessages);
+                REQUIRE(o.users[0].remainingMessages <= otherOutBudget);
+            }
+        }
+        pair.Until([&] {
+            const auto m = pair.master->GetAuthenticationStatus(), o = pair.outstation->GetAuthenticationStatus();
+            return KeyChanges(m) > KeyChanges(beforeMaster) && KeyChanges(o) > KeyChanges(beforeOut)
+                && ReadyUsers(m) && ReadyUsers(o);
+        });
+        REQUIRE(KeyChanges(pair.master->GetAuthenticationStatus()) == KeyChanges(beforeMaster) + 1);
+        REQUIRE(KeyChanges(pair.outstation->GetAuthenticationStatus()) == KeyChanges(beforeOut) + 1);
+        const auto installedTraffic = pair.trace->SinceConfirmation();
+        const auto consumed = CountedASDUs(installedTraffic, user);
+        CAPTURE(user, count, installedTraffic[0], installedTraffic[1], installedTraffic[2], installedTraffic[3], installedTraffic[4]);
+        REQUIRE(consumed < count);
+        const auto freshMaster = pair.master->GetAuthenticationStatus();
+        const auto freshOut = pair.outstation->GetAuthenticationStatus();
+        REQUIRE(freshMaster.users[user].ready);
+        REQUIRE(freshOut.users[user].ready);
+        REQUIRE(freshMaster.users[user].remainingMessages == count - consumed);
+        REQUIRE(freshOut.users[user].remainingMessages == count - consumed);
+        // Metadata must represent successful authentication, not rejected traffic
+        // or renewal retries being used to explain an unexpected budget decrement.
+        for (auto statistic : {SecurityStatistic::AUTHENTICATION_FAILURES, SecurityStatistic::AUTHORIZATION_FAILURES,
+                               SecurityStatistic::REPLY_TIMEOUTS})
+        {
+            const auto index = static_cast<size_t>(statistic);
+            REQUIRE(freshMaster.statistics[index] == beforeMaster.statistics[index]);
+            REQUIRE(freshOut.statistics[index] == beforeOut.statistics[index]);
+        }
+        REQUIRE(pair.trace->Counts().first == wire.first + 1);
+        REQUIRE(pair.trace->Counts().second == wire.second + 1);
+        const auto selected = pair.commands->selected.load(), operated = pair.commands->operated.load();
+        if (user == 0) pair.Read(); else pair.Control(); // Real authenticated traffic on replacement keys.
+        const auto afterTraffic = pair.trace->SinceConfirmation();
+        std::array<size_t, 5> delta{};
+        for (size_t n = 0; n < delta.size(); ++n)
+        {
+            REQUIRE(afterTraffic[n] >= installedTraffic[n]);
+            delta[n] = afterTraffic[n] - installedTraffic[n];
+        }
+        const auto used = CountedASDUs(delta, user);
+        REQUIRE(used > 0);
+        REQUIRE(used < freshMaster.users[user].remainingMessages);
+        REQUIRE(delta[0] == delta[1]); // Repeated/rejected Challenges cannot explain an extra Reply charge.
+        REQUIRE(delta[2] == delta[3]);
+        if (user == 0) REQUIRE(delta[0] == 1); // One normal READ request.
+        else
+        {
+            REQUIRE(pair.commands->selected.load() == selected + 1);
+            REQUIRE(pair.commands->operated.load() == operated + 1);
+            REQUIRE(delta[0] == (pair.commands->selected.load() - selected) + (pair.commands->operated.load() - operated));
+        }
+        const auto afterMaster = pair.master->GetAuthenticationStatus(), afterOut = pair.outstation->GetAuthenticationStatus();
+        REQUIRE(KeyChanges(afterMaster) == KeyChanges(freshMaster));
+        REQUIRE(KeyChanges(afterOut) == KeyChanges(freshOut));
+        REQUIRE(afterMaster.users[user].remainingMessages == freshMaster.users[user].remainingMessages - used);
+        REQUIRE(afterOut.users[user].remainingMessages == freshOut.users[user].remainingMessages - used);
+    }
+    pair.Read(); pair.Control();
+}
+
+TEST_CASE("SecureAuthenticationTCP - elapsed interval installs replacement keys", "[sa-tcp][sa-renewal-tcp]")
+{
+    const uint32_t interval = 3000;
+    RenewalTcpPair pair(1000, interval);
+    const auto m = pair.master->GetAuthenticationStatus(), o = pair.outstation->GetAuthenticationStatus();
+    const auto wire = pair.trace->Counts();
+    pair.Until([&] {
+        const auto nextM = pair.master->GetAuthenticationStatus(), nextO = pair.outstation->GetAuthenticationStatus();
+        return KeyChanges(nextM) >= KeyChanges(m) + 2 && KeyChanges(nextO) >= KeyChanges(o) + 2
+            && ReadyUsers(nextM) && ReadyUsers(nextO);
+    });
+    REQUIRE(pair.trace->Counts().first >= wire.first + 2);
+    REQUIRE(pair.trace->Counts().second >= wire.second + 2);
+    REQUIRE(pair.trace->LastRequest() >= pair.enabled + std::chrono::milliseconds(interval));
+    REQUIRE(pair.commands->operated.load() == 0);
+    pair.Read(); pair.Control();
+}
+
+TEST_CASE("SecureAuthenticationTCP - interrupted renewal cannot authorize and reconnect negotiates fresh keys", "[sa-tcp][sa-renewal-tcp]")
+{
+    RenewalTcpPair pair(1000, 3000);
+    const auto beforeMaster = pair.master->GetAuthenticationStatus();
+    const auto beforeOut = pair.outstation->GetAuthenticationStatus();
+    pair.trace->Arm();
+    REQUIRE(pair.trace->WaitHeld()); // Next timed renewal has reached V6 generation, before lower-layer TX.
+    // Never synchronously query the gated Master worker. The peer has its own worker.
+    const auto pendingOut = pair.outstation->GetAuthenticationStatus();
+    REQUIRE_FALSE((pendingOut.users[0].ready && pendingOut.users[1].ready));
+    REQUIRE(KeyChanges(pendingOut) == KeyChanges(beforeOut));
+    auto denied = pair.BeginControl();
+    pair.server->Shutdown();
+    pair.trace->Release();
+    REQUIRE(pair.listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
+    REQUIRE(denied.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    REQUIRE(denied.get() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.commands->selected.load() == 0);
+    REQUIRE(pair.commands->operated.load() == 0);
+    REQUIRE_FALSE(pair.trace->Expired());
+    REQUIRE_FALSE(pair.master->GetAuthenticationStatus().users[0].ready);
+    REQUIRE(KeyChanges(pair.master->GetAuthenticationStatus()) == KeyChanges(beforeMaster));
+    REQUIRE(KeyChanges(pair.outstation->GetAuthenticationStatus()) == KeyChanges(beforeOut));
+    pair.server = pair.outManager.AddTCPServer("renewal-restarted-server", levels::NORMAL,
+        ServerAcceptMode::CloseExisting, IPEndpoint::Localhost(pair.port), nullptr);
+    pair.outstation = pair.server->AddOutstation("renewal-outstation", pair.commands, DefaultOutstationApplication::Create(), pair.oc);
+    REQUIRE(pair.outstation->Enable());
+    REQUIRE(pair.listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    pair.Until([&] {
+        const auto m = pair.master->GetAuthenticationStatus(), o = pair.outstation->GetAuthenticationStatus();
+        return ReadyUsers(m) && ReadyUsers(o) && KeyChanges(m) >= KeyChanges(beforeMaster) + 2 && KeyChanges(o) >= 2;
+    });
+    REQUIRE(KeyChanges(pair.outstation->GetAuthenticationStatus()) == 2); // No abandoned V6 installed on the new association.
+    pair.Read(); pair.Control();
+    REQUIRE(pair.commands->operated.load() == 1);
 }
