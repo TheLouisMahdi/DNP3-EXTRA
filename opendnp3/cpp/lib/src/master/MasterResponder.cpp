@@ -147,7 +147,7 @@ MasterResponder::Result MasterResponder::RetainRequest(uint16_t association, ser
         return Result::BUSY;
     if (!keySize)
         return Result::NO_SESSION_KEYS;
-    if (!ValidAuthenticationMAC(macAlgorithm, tagLength) || pendingTimeoutMs < 100 || pendingTimeoutMs > 120000
+    if (!ValidAuthenticationMAC(macAlgorithm, tagLength) || pendingTimeoutMs > 120000
         || pendingTimeoutMs % 100 != 0 || !static_cast<const uint8_t*>(request)
         || request.length() < APDUHeader::REQUEST_SIZE || request.length() > MAX_REQUEST_SIZE)
         return Fail(Result::INVALID_INPUT);

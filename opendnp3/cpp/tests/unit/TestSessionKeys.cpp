@@ -372,7 +372,7 @@ TEST_CASE("SessionKeys - bad configuration and crypto outage fail closed", "[ses
     if (invalid == 2)
         c.messageLimit = 0;
     if (invalid == 3)
-        c.replyTimeoutMs = 0;
+        c.replyTimeoutMs = 120100;
     if (invalid == 4)
         c.tagLength = 12;
     SessionKeys bad(SessionKeys::Role::MASTER, 7, 2, c);
@@ -892,4 +892,73 @@ TEST_CASE("SessionKeys - restart Max rearms on renewal boundary, never on reconn
     pair.master.Tick(pair.now + delay);
     REQUIRE(statistics.Exceeded(SecurityStatistic::RESTART_REKEYS) == (config.intervalMs == 0));
     REQUIRE(statistics.Value(SecurityStatistic::RESTART_REKEYS) == 4);
+}
+
+TEST_CASE("SessionKeys - reply timeout range and resolution", "[sa-reply-timeout]")
+{
+    const uint32_t timeout = GENERATE(0u, 100u, 120000u, 120100u, 1u, 101u);
+    SessionKeys::Config config;
+    config.replyTimeoutMs = timeout;
+    SessionKeys engine(SessionKeys::Role::MASTER, 7, 2, config);
+    std::array<uint8_t, 32> key{};
+    REQUIRE(engine.Configure(rseq_t(key.data(), key.size()), 1000000, 0)
+            == (timeout <= 120000 && timeout % 100 == 0 ? R::OK : R::INVALID));
+}
+
+TEST_CASE("SessionKeys - zero at clock origin expires once with bounded recovery", "[sa-reply-timeout]")
+{
+    SessionKeys::Config config;
+    config.replyTimeoutMs = 0;
+    SessionKeys master(SessionKeys::Role::MASTER, 7, 2, config);
+    SessionKeys outstation(SessionKeys::Role::OUTSTATION, 7, 2, config);
+    AuthenticationStatistics stats(7, true, DefaultSecurityStatisticThresholds());
+    master.SetStatistics(&stats);
+    std::array<uint8_t, 32> key{};
+    REQUIRE(master.Configure(rseq_t(key.data(), key.size()), 1000000, 0) == R::OK);
+    REQUIRE(outstation.Configure(rseq_t(key.data(), key.size()), 1000000, 0) == R::OK);
+    Packet request, status, output;
+    REQUIRE(master.Begin(7, 3, 0, request.Write(), request.size) == R::OK);
+    REQUIRE(outstation.Process(7, request.Read(), 0, status.Write(), status.size) == R::OK);
+    // Both status ownership and awaiting-V6 ownership expire at the clock origin.
+    master.Tick(0);
+    outstation.Tick(0);
+    for (size_t n = 0; n < 100; ++n)
+    {
+        master.Tick(0);
+        REQUIRE_FALSE(master.NeedsExchange(0));
+        REQUIRE_FALSE(master.Ready(0));
+        REQUIRE_FALSE(outstation.Ready(0));
+    }
+    REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
+    REQUIRE_FALSE(master.NeedsExchange(99));
+    REQUIRE(master.NeedsExchange(100));
+    REQUIRE(master.ControlKey(100).is_empty());
+    REQUIRE(master.Process(7, status.Read(), 100, output.Write(), output.size) != R::INSTALLED);
+    REQUIRE(output.size == 0);
+    // Correcting configuration uses a new engine, as Config is immutable.
+    KeyPair recovered;
+    recovered.Exchange();
+}
+
+TEST_CASE("SessionKeys - nonzero deadline boundaries clear pending candidates", "[sa-reply-timeout]")
+{
+    const uint64_t elapsed = GENERATE(99u, 100u, 101u);
+    SessionKeys::Config config;
+    config.replyTimeoutMs = 100;
+    KeyPair pair(config);
+    AuthenticationStatistics stats(7, true, DefaultSecurityStatisticThresholds());
+    pair.master.SetStatistics(&stats);
+    pair.ToChange();
+    pair.master.Tick(pair.now + elapsed);
+    pair.outstation.Tick(pair.now + elapsed);
+    REQUIRE(pair.master.IsExchanging() == (elapsed < 100));
+    REQUIRE(pair.master.ControlKey(pair.now + elapsed).is_empty());
+    if (elapsed >= 100)
+    {
+        REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now + elapsed,
+                                        pair.confirmation.Write(), pair.confirmation.size) != R::INSTALLED);
+        REQUIRE_FALSE(pair.outstation.Ready(pair.now + elapsed));
+        pair.master.Tick(pair.now + elapsed);
+        REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
+    }
 }

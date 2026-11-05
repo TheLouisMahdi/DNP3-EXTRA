@@ -228,7 +228,7 @@ OutstationChallenger::Result OutstationChallenger::Challenge(uint16_t associatio
         }
         return Result::BUSY;
     }
-    if (!macPolicy.Allows(macAlgorithm) || !ValidAuthenticationMAC(macAlgorithm, tagLength) || replyTimeoutMs < 100 || replyTimeoutMs > 120000
+    if (!macPolicy.Allows(macAlgorithm) || !ValidAuthenticationMAC(macAlgorithm, tagLength) || replyTimeoutMs > 120000
         || replyTimeoutMs % 100 != 0 || overlapping || !static_cast<const uint8_t*>(request) || request.length() < 2
         || request.length() > MAX_REQUEST_SIZE)
         return Result::INVALID_INPUT;

@@ -50,7 +50,8 @@ public:
     static constexpr size_t MAX_CHALLENGE_SIZE = DEFAULT_MAX_APDU_SIZE;
 
     // Expected tag length 8/16 -> MAL 3/4; no implicit algorithm downgrade.
-    // Local pending lifetime in ms: 100..120000, steps of 100, default 2000.
+    // Local observation lifetime: 0..120000 ms, steps of 100, default 2000.
+    // Zero expires at the first timeout evaluation, not an infinite wait.
     explicit MasterResponder(uint16_t associationId,
                              size_t tagLength = 16,
                              uint32_t pendingTimeoutMs = 2000,

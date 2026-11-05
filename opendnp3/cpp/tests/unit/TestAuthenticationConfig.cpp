@@ -175,3 +175,16 @@ TEST_CASE("AuthenticationConfig - MAC alternatives require explicit supported tr
     AuthenticationSession session(SessionKeys::Role::MASTER, config);
     REQUIRE(session.Load(1000) == (condition == 0 || condition == 7));
 }
+
+TEST_CASE("AuthenticationConfig - runtime zero timeout is rejected until coordination supports it",
+          "[sa-reply-timeout]")
+{
+    auto source = std::make_shared<Credentials>();
+    auto policy = std::make_shared<Authorization>();
+    auto config = Config(source, policy);
+    config.replyTimeoutMs = 0;
+    AuthenticationSession session(SessionKeys::Role::MASTER, config);
+    REQUIRE_FALSE(session.Load(0));
+    REQUIRE_FALSE(session.At(0)->Ready(0));
+    REQUIRE_FALSE(session.At(1)->Ready(0));
+}

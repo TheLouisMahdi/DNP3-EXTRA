@@ -1,5 +1,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "crypto/CryptoProvider.h"
+#include "auth/AuthenticationStatistics.h"
 #include "outstation/OutstationChallenger.h"
 #include "utils/BufferHelpers.h"
 
@@ -478,4 +479,42 @@ TEST_CASE("OutstationChallenger - keyless pending timeout and replay require a n
     REQUIRE(Read(f.authorized).take(f.size).equals(Read(f.request)));
     REQUIRE(f.Reply(validTag, 1, 3005) == Result::UNEXPECTED_REPLY);
     f.Denied();
+}
+
+TEST_CASE("OutstationChallenger - immediate expiry never releases an ASDU", "[sa-reply-timeout]")
+{
+    Challenger engine(7, 16, 0);
+    AuthenticationStatistics stats(7, false, DefaultSecurityStatisticThresholds());
+    engine.SetStatistics(&stats);
+    std::array<uint8_t, 32> key{};
+    REQUIRE(engine.SetSessionKey(1, Read(key), 1000000, 0) == Result::OK);
+    const std::array<uint8_t, 2> request{{0xC5, 0x06}};
+    std::array<uint8_t, Challenger::CHALLENGE_SIZE> challenge{};
+    std::array<uint8_t, Challenger::MAX_REQUEST_SIZE> authorized{};
+    size_t size = 0;
+    REQUIRE(engine.Challenge(7, Read(request), IINField::Empty(), 0, Write(challenge), size) == Result::OK);
+    engine.Tick(0);
+    for (size_t n = 0; n < 100; ++n) engine.Tick(0);
+    REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
+    REQUIRE(engine.GetState() == State::IDLE);
+    std::array<uint8_t, 16> tag{};
+    Group120Var2 reply(1, 1, Read(tag));
+    REQUIRE(engine.Reply(7, reply, 0, Write(authorized), size) == Result::UNEXPECTED_REPLY);
+    REQUIRE(size == 0);
+    REQUIRE(IsZero(authorized));
+    REQUIRE(engine.Challenge(7, Read(request), IINField::Empty(), 1, Write(challenge), size) == Result::OK);
+    engine.Tick(1);
+    REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 2);
+}
+
+TEST_CASE("OutstationChallenger - nonzero reply expiry boundaries remain exclusive", "[sa-reply-timeout]")
+{
+    const uint64_t elapsed = GENERATE(1999u, 2000u, 2001u);
+    Fixture f;
+    f.Start();
+    const auto tag = f.Tag(Read(f.key1));
+    const auto result = f.Reply(tag, 1, 1000 + elapsed);
+    REQUIRE(result == (elapsed < 2000 ? Result::AUTHENTICATED : Result::EXPIRED));
+    REQUIRE(f.size == (elapsed < 2000 ? f.request.size() : 0));
+    if (elapsed >= 2000) REQUIRE(IsZero(f.authorized));
 }

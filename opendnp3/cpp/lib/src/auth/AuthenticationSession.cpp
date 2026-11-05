@@ -67,7 +67,10 @@ bool AuthenticationSession::Load(uint64_t now)
         entry->Reset();
     AuthenticationMACPolicy mac(ResolveAuthenticationMAC(config.macAlgorithm, config.tagLength));
     for (const auto& entry : sessions) if (!entry->ValidConfiguration()) return false;
-    if (!mac.Configure(config) || config.mode != AuthenticationConfig::Mode::REQUIRED
+    // Runtime zero admission remains closed: UpdateKeyTask's zero timeout means
+    // "use MasterParams", and shared responder observation needs separate ownership.
+    // Core engines support literal zero without silently enabling those paths.
+    if (!config.replyTimeoutMs || !mac.Configure(config) || config.mode != AuthenticationConfig::Mode::REQUIRED
         || (config.maxErrorMessagesSent != 2 && config.statisticThresholds[10] != 2
             && config.maxErrorMessagesSent != config.statisticThresholds[10])
         || (config.maxRestartRekeys != 3 && config.statisticThresholds[17] != 3

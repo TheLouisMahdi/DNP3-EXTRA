@@ -507,3 +507,25 @@ TEST_CASE("MasterResponder - embedded and standalone Challenges share associatio
     REQUIRE(f.Respond(Read(solicited), 1007) == MR::INVALID_SEQUENCE);
     f.Denied();
 }
+
+TEST_CASE("MasterResponder - immediate observation expiry and nonzero boundaries", "[sa-reply-timeout]")
+{
+    Fixture f;
+    const uint32_t timeout = GENERATE(0u, 100u, 120000u);
+    const uint64_t elapsed = GENERATE(0u, 99u, 100u, 120000u, 120001u);
+    MasterResponder engine(7, 16, timeout);
+    REQUIRE(engine.SetSessionKey(1, Read(f.key), 1000000, 0) == MasterResponder::Result::OK);
+    REQUIRE(engine.RetainRequest(7, Read(f.request), 0) == MasterResponder::Result::OK);
+    engine.Tick(elapsed);
+    if (elapsed >= timeout)
+    {
+        REQUIRE(engine.GetState() == MasterResponder::State::NO_SESSION_KEYS);
+        size_t size = 99;
+        REQUIRE(engine.Respond(7, Read(f.challenge), elapsed, Write(f.reply), size)
+                != MasterResponder::Result::OK);
+        REQUIRE(size == 0);
+        REQUIRE(engine.LastAcceptedChallenge().is_empty());
+    }
+    else
+        REQUIRE(engine.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE);
+}

@@ -105,7 +105,7 @@ bool SessionKeys::ValidConfig() const
     return user != 0
         && (config.intervalMs == 0
             || (config.intervalMs >= 1000 && config.intervalMs <= 7200000 && config.intervalMs % 1000 == 0))
-        && config.messageLimit >= 1 && config.messageLimit <= 0x7FFFFFFF && config.replyTimeoutMs >= 100
+        && config.messageLimit >= 1 && config.messageLimit <= 0x7FFFFFFF
         && config.replyTimeoutMs <= 120000 && config.replyTimeoutMs % 100 == 0
         && ValidAuthenticationMAC(macAlgorithm, config.tagLength)
         && (config.keyWrapAlgorithm == 1 || config.keyWrapAlgorithm == 2);
@@ -304,7 +304,8 @@ void SessionKeys::Tick(uint64_t now)
         if (statistics && role == Role::MASTER) statistics->ResetMaximum(SecurityStatistic::RESTART_REKEYS);
         Invalidate();
     }
-    if (deadline && now >= deadline)
+    // Phase/ownership arms the timer: an immediate deadline can equal zero.
+    if ((phase != Phase::IDLE || awaitingChange) && now >= deadline)
     {
         failureRenewalPending = false;
         bool exhausted = attempts >= 3;
@@ -320,7 +321,13 @@ void SessionKeys::Tick(uint64_t now)
         RetainRecovery();
         ClearPending();
         Invalidate();
-        nextAttempt = now + (exhausted ? (config.intervalMs ? config.intervalMs : config.replyTimeoutMs) : 0);
+        // Literal zero does not disable expiry. Only recovery is deferred by
+        // one 100 ms configuration quantum to avoid same-tick retry storms.
+        uint64_t retryDelay = config.replyTimeoutMs ? 0 : 100;
+        if (exhausted)
+            retryDelay = config.intervalMs ? config.intervalMs
+                                           : (config.replyTimeoutMs ? config.replyTimeoutMs : 100);
+        nextAttempt = now + retryDelay;
         cappedRetry = exhausted;
         if (exhausted)
             attempts = 0;
@@ -402,7 +409,11 @@ SessionKeys::Result SessionKeys::Fail(Result result, uint64_t now)
     ClearPending();
     Invalidate();
     // Invalid traffic cannot accelerate the retry loop.
-    nextAttempt = now + (attempts >= 3 && config.intervalMs ? config.intervalMs : config.replyTimeoutMs);
+    // Zero expires immediately, but recovery waits one configuration quantum.
+    uint64_t retryDelay = config.replyTimeoutMs ? config.replyTimeoutMs : 100;
+    if (attempts >= 3 && config.intervalMs)
+        retryDelay = config.intervalMs;
+    nextAttempt = now + retryDelay;
     cappedRetry = attempts >= 3;
     if (attempts >= 3)
         attempts = 0;
