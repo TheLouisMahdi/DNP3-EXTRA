@@ -1,8 +1,8 @@
-# Repository Map
+# Repository map
 
-C++ workspace with two TCP demos, a Windows diagnostic CLI and vendored OpenDNP3 3.1.2. The Git root is the workspace root. `opendnp3/` is the library subtree. Start with `AGENTS.md`, then open the paths for the task at hand.
+Scope and acceptance live in `DNP3_PDD_PLAN/PDF_SCOPE.md`. The workspace root is the Git repository. OpenDNP3 3.1.2 is under `opendnp3/`.
 
-Path shorthand in this map is exact. `src/` expands to `opendnp3/cpp/lib/src/`, `api/` to `opendnp3/cpp/lib/include/opendnp3/`, and `tests/` to `opendnp3/cpp/tests/`. The `groups/` prefix expands to `opendnp3/generation/dnp3/src/main/scala/com/automatak/render/dnp3/objects/groups/`. Other paths are workspace-relative.
+Path shorthand below is exact. `src/` means `opendnp3/cpp/lib/src/`, `api/` means `opendnp3/cpp/lib/include/opendnp3/`, `tests/` means `opendnp3/cpp/tests/`, and `groups/` means `opendnp3/generation/dnp3/src/main/scala/com/automatak/render/dnp3/objects/groups/`.
 
 ## Entry points and build
 
@@ -45,37 +45,15 @@ Path shorthand in this map is exact. `src/` expands to `opendnp3/cpp/lib/src/`, 
 - Catch/CTest targets are defined in `tests/unit/CMakeLists.txt`, `tests/integration/CMakeLists.txt` and `tests/asiotests/CMakeLists.txt`. Start parser and database investigations at `tests/unit/TestAPDUParsing.cpp` and `tests/unit/TestDatabase.cpp`. Reusable fixtures are in `tests/dnp3mocks/` and fuzz targets in `tests/fuzz/`.
 - `cli/tests/ProcessSmoke.py` runs two local CLI processes through `pc-compat`, `pc-method4`, `pc-method68`, `pc-negative` and `pc-tls`. It selects a free port by binding and releasing a temporary socket before starting the peers. The native TCP/TLS fixtures have access to the actual listener port.
 - `tests/integration/TestSecureAuthentication.cpp` covers native TCP SA, reconnect and restart. `tests/integration/TestEventIntegration.cpp` covers event flow. `tests/asiotests/TestTCPClientServer.cpp` is a socket fixture entry point.
-- Local, untracked acceptance kit in this workspace: `DNP3-AUTOTEST-KIT/dnp3_acceptance.py`, `DNP3-AUTOTEST-KIT/TEST_CASES.json` and `DNP3-AUTOTEST-KIT/FREEBUFF_TEST_GUIDE.md`. The kit exercises local CLI/native binaries. Preserve its separate results directory as evidence.
+- Reusable acceptance manifest and guide, with an unverified local runner: `DNP3-AUTOTEST-KIT/dnp3_acceptance.py`, `DNP3-AUTOTEST-KIT/TEST_CASES.json` and `DNP3-AUTOTEST-KIT/FREEBUFF_TEST_GUIDE.md`. The kit exercises local CLI/native binaries. Preserve its separate results directory as evidence.
 - For independent interoperability, use the CLI as one endpoint with an external peer or Triangle MicroWorks Test Harness. The in-repo harnesses exercise local implementations. Consult the issue register for outstanding external validation.
 
-## Unfinished or unsupported
 
-- **SA and G0.** G120V8 is codec-only. Outstation G0V209 returns OBJECT_UNKNOWN and is omitted from discovery. Methods 4/68 are the implemented remote-key methods. V7 codes 5/7, SCS wrap and Method 68 DSA signature representation remain tracked as `P4-OPEN-01`, `RUK-OPEN-01` and `RUK-OPEN-02`.
-- **Statistics.** The P1 sticky continuity fix is absent. G121 snapshot and G122 event flags depend on the initial retention load. A later save failure does not latch DISCONTINUITY. Durable target retention and per-point rearming remain open. Increment calls Publish before Persist, so a save failure cannot affect the flags of that same event. G122 explicit V2 does not supply a timestamp for an untimed historical event.
-- **Level 4 and application behavior.** The supplied profile is Level 3 with extensions. Full Table 14-5 coverage remains open, including broader G0 and remaining command and measurement wire audits. G34 wire access and Outstation G13/G43 publication are implemented. The typed Master FC6 API completes on local transmission in Compatibility mode. REQUIRED mode rejects FC6. See `DNP3_PDD_PLAN/FC6_B3_REPORT.md` for local evidence and open interoperability work. The CLI simulates controls and has no remote hardware restart implementation.
-- **Product security.** Cipher-change timeout, scheduled revocation, selected algorithms, RTU provisioning/roles and target hardening remain open. The TLS 1.3 suite list needs product clarification. See the security matrix and issue register for scope.
+## Dependencies and focused navigation
 
-## Requirements and evidence
-
-- `DNP3_PDD_PLAN/01_SOURCE_MAP.md` indexes the IEEE standard, Device Profile and security addendum. `DNP3_PDD_PLAN/IEEE_TRACEABILITY.csv`, `DNP3_PDD_PLAN/02_PROFILE_MATRIX.csv` and `DNP3_PDD_PLAN/03_SECURITY_MATRIX.md` are requirement navigation.
-- `DNP3_PDD_PLAN/README.md`, `DNP3_PDD_PLAN/05_PHASES_AND_CODEX.md`, `DNP3_PDD_PLAN/06_PREVIOUS_GUIDELINE_AUDIT.md` and `DNP3_PDD_PLAN/ISSUE_POSPONED1.md` cover planning, earlier audit and open decisions. `DNP3_PDD_PLAN/04_G0V209_CONTRACT.md` covers the attribute contract.
-- `DNP3_PDD_PLAN/PROGRESS.md`, `DNP3_PDD_PLAN/PROGRESS_EVIDENCE.json` and `DNP3_PDD_PLAN/SECURITY_PROGRESS.csv` hold revision-scoped assessments and evidence. `scripts/progress.py` and `.github/workflows/progress.yml` maintain the dashboard in `README.md`.
-- Focused reports are `DNP3_PDD_PLAN/DEVICE_PROFILE_MEASUREMENTS_REPORT.md`, `DNP3_PDD_PLAN/SA_REMOTE_UPDATE_KEYS_REPORT.md`, `DNP3_PDD_PLAN/P6b-M1_REPORT.md`, `DNP3_PDD_PLAN/P6b-O2_REPORT.md` and `DNP3_PDD_PLAN/P6c_REPORT.md`. Compare each report's tested revision and scenario to the task. Source support, local execution evidence and external conformance are separate.
-
-## Task-to-file lookup
-
-| Task | Start here |
-| --- | --- |
-| Object qualifier, CTO or typed delivery | `src/app/parsing/APDUParser.cpp`, `src/master/MeasurementHandler.cpp`, `tests/unit/TestProfileMeasurements.cpp` |
-| READ, class assignment, event retry or CONFIRM | `src/outstation/OutstationContext.cpp`, `src/outstation/event/EventSelection.cpp`, `tests/unit/TestProfileClasses.cpp`, `tests/unit/TestOutstationEventResponses.cpp` |
-| SBO, command echo or duplicate execution | `src/master/CommandTask.cpp`, `src/outstation/ControlState.h`, `src/outstation/RequestHistory.cpp`, `tests/unit/TestProfileControls.cpp` |
-| Absolute time, LAN sync or IIN clear | `src/master/LANTimeSyncTask.cpp`, `src/outstation/WriteHandler.cpp`, `tests/unit/TestProfileTime.cpp` |
-| SA handshake, renewals or restart | `src/auth/SessionKeys.cpp`, `tests/unit/TestProductionAuthentication.cpp`, `tests/integration/TestSecureAuthentication.cpp` |
-| Remote Update Key and credential persistence | `src/auth/RemoteUpdateKeys.cpp`, `src/auth/WindowsAuthenticationCredentials.cpp`, `tests/unit/TestRemoteUpdateKeys.cpp` |
-| G121/G122 counters, events or retention | `src/auth/AuthenticationStatistics.cpp`, `src/outstation/SecurityStatEventPublisher.cpp`, `tests/unit/TestAuthenticationStatistics.cpp`, `tests/unit/TestSecurityStatRead.cpp`, `tests/unit/TestSecurityStatEvents.cpp`, `tests/unit/TestMasterSecurityStatistics.cpp` |
-| G0 version, count or discovery | `src/outstation/DeviceAttributeSelection.cpp`, `src/app/parsing/DeviceAttributeParser.cpp`, `tests/unit/TestDeviceAttributes.cpp` |
-| TLS trust, listener ownership or process flake | `src/channel/tls/SSLContext.cpp`, `src/DNP3ManagerImpl.cpp`, `cli/Security.cpp`, `cli/tests/ProcessSmoke.py` |
-
-## Discovery exclusions
-
-Skip .git, .freebuff, build trees, caches, temporary files, binaries and DNP3-AUTOTEST-RESULTS during ordinary source discovery. Use the generator models before inspecting generated C++. Open the IEEE 1815 reference directory only for an assigned requirements check, using the page index above.
+- CMake entry points above register existing source/test targets. `opendnp3/deps/asio.cmake`, `exe4cpp.cmake` and `ser4cpp.cmake` pin runtime dependencies. TLS and SA crypto use OpenSSL. Maven and the pinned Scala dependencies in `opendnp3/generation/pom.xml` own generation.
+- Follow one feature through its Scala model, generated object/enum, shared APDU parser/writer, role handler and permanent tests. Search only within those modules.
+- `DNP3_PDD_PLAN/PROFILE_MATRIX.csv` holds 69 Profile IDs. `SECURITY_MATRIX.csv` holds 36 security IDs and source summaries. `OPEN_ISSUES.md` tracks decisions and target blockers.
+- `ENGINEERING_EVIDENCE.md` preserves historical reports, interpretation details and tested revisions. `PROGRESS_EVIDENCE.json` retains the original execution snapshot. `IEEE_TRACEABILITY.csv` retains 712 reference-only rows with unique IEEE/source references.
+- `cli/README.md` provides detailed diagnostic commands and historical Windows execution evidence. The local `DNP3-AUTOTEST-KIT/dnp3_acceptance.py` is excluded from accepted evidence.
+- Skip build trees, `.git/`, caches and local test results during ordinary source discovery. Consult only the relevant pages of the supplied PDFs when resolving requirements.

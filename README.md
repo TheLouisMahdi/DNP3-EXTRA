@@ -1,75 +1,41 @@
 # DNP3-EXTRA
 
-DNP3 Master and Outstation development on OpenDNP3, with a Windows console for protocol diagnostics, Secure Authentication v5 and mutual TLS.
+OpenDNP3 3.1.2 extensions with native Master and Outstation APIs, TCP/UDP/serial channels, Secure Authentication components and a Windows TCP/mutual-TLS diagnostic CLI.
 
-## Standards implementation progress
+## Scope
+The supplied 12-page RTU Device Profile selects a Level 3 Outstation with explicit extensions. Acceptance covers its 69 object/function rows, runtime settings on pages 1–4 and the 36 security addendum rows. IEEE 1815-2012 governs the selected protocol behavior. Master responsibilities follow the selected functionality and explicit project requirements. [Scope and acceptance](DNP3_PDD_PLAN/PDF_SCOPE.md)
 
-Implementation progress is not equivalent to IEEE certification or independent interoperability conformance.
+Implemented paths include measurement/events, controls, time synchronization, G34 deadbands, G13/G43 command events, typed Master FC6 in Compatibility mode, SA challenge/reply and Aggressive exchanges, remote update-key Methods 4/68, G121/G122 and mutual TLS diagnostics. Completion remains subject to per-requirement evidence.
 
-<!-- progress:start -->
+Open requirements include truthful G0V209 capability reporting, runtime G120V8, authenticated FC6, product crypto selections, retention and physical RTU security/integration. The CLI operates simulated I/O. [Open issues](DNP3_PDD_PLAN/OPEN_ISSUES.md)
 
-**Historical audit snapshot, not current compliance.** The metrics below reflect audit revision `4d9f7bbaea1f` and have not been revalidated against current source `a1d3ddcc096f`.
+## Build and test
+Use installed compatible CMake, MSVC, Python 3 and OpenSSL 3 dependencies. Reuse the existing toolchain/cache configuration when available. CMake fetches pinned ASIO/executor/serialization dependencies. Commands below build the native library and diagnostic tests from the repository root.
 
-![IEEE 1815-2012. Audit in progress.](DNP3_PDD_PLAN/progress-ieee.svg)
+```powershell
+cmake -S opendnp3 -B build/native -DDNP3_DIAGNOSTIC_CLI=ON -DDNP3_SA_CRYPTO=ON -DDNP3_TLS=ON -DDNP3_TESTS=ON
+cmake --build build/native --config Release --target dnp3-cli unittests integrationtests asiotests --parallel 4
+ctest --test-dir build/native -C Release --output-on-failure
+# Focused typed FC6 tests
+& ./build/native/cpp/tests/unit/Release/unittests.exe '[fc6-master]'
+```
 
-![RTU Device Profile. Historical verified 17.39% (12/69), historical implementation coverage 84.06% (58/69).](DNP3_PDD_PLAN/progress-profile.svg)
+The workspace CMakeLists.txt additionally defines the `master` and `outstation` demos under `apps/`. Object generation uses the existing Maven/Scala project under `opendnp3/generation/`. [Detailed Windows build, provisioning and tests](cli/README.md)
 
-![RTU Security Requirements. Historical verified 42.42% (14/33), historical implementation coverage 48.48% (16/33).](DNP3_PDD_PLAN/progress-security.svg)
+## Run
+Launch the following in separate PowerShell terminals.
 
-| Scope | Verified | Implemented, unverified | Partial | Missing | Not audited | Not applicable | Blocked |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| IEEE 1815-2012 / Outstation | 39 | 10 | 511 | 0 | 147 | 0 | 0 | 1 | 4 |
-| IEEE 1815-2012 / Master | 40 | 9 | 523 | 1 | 138 | 0 | 0 | 1 | 0 |
-| RTU Device Profile / Outstation | 12 | 0 | 46 | 0 | 9 | 1 | 0 | 0 | 1 |
-| RTU Device Profile / Master | 11 | 1 | 46 | 0 | 10 | 1 | 0 | 0 | 0 |
-| RTU Security Requirements / Outstation | 14 | 0 | 2 | 0 | 11 | 3 | 5 | 0 | 1 |
-| RTU Security Requirements / Master | 14 | 0 | 2 | 0 | 9 | 2 | 0 | 8 | 1 |
+```powershell
+& ./build/native/cli/Release/dnp3-cli.exe outstation
+& ./build/native/cli/Release/dnp3-cli.exe master
+```
 
-| Role and scope | Strict verified | Implementation coverage | Open issue IDs |
-| --- | --- | --- | ---: |
-| IEEE 1815-2012 / Outstation (1 not applicable) | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 31 |
-| IEEE 1815-2012 / Master (1 not applicable) | AUDIT IN PROGRESS | AUDIT IN PROGRESS | 31 |
-| RTU Device Profile / Outstation | 17.39% (12/69) | 84.06% (58/69) | 17 |
-| RTU Device Profile / Master | 15.94% (11/69) | 82.61% (57/69) | 17 |
-| RTU Security Requirements / Outstation | 42.42% (14/33) | 48.48% (16/33) | 21 |
-| RTU Security Requirements / Master (8 not applicable) | 51.85% (14/27) | 59.26% (16/27) | 21 |
-| Profile G120 / Outstation | 60.00% (9/15) | 60.00% (9/15) | 5 |
-| Profile G120 / Master | 60.00% (9/15) | 60.00% (9/15) | 5 |
-| Security recommended rows | 2 not audited | Excluded from mandatory metrics | — |
-| Security optional rows | 0 rows | Excluded from mandatory metrics | — |
-| Security unresolved rows | 1 partial | Excluded from mandatory metrics | — |
+These diagnostic defaults use explicit unprotected Compatibility mode on localhost port 20000. For SA test provisioning, role tests and TLS on port 19999, follow the CLI guide. Production credentials and RTU deployment require the selected security controls. [CLI operations](cli/README.md)
 
-Status colors: verified (green), verified subset (teal), implemented without verification (cyan), decode only (blue), partial (amber), missing (red), not audited (slate), blocked (violet). Subset and decode-only rows do not receive full verification or implementation credit.
+## Requirements and evidence
+- [Profile matrix](DNP3_PDD_PLAN/PROFILE_MATRIX.csv) retains all 69 original IDs and recorded evidence.
+- [Security matrix](DNP3_PDD_PLAN/SECURITY_MATRIX.csv) retains all 36 IDs, source requirements, classifications and historical evidence.
+- [Engineering evidence](DNP3_PDD_PLAN/ENGINEERING_EVIDENCE.md) preserves tested revisions and limitations. Historical records require review against current source.
+- [Repository map](REPO_MAP.md) provides direct implementation and test paths.
 
-Latest tracked source commit **a1d3ddcc096f329bdcc7f07da167a596eb0cb2e6**. Audit revision **4d9f7bbaea1fcf305d942abe7891384df18a6199**.
-Last tested revision **4d9f7bbaea1fcf305d942abe7891384df18a6199** on 2026-11-03 (Windows x64 Release).
-Unit **714 cases / 59,048 assertions**. Integration **12 cases / 241 assertions**, including SA TCP. [Execution evidence](cli/README.md)
-Historical SA TCP baseline **2 cases / 240 assertions** at `33d7994ae551e4f3b30b7ddfb894e59c6b9e336d`.
-
-**Historical Windows test results.** The current source differs from the tested revision.
-**Audit refresh required.** Positive and partial assessments await review on this source revision.
-
-Outstation items awaiting audit:
-- **IEEE 1815-2012** — None within the listed rows
-- **RTU Device Profile** — None within the listed rows
-- **RTU Security Requirements** — `SEC-T3-01`, `SEC-T3-02`, `SEC-T3-06`, `SEC-T3-07`, `SEC-T3-08`
-
-[Formulas, evidence scope and open decisions](DNP3_PDD_PLAN/PROGRESS.md)
-
-<!-- progress:end -->
-
-## Requirements coverage
-
-The Device Profile covers the 69 object and function rows identified in a 12-page excerpt from a 78-page document. The excerpt identifies a Level 3 Outstation. The separate Level 4 and SA v5 audit follows IEEE 1815-2012. The security requirements cover three tables in a six-page amendment. [Source index](DNP3_PDD_PLAN/01_SOURCE_MAP.md)
-
-The source matrices keep Outstation and Master assessments separate. The Outstation assessment determines the primary profile count. For security, each row assesses the named RTU obligation using Windows evidence where applicable. [Device Profile](DNP3_PDD_PLAN/02_PROFILE_MATRIX.csv) · [Security requirements](DNP3_PDD_PLAN/03_SECURITY_MATRIX.md) · [Security audit](DNP3_PDD_PLAN/SECURITY_PROGRESS.csv) · [IEEE traceability](DNP3_PDD_PLAN/IEEE_TRACEABILITY.csv)
-
-## Windows Master and Outstation
-
-Run `dnp3-cli.exe outstation` and `dnp3-cli.exe master` in separate terminals. The default compatibility connection uses `127.0.0.1:20000`. The guide covers the Release build, measurement scans, simulated controls, SA provisioning, TLS on port 19999 and repeatable process tests. [Build and run](cli/README.md)
-
-The Windows environment exercises SA session keys, Challenge/Reply, Aggressive Mode, remote Update Key Methods 4 and 68, user lifecycle and G121/G122. Remote authority provisioning in the console uses test credentials. [Remote Update Keys](DNP3_PDD_PLAN/SA_REMOTE_UPDATE_KEYS_REPORT.md) · [Windows acceptance evidence](cli/README.md#windows-acceptance-evidence)
-
-## Engineering evidence
-
-G0V209 advertisement, runtime G120V8, independent interoperability, RTU hardening and outstanding security profile decisions remain open. [Audit notes and regeneration](DNP3_PDD_PLAN/PROGRESS.md) · [Repository map](REPO_MAP.md)
+Independent interoperability and physical STM32H743/FreeRTOS validation remain separate acceptance obligations. No certification is claimed.
