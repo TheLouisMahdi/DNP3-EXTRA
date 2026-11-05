@@ -363,6 +363,94 @@ def renewal(exe):
         run(exe, "test-cleanup", *provision)
 
 
+def reply_timeouts(exe):
+    profile = "reply-" + uuid.uuid4().hex[:12]
+    provision = ["--test-only", "--profile", profile, "--auth", "method4"]
+
+    def status(peer):
+        cursor = peer.send("auth")
+        users = {}
+        for user in (1, 2):
+            line = peer.wait(r"\[SESSION\] user=" + str(user)
+                             + r" ready=[01] exchanging=[01] remaining=\d+$", cursor, timeout=5)
+            users[user] = tuple(map(int, re.search(
+                r"ready=([01]) exchanging=([01]) remaining=(\d+)$", line).groups()))
+        line = peer.wait(r"\[LOCAL-STAT\] index=13 value=\d+$", cursor, timeout=5)
+        changes = int(re.search(r"value=(\d+)$", line).group(1))
+        peer.wait(r"\[LOCAL-STAT\] index=17 value=\d+$", cursor, timeout=5)
+        return users, changes
+
+    def unready(peer):
+        users, changes = status(peer)
+        assert changes == 0, ("Zero-duration exchange installed keys", users, changes)
+        assert all(not ready and remaining == 0 for ready, _, remaining in users.values()), users
+
+    try:
+        run(exe, "test-provision", *provision)
+        invalid = (
+            ("--reply-ms", "-1", "Invalid numeric option"),
+            ("--reply-ms", "1", "SA credentials or policy unavailable"),
+            ("--reply-ms", "101", "SA credentials or policy unavailable"),
+            ("--reply-ms", "120001", "Numeric option out of range"),
+            ("--reply-ms", "4294967296", "Numeric option out of range"),
+            ("--response-ms", "0", "Zero port/user/timeout/count is unsupported"),
+        )
+        for role in ("master", "outstation"):
+            for option, value, reason in invalid:
+                extra = ["--reply-ms", "0"] if option == "--response-ms" else []
+                result = run(exe, role, *provision, *loopback_port(), "--trust-system-time",
+                             *extra, option, value, success=False)
+                assert "ERROR: " + reason in result.stdout + result.stderr, (role, option, value, result)
+            # Acceptance of the nonzero endpoints is independent of whether a
+            # 100 ms timer can complete an exchange under a particular host load.
+            for value in (100, 120000):
+                peer = Peer(exe, role, [*provision, *loopback_port(), "--trust-system-time",
+                                       "--reply-ms", str(value)])
+                try:
+                    unready(peer)  # No peer is connected; valid configuration, no fabricated keys.
+                finally:
+                    stop(peer)
+
+        # None omits the option. Verify default/default really authenticates;
+        # then isolate zero in each role, and finally configure both roles zero.
+        for master_ms, out_ms in ((None, None), (0, None), (None, 0), (0, 0)):
+            options = [*provision, *loopback_port(), "--trust-system-time", "--response-ms", "1000"]
+            master_options = [] if master_ms is None else ["--reply-ms", str(master_ms)]
+            out_options = [] if out_ms is None else ["--reply-ms", str(out_ms)]
+            master = out = None
+            try:
+                master, out = connected(exe, options, master_options, out_options)
+                out.executed(0)
+                if master_ms is None and out_ms is None:
+                    deadline = time.monotonic() + 20
+                    while True:
+                        snapshots = [status(peer) for peer in (master, out)]
+                        if all(changes >= 2 and all(ready and not exchanging and remaining > 0
+                               for ready, exchanging, remaining in users.values())
+                               for users, changes in snapshots):
+                            break
+                        remaining = deadline - time.monotonic()
+                        assert remaining > 0, ("Default Reply Timer did not authenticate", snapshots)
+                        with master.cv:
+                            master.cv.wait(min(0.05, remaining))
+                    master.task("crob 0 on")
+                    out.executed(1)
+                else:
+                    # Configuration acceptance must not be confused with ready
+                    # keys: zero expires before a fresh exchange can complete.
+                    unready(master)
+                    unready(out)
+                    master.task("crob 0 on", success=False, timeout=25)
+                    out.executed(0)
+                    unready(master)
+                    unready(out)
+            finally:
+                stop(out, master)
+            print(f"PASS Reply Timer configuration: master={master_ms} outstation={out_ms}", flush=True)
+    finally:
+        run(exe, "test-cleanup", *provision)
+
+
 def invalid_credentials(exe):
     profiles = ["bad-" + uuid.uuid4().hex[:10] for _ in range(2)]
     for profile in profiles:
@@ -541,7 +629,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "tls", "asio", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "all"), default="all")
     args = parser.parse_args()
     assert args.exe.is_file(), args.exe
     if args.only == "asio":
@@ -553,6 +641,7 @@ def main():
     if args.only in ("method68", "all"): secure(args.exe, "method68")
     if args.only in ("negative", "all"): invalid_credentials(args.exe)
     if args.only in ("renewal", "all"): renewal(args.exe)
+    if args.only in ("reply-timeout", "all"): reply_timeouts(args.exe)
     if args.only in ("tls", "all"): tls(args.exe, args.work_dir)
     print("CLI PROCESS ACCEPTANCE PASS; native callbacks/readbacks, clean peer shutdowns and expected failure exits checked.", flush=True)
 

@@ -330,7 +330,9 @@ Options ParseOptions(int argc, char** argv)
     // the same identity so case changes cannot create a second owner.
     for (auto& ch : o.profile) if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch + ('a' - 'A'));
     if (o.auth != "compat" && o.auth != "method4" && o.auth != "method68") throw std::runtime_error("Unknown authentication mode");
-    if (!o.port || !o.user || !o.responseMs || !o.replyMs || !o.renewalMs || !o.messageCount) throw std::runtime_error("Zero port/user/timeout/count is unsupported");
+    // A zero security Reply Timer expires immediately; responseMs is the separate
+    // application/task timeout and still cannot be zero.
+    if (!o.port || !o.user || !o.responseMs || !o.renewalMs || !o.messageCount) throw std::runtime_error("Zero port/user/timeout/count is unsupported");
     if (!o.profile.empty() && o.host != "127.0.0.1") throw std::runtime_error("TEST credential profiles require localhost 127.0.0.1");
     if (o.tls && !explicitPort) o.port = 19999;
     return o;
