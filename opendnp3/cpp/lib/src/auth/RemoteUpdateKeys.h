@@ -22,6 +22,8 @@ public:
     bool Authorize(uint16_t user, uint8_t function, uint64_t now) const;
     bool Begin(const UpdateKeyRequest& request, uint64_t now);
     bool Build(APDURequest& request, uint8_t sequence, uint64_t now);
+    enum class BuildFailure { OTHER, TIMEOUT };
+    BuildFailure LastBuildFailure() const { return buildFailure; }
     enum class Result { IGNORED, CONTINUE, COMPLETE, FAILED };
     Result Response(const APDUResponseHeader& header, ser4cpp::rseq_t objects, uint64_t now);
     bool Request(const APDUHeader& header, ser4cpp::rseq_t objects, uint64_t now,
@@ -54,6 +56,7 @@ private:
                ser4cpp::wseq_t output, size_t& size, IINField iin);
     void ClearExchange();
     void Failure();
+    void Expire();
     AuthenticationSession& owner;
     const SessionKeys::Role role;
     std::shared_ptr<IUpdateKeyCredentials> credentials;
@@ -70,6 +73,7 @@ private:
     uint32_t invalidated = 0;
     uint8_t appSequence = 0;
     uint64_t deadline = 0;
+    BuildFailure buildFailure = BuildFailure::OTHER;
     uint64_t requestedExpiryUnix = 0, requestedExpiry = 0;
     uint8_t retries = 0;
     Phase phase = Phase::IDLE;

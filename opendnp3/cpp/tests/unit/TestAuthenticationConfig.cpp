@@ -176,15 +176,31 @@ TEST_CASE("AuthenticationConfig - MAC alternatives require explicit supported tr
     REQUIRE(session.Load(1000) == (condition == 0 || condition == 7));
 }
 
-TEST_CASE("AuthenticationConfig - runtime zero timeout is rejected until coordination supports it",
-          "[sa-reply-timeout]")
+TEST_CASE("AuthenticationConfig - runtime zero timeout loads but never supplies session keys",
+          "[sa-reply-timeout][sa-zero-runtime]")
 {
     auto source = std::make_shared<Credentials>();
     auto policy = std::make_shared<Authorization>();
     auto config = Config(source, policy);
     config.replyTimeoutMs = 0;
-    AuthenticationSession session(SessionKeys::Role::MASTER, config);
-    REQUIRE_FALSE(session.Load(0));
+    const auto role = GENERATE(SessionKeys::Role::MASTER, SessionKeys::Role::OUTSTATION);
+    AuthenticationSession session(role, config);
+    REQUIRE(session.Load(0));
     REQUIRE_FALSE(session.At(0)->Ready(0));
     REQUIRE_FALSE(session.At(1)->Ready(0));
+}
+
+TEST_CASE("AuthenticationConfig - zero retains credential and range validation", "[sa-zero-runtime]")
+{
+    auto source = std::make_shared<Credentials>();
+    auto policy = std::make_shared<Authorization>();
+    auto config = Config(source, policy);
+    config.replyTimeoutMs = 0;
+    config.credentials.reset();
+    AuthenticationSession absent(SessionKeys::Role::MASTER, config);
+    REQUIRE_FALSE(absent.Load(0));
+    config.credentials = source;
+    config.replyTimeoutMs = 1;
+    AuthenticationSession invalid(SessionKeys::Role::MASTER, config);
+    REQUIRE_FALSE(invalid.Load(0));
 }

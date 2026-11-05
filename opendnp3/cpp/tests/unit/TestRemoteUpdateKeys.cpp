@@ -48,18 +48,20 @@ public:
 namespace
 {
 using namespace remote_update_test;
-MasterParams RemoteMasterSettings(AuthenticationConfig config)
+MasterParams RemoteMasterSettings(AuthenticationConfig config, uint32_t replyTimeoutMs = 2000)
 {
     auto p = NoStartupTasks();
     config.updateKeyTrust.reset(); // The Master never receives BC.
+    config.replyTimeoutMs = replyTimeoutMs;
     p.authentication = config;
     p.ignoreRestartIIN = true;
     return p;
 }
-OutstationConfig RemoteOutSettings(const AuthenticationConfig& config)
+OutstationConfig RemoteOutSettings(const AuthenticationConfig& config, uint32_t replyTimeoutMs = 2000)
 {
     OutstationConfig c;
     c.params.authentication = config;
+    c.params.authentication.replyTimeoutMs = replyTimeoutMs;
     c.params.allowUnsolicited = false;
     c.eventBufferConfig.maxSecurityStatEvents = 32;
     return c;
@@ -84,19 +86,28 @@ struct RemotePair
         return value;
     }
     RemotePair(size_t capacity = 2, bool common = true,
-               std::shared_ptr<RemoteAuthority> authority_ = std::make_shared<RemoteAuthority>())
+               std::shared_ptr<RemoteAuthority> authority_ = std::make_shared<RemoteAuthority>(),
+               uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000)
         : masterCredentials(Credentials(common)), outCredentials(Credentials(common)),
           authority(std::move(authority_)),
-          master(RemoteMasterSettings(RemoteSettings(masterCredentials, policy, authority, capacity)), Addresses()),
-          out(RemoteOutSettings(RemoteSettings(outCredentials, policy, authority, capacity)))
+          master(RemoteMasterSettings(RemoteSettings(masterCredentials, policy, authority, capacity), masterTimeoutMs), Addresses()),
+          out(RemoteOutSettings(RemoteSettings(outCredentials, policy, authority, capacity), outstationTimeoutMs))
     {
         out.application->currentTime = DNPTime(1700000000000ULL);
         out.LowerLayerUp();
         REQUIRE(master.context->OnLowerLayerUp());
         master.exe->run_many();
         Pump();
-        REQUIRE(Master().Find(1)->Ready(0) == common);
-        REQUIRE(Master().Find(2)->Ready(0));
+        if (masterTimeoutMs && outstationTimeoutMs)
+        {
+            REQUIRE(Master().Find(1)->Ready(0) == common);
+            REQUIRE(Master().Find(2)->Ready(0));
+        }
+        else
+        {
+            REQUIRE_FALSE(Master().Find(1)->Ready(0));
+            REQUIRE_FALSE(Master().Find(2)->Ready(0));
+        }
     }
     AuthenticationSession& Master() { return RemoteUpdateKeyTestAccess::Sessions(*master.context); }
     AuthenticationSession& Out() { return RemoteUpdateKeyTestAccess::Sessions(out.context); }
@@ -707,16 +718,17 @@ TEST_CASE("RemoteUpdateKeys - independent Common renewal survives while another 
     REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
 }
 
-TEST_CASE("RemoteUpdateKeys - each lost response retries the owned native exchange exactly once", "[remote-update-keys][remote-update-runtime]")
+TEST_CASE("RemoteUpdateKeys - each lost response retries the owned native exchange exactly once", "[remote-update-keys][remote-update-runtime][sa-zero-runtime]")
 {
     const auto response = GENERATE(uint8_t(0), uint8_t(12), uint8_t(15));
-    RemotePair pair;
+    const auto timeout = GENERATE(100u, 2000u, 120000u);
+    RemotePair pair(2, true, std::make_shared<RemoteAuthority>(), timeout, timeout);
     pair.dropStatus = response == 0;
     pair.dropOutVariation = response;
     auto completed = pair.Start(pair.authority->Status(3, 1, "A"));
     pair.Pump();
     REQUIRE(completed->results.empty());
-    pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+    pair.master.exe->advance_time(std::chrono::milliseconds(timeout));
     pair.master.exe->run_many();
     pair.Pump();
     CAPTURE(response, pair.masterWire.back(), pair.outWire.back());
@@ -1128,7 +1140,7 @@ TEST_CASE("RemoteUpdateKeys - startup waits for trusted expiry validation and ig
     REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
 }
 
-TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and preserves pending recovery", "[remote-update-keys][remote-update-runtime]")
+TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and preserves pending recovery", "[remote-update-keys][remote-update-runtime][sa-zero-runtime]")
 {
     const bool asymmetric = GENERATE(false, true);
     std::shared_ptr<RemoteAuthority> authority
@@ -1152,8 +1164,9 @@ TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and
     REQUIRE(oldPacket.ToRSeq().length() >= 4);
     REQUIRE(oldPacket.ToRSeq()[3] == 13);
     REQUIRE(pair.master.context->OnLowerLayerDown());
-    AuthenticationSession restarted(SessionKeys::Role::MASTER,
-        RemoteMasterSettings(RemoteSettings(pair.masterCredentials, pair.policy, pair.authority, 2)).authentication);
+    auto restartConfig = RemoteMasterSettings(RemoteSettings(pair.masterCredentials, pair.policy, pair.authority, 2)).authentication;
+    restartConfig.replyTimeoutMs = 0;
+    AuthenticationSession restarted(SessionKeys::Role::MASTER, restartConfig);
     REQUIRE(restarted.Load(0));
     REQUIRE_FALSE(restarted.Find(2)->Ready(0));
     REQUIRE(restarted.Find(2)->UpdateKey(0).equals(R(pair.masterCredentials->users[1].updateKey)));
@@ -1177,7 +1190,19 @@ TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and
     verify.nameSize = 1;
     verify.method = asymmetric ? 68 : 4;
     verify.verifyOnly = true;
+    const auto pendingKey = pair.masterCredentials->users[1].pendingUpdateKey;
+    const auto journalWrites = pair.masterCredentials->writes;
     REQUIRE(restarted.remote->Begin(verify, 0));
+    std::array<uint8_t, 1024> expiredBuffer{};
+    APDURequest expired(W(expiredBuffer));
+    REQUIRE_FALSE(restarted.remote->Build(expired, 9, 0));
+    REQUIRE(pair.masterCredentials->users[1].havePendingKey);
+    REQUIRE(pair.masterCredentials->users[1].pendingUpdateKey == pendingKey);
+    REQUIRE(pair.masterCredentials->writes == journalWrites);
+    restartConfig.replyTimeoutMs = 2000;
+    AuthenticationSession recovery(SessionKeys::Role::MASTER, restartConfig);
+    REQUIRE(recovery.Load(0));
+    REQUIRE(recovery.remote->Begin(verify, 0));
     // Only a fresh V15 proof activates the durable pending Update Key.
     uint64_t now = 0;
     for (uint8_t sequence = 9; sequence <= 10; ++sequence)
@@ -1185,9 +1210,9 @@ TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and
         ++now;
         std::array<uint8_t, 1024> buffer{};
         APDURequest apdu(W(buffer));
-        REQUIRE(restarted.remote->Build(apdu, sequence, now));
+        REQUIRE(recovery.remote->Build(apdu, sequence, now));
         const rseq_t wire(buffer.data(), apdu.Size());
-        restarted.remote->Transmitted(wire);
+        recovery.remote->Transmitted(wire);
         restartedOut.AdvanceTime(TimeDuration::Milliseconds(1));
         restartedOut.SendToOutstation(HexConversions::to_hex(wire));
         REQUIRE(restartedOut.lower->NumWrites() == 1);
@@ -1195,18 +1220,18 @@ TEST_CASE("RemoteUpdateKeys - restart loads only verified active credentials and
         restartedOut.OnTxReady();
         const auto parsed = APDUHeaderParser::ParseResponse(response.ToRSeq());
         REQUIRE(parsed.success);
-        REQUIRE(restarted.remote->Response(parsed.header, parsed.objects, now)
+        REQUIRE(recovery.remote->Response(parsed.header, parsed.objects, now)
             == (sequence == 9 ? RemoteUpdateKeys::Result::CONTINUE : RemoteUpdateKeys::Result::COMPLETE));
     }
     REQUIRE_FALSE(pair.masterCredentials->users[1].havePendingKey);
     REQUIRE(pair.masterCredentials->users[1].updateKey == pair.outCredentials->users[1].updateKey);
-    REQUIRE(restarted.Find(2)->UpdateKey(now).equals(R(pair.outCredentials->users[1].updateKey)));
-    REQUIRE_FALSE(restarted.Find(2)->Ready(now));
+    REQUIRE(recovery.Find(2)->UpdateKey(now).equals(R(pair.outCredentials->users[1].updateKey)));
+    REQUIRE_FALSE(recovery.Find(2)->Ready(now));
     REQUIRE_FALSE(outSession.Find(2)->Ready(now));
     REQUIRE(outSession.Find(2)->Sequence() == recoveredKSQ + 1);
     REQUIRE(outSession.Find(1)->Sequence() == commonKSQ);
     REQUIRE(pair.outCredentials->writes == outWrites);
-    REQUIRE(restarted.statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+    REQUIRE(recovery.statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
     REQUIRE(outSession.statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
     REQUIRE(restartedOut.cmdHandler->NumInvocations() == 0);
@@ -1278,4 +1303,164 @@ TEST_CASE("RemoteUpdateKeys - Table A-11 identity challenge and padding bind unw
         wseq_t(recovered.data(), recovered.size())));
     REQUIRE_FALSE(updatekeys::ReadKeyData(rseq_t(decoded.data(), size - 1), name.ToRSeq(), rseq_t(challenge.data(), challenge.size()),
         wseq_t(recovered.data(), recovered.size())));
+}
+
+TEST_CASE("RemoteUpdateKeys - zero build expires once before transmit and reports task timeout", "[sa-zero-runtime]")
+{
+    RemotePair pair(2, true, std::make_shared<RemoteAuthority>(), 0, 0);
+    const auto key = pair.Master().Find(2)->Sequence();
+    UpdateKeyRequest request;
+    request.name[0] = 'A'; request.nameSize = 1; request.verifyOnly = true;
+    const auto before = pair.Master().statistics.Value(SecurityStatistic::REPLY_TIMEOUTS);
+    const auto writes = pair.masterWire.size();
+    auto callback = pair.Start(request);
+    pair.Pump();
+    REQUIRE(callback->results.size() == 1);
+    REQUIRE(callback->results.front() == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.masterWire.size() == writes);
+    REQUIRE_FALSE(pair.Master().remote->Busy());
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::REPLY_TIMEOUTS) == before + 1);
+    REQUIRE(pair.Master().Find(2)->Sequence() == key);
+    pair.master.context->OnLowerLayerDown();
+    pair.master.exe->advance_time(std::chrono::milliseconds(100));
+    pair.master.exe->run_many();
+    REQUIRE(callback->results.size() == 1);
+    REQUIRE_FALSE(pair.master.context->OnTxReady());
+    REQUIRE(callback->results.size() == 1);
+}
+
+TEST_CASE("RemoteUpdateKeys - zero Begin Build writes no APDU and rejects same-time or late proof", "[sa-zero-runtime]")
+{
+    const auto now = GENERATE(uint64_t(0), uint64_t(1));
+    RemotePair pair;
+    UpdateKeyRequest request;
+    request.name[0] = 'A'; request.nameSize = 1; request.verifyOnly = true;
+    auto completed = pair.Start(request);
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    HexSequence proof(pair.outWire.back());
+    const auto parsed = APDUHeaderParser::ParseResponse(proof.ToRSeq());
+    REQUIRE(parsed.success);
+    const auto key = pair.masterCredentials->users[1].updateKey;
+    const auto writes = pair.masterCredentials->writes;
+    auto config = RemoteMasterSettings(RemoteSettings(pair.masterCredentials, pair.policy, pair.authority, 2), 0).authentication;
+    AuthenticationSession zero(SessionKeys::Role::MASTER, config);
+    REQUIRE(zero.Load(0));
+    auto& engine = *zero.remote;
+    REQUIRE(engine.Begin(request, 0));
+    REQUIRE(engine.Deadline() == 0);
+    std::array<uint8_t, 2048> bytes{};
+    APDURequest apdu(W(bytes));
+    const auto size = apdu.Size();
+    REQUIRE_FALSE(engine.Build(apdu, 0, 0));
+    REQUIRE(engine.LastBuildFailure() == RemoteUpdateKeys::BuildFailure::TIMEOUT);
+    REQUIRE(apdu.Size() == size);
+    REQUIRE(engine.Response(parsed.header, parsed.objects, now) == RemoteUpdateKeys::Result::IGNORED);
+    REQUIRE_FALSE(engine.Busy());
+    REQUIRE(pair.masterCredentials->users[1].updateKey == key);
+    REQUIRE(pair.masterCredentials->writes == writes);
+}
+
+TEST_CASE("RemoteUpdateKeys - zero retry terminates and late responses cannot install", "[sa-zero-runtime]")
+{
+    RemotePair pair(2, true, std::make_shared<RemoteAuthority>(), 0, 0);
+    auto& engine = *pair.Master().remote;
+    UpdateKeyRequest request;
+    request.name[0] = 'A'; request.nameSize = 1; request.verifyOnly = true;
+    REQUIRE(engine.Begin(request, 0));
+    std::array<uint8_t, 2048> bytes{};
+    APDURequest apdu(W(bytes));
+    const auto before = pair.Master().statistics.Value(SecurityStatistic::REPLY_TIMEOUTS);
+    const auto size = apdu.Size();
+    REQUIRE_FALSE(engine.Build(apdu, 0, 0));
+    REQUIRE(apdu.Size() == size);
+    // Zero expires before transmission; retries cannot resurrect that stage.
+    REQUIRE_FALSE(engine.Retry(2000));
+    REQUIRE_FALSE(engine.Retry(2000));
+    REQUIRE_FALSE(engine.Busy());
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::REPLY_TIMEOUTS) == before + 1);
+    APDUResponseHeader response;
+    REQUIRE(engine.Response(response, rseq_t(), 2000) == RemoteUpdateKeys::Result::IGNORED);
+    REQUIRE(pair.Master().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - Outstation zero drops V12 but preserves active credentials", "[sa-zero-runtime]")
+{
+    RemotePair pair;
+    UpdateKeyRequest request;
+    request.name[0] = 'A'; request.nameSize = 1; request.verifyOnly = true;
+    auto completed = pair.Start(request);
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    HexSequence completedProof(pair.masterWire.back());
+    std::vector<uint8_t> lateConfirmation(static_cast<const uint8_t*>(completedProof.ToRSeq()),
+        static_cast<const uint8_t*>(completedProof.ToRSeq()) + completedProof.ToRSeq().length());
+    const uint8_t sequence = (lateConfirmation[0] + 1) & 15;
+    lateConfirmation[0] = 0xC0 | sequence; // A new continuation, not a cached completed confirmation.
+    auto& engine = *pair.Master().remote;
+    REQUIRE(engine.Begin(request, 0));
+    std::array<uint8_t, 2048> bytes{};
+    APDURequest apdu(W(bytes));
+    REQUIRE(engine.Build(apdu, sequence, 0));
+    RemotePair zero(2, true, pair.authority, 0, 0);
+    const auto credential = zero.outCredentials->users[1].updateKey;
+    const auto before = zero.Out().statistics.Value(SecurityStatistic::REPLY_TIMEOUTS);
+    zero.out.SendToOutstation(HexConversions::to_hex(apdu.ToRSeq()));
+    REQUIRE(zero.out.lower->NumWrites() == 0);
+    REQUIRE_FALSE(zero.Out().remote->Busy());
+    zero.out.SendToOutstation(HexConversions::to_hex({lateConfirmation.data(), lateConfirmation.size()}));
+    REQUIRE(zero.out.lower->NumWrites() == 0);
+    REQUIRE_FALSE(zero.Out().Find(1)->Ready(0));
+    REQUIRE_FALSE(zero.Out().Find(2)->Ready(0));
+    REQUIRE(zero.outCredentials->users[1].updateKey == credential);
+    REQUIRE(zero.Out().statistics.Value(SecurityStatistic::REPLY_TIMEOUTS) == before + 1);
+    REQUIRE(zero.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
+    const auto writes = pair.outCredentials->writes;
+    pair.out.SendToOutstation(HexConversions::to_hex(completedProof.ToRSeq()));
+    REQUIRE(pair.out.lower->NumWrites() == 1); // The separate nonzero exchange retains its completed confirmation.
+    HexSequence cached(pair.out.lower->PopWriteAsHex());
+    REQUIRE(cached.ToRSeq()[5] == 15);
+    REQUIRE(pair.outCredentials->writes == writes);
+}
+
+TEST_CASE("RemoteUpdateKeys - Outstation zero preserves certified status before continuation expiry", "[sa-zero-runtime]")
+{
+    RemotePair pair(2, true, std::make_shared<RemoteAuthority>(), 0, 0);
+    const auto key = pair.outCredentials->users[1].updateKey;
+    const auto common = pair.Out().Find(1)->Sequence();
+    auto config = RemoteMasterSettings(RemoteSettings(pair.masterCredentials, pair.policy, pair.authority, 2)).authentication;
+    AuthenticationSession master(SessionKeys::Role::MASTER, config);
+    REQUIRE(master.Load(0));
+    auto& engine = *master.remote;
+    auto request = pair.authority->Status(3, 1, "A", 0);
+    request.source = pair.authority;
+    REQUIRE(engine.Begin(request, 0));
+    std::array<uint8_t, 2048> bytes{};
+    APDURequest statusRequest(W(bytes));
+    REQUIRE(engine.Build(statusRequest, 0, 0));
+    engine.Transmitted(statusRequest.ToRSeq());
+    pair.out.SendToOutstation(HexConversions::to_hex(statusRequest.ToRSeq()));
+    REQUIRE(pair.out.lower->NumWrites() == 1);
+    HexSequence status(pair.out.lower->PopWriteAsHex());
+    REQUIRE(status.ToRSeq().length() == 4);
+    REQUIRE(status.ToRSeq()[1] == 0x81);
+    pair.out.OnTxReady();
+    const auto parsed = APDUHeaderParser::ParseResponse(status.ToRSeq());
+    REQUIRE(parsed.success);
+    REQUIRE(engine.Response(parsed.header, parsed.objects, 0) == RemoteUpdateKeys::Result::CONTINUE);
+    APDURequest continuation(W(bytes));
+    REQUIRE(engine.Build(continuation, 1, 0));
+    engine.Transmitted(continuation.ToRSeq());
+    pair.out.SendToOutstation(HexConversions::to_hex(continuation.ToRSeq()));
+    REQUIRE(pair.out.lower->NumWrites() == 0); // Certified status survived, but V12 expired unsent.
+    REQUIRE(engine.Busy());
+    REQUIRE_FALSE(pair.Out().remote->Busy());
+    REQUIRE(pair.outCredentials->users[1].pending);
+    REQUIRE(pair.outCredentials->users[1].pendingRole == 0);
+    REQUIRE(pair.outCredentials->users[1].updateKey == key);
+    REQUIRE(pair.Out().Find(1)->Sequence() == common);
+    REQUIRE_FALSE(pair.Out().Find(1)->Ready(0));
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
 }

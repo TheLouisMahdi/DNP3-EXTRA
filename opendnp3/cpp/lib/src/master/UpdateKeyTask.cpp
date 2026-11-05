@@ -31,6 +31,13 @@ bool UpdateKeyTask::AcceptsAuthenticationResponse(const APDUResponseHeader& head
     result = engine.Response(header, objects, Now());
     return result != RemoteUpdateKeys::Result::IGNORED;
 }
+void UpdateKeyTask::OnRequestBuildFailure(Timestamp now)
+{
+    if (started && engine.LastBuildFailure() == RemoteUpdateKeys::BuildFailure::TIMEOUT)
+        OnResponseTimeout(now);
+    else
+        IMasterTask::OnRequestBuildFailure(now);
+}
 IMasterTask::ResponseResult UpdateKeyTask::ProcessResponse(const APDUResponseHeader&, const ser4cpp::rseq_t&)
 {
     switch (result)

@@ -173,10 +173,12 @@ MasterParams MasterSettings(const std::shared_ptr<RuntimeCredentials>& source,
                             const std::shared_ptr<RuntimePolicy>& policy,
                             bool aggressive = false,
                             bool receiveAggressive = false, bool macAlternatives = false,
-                            const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr)
+                            const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
+                            uint32_t replyTimeoutMs = 2000)
 {
     auto p = NoStartupTasks();
     p.authentication.errorObserver = observer;
+    p.authentication.replyTimeoutMs = replyTimeoutMs;
     if (macAlternatives) p.authentication.permittedMACAlgorithms = {{4, 2, 0, 0}};
     p.authentication.aggressiveTransmit = aggressive;
     p.authentication.aggressiveReceive = aggressive || receiveAggressive;
@@ -191,9 +193,10 @@ OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
                              bool unsolicited = false,
                              bool aggressive = false, bool macAlternatives = false,
                              const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
-                             uint16_t maxErrors = 2, bool suppressErrors = false)
+                             uint16_t maxErrors = 2, bool suppressErrors = false, uint32_t replyTimeoutMs = 2000)
 {
     OutstationConfig c;
+    c.params.authentication.replyTimeoutMs = replyTimeoutMs;
     c.params.authentication.maxErrorMessagesSent = maxErrors;
     c.params.authentication.suppressAuthenticationErrors = suppressErrors;
     c.params.authentication.errorObserver = observer;
@@ -222,9 +225,10 @@ struct RuntimePair
     explicit RuntimePair(bool unsolicited = false, bool aggressive = false, bool receiveAggressive = false,
                          const std::shared_ptr<ILogHandler>& masterLog = nullptr, bool macAlternatives = false,
                          const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
-                         uint16_t maxErrors = 2, bool suppressErrors = false)
-        : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer), Addresses(), "test", masterLog),
-          outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors, suppressErrors))
+                         uint16_t maxErrors = 2, bool suppressErrors = false,
+                         uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000)
+        : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer, masterTimeoutMs), Addresses(), "test", masterLog),
+          outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors, suppressErrors, outstationTimeoutMs))
     {
         outstation.LowerLayerUp();
         REQUIRE(master.context->OnLowerLayerUp());
@@ -1897,7 +1901,7 @@ TEST_CASE("ProductionAuthentication - normal verified response completes before 
     REQUIRE(pair.changes == 2); // Subsequent operations cannot use the exhausted session.
 }
 
-TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts on send and respects its lifetime", "[production-sa]")
+TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts on send and respects its lifetime", "[production-sa][sa-zero-runtime]")
 {
     const auto budget = GENERATE(1u, 3u);
     const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, disconnect, unowned Reply, key replacement, key expiry.
@@ -1927,6 +1931,7 @@ TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts 
     REQUIRE(pair.master.context->OnTxReady());
     auto& session = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
     const auto expiry = session.ValidUntil();
+    const auto otherKSQ = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2).Sequence();
     ProductionAuthenticationTestAccess::LeaveMessages(pair.outstation.context, budget);
     pair.outstation.SendToOutstation(challenge);
     REQUIRE(pair.outstation.lower->NumWrites() == 0);
@@ -1968,6 +1973,12 @@ TEST_CASE("ProductionAuthentication - outstation queued monitoring Reply counts 
         REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
         if (scenario == 1)
             REQUIRE(session.RemainingMessages() == budget - 1); // An unsent Reply is never counted.
+        if (scenario == 1)
+        {
+            auto& other = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2);
+            REQUIRE(other.Ready(pair.master.context->params.authentication.replyTimeoutMs));
+            REQUIRE(other.Sequence() == otherKSQ);
+        }
         if (scenario == 4 || scenario == 5)
             REQUIRE_FALSE(session.Ready(scenario == 5 ? expiry : 0));
         return;
@@ -2204,7 +2215,7 @@ TEST_CASE("ProductionAuthentication - master aggressive TX lifetime survives res
     }
 }
 
-TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply validates lifetime without deferred counts", "[production-sa]")
+TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply validates lifetime without deferred counts", "[production-sa][sa-zero-runtime]")
 {
     const bool deferred = GENERATE(false, true);
     const auto scenario = GENERATE(0, 1, 2, 3, 4, 5); // Send, timeout, expiry, unowned Reply, new KSQ, unowned Reply during TX.
@@ -2244,6 +2255,7 @@ TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply valida
     auto& common = ProductionAuthenticationTestAccess::Common(*pair.master.context);
     const auto queued = HexConversions::to_hex(ProductionAuthenticationTestAccess::ReplyBytes(*pair.master.context));
     const auto ksq = common.Sequence();
+    const auto otherKSQ = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).Sequence();
     if (scenario == 1)
     {
         pair.master.exe->advance_time(std::chrono::milliseconds(pair.master.context->params.authentication.replyTimeoutMs));
@@ -2274,6 +2286,12 @@ TEST_CASE("ProductionAuthentication - delayed master native CONFIRM Reply valida
     REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
     if (scenario == 1 || scenario == 2 || scenario == 4)
     {
+        if (scenario == 1)
+        {
+            auto& other = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+            REQUIRE(other.Ready(pair.master.context->params.authentication.replyTimeoutMs));
+            REQUIRE(other.Sequence() == otherKSQ);
+        }
         REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
         while (pair.master.lower->NumWrites())
         {
@@ -3491,4 +3509,105 @@ TEST_CASE("ProductionAuthentication - G121 READ and Class 0 project only the aut
     REQUIRE(common.Sequence() == commonKSQ);
     REQUIRE(other.Sequence() == otherKSQ);
     REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
+
+TEST_CASE("ProductionAuthentication - zero service settles unsent exchanges without recursion", "[sa-zero-runtime]")
+{
+    // A zero Reply Timer cannot establish ready keys. Keep this coverage separate
+    // from the nonzero queued-Reply/CONFIRM boundary tests above.
+    RuntimePair pair(false, false, false, nullptr, false, nullptr, 2, false, 0, 0);
+    auto& master = pair.master;
+    auto& outstation = pair.outstation;
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Common(*master.context).Ready(0));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*master.context) == 0);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Common(*master.context).IsExchanging());
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Session(*master.context, 2).IsExchanging());
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(*master.context) == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*master.context).Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
+    for (size_t n = 0; n < 10; ++n)
+    {
+        master.exe->advance_time(std::chrono::milliseconds(100));
+        master.exe->run_many();
+        REQUIRE(master.lower->NumWrites() == 0);
+    }
+    REQUIRE(master.context->OnLowerLayerDown());
+    master.exe->advance_time(std::chrono::milliseconds(100));
+    master.exe->run_many();
+    REQUIRE(master.lower->NumWrites() == 0);
+
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Common(outstation.context).Ready(0));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Session(outstation.context, 2).Ready(0));
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(outstation.context) == 0);
+    REQUIRE(outstation.cmdHandler->NumInvocations() == 0);
+    outstation.LowerLayerDown();
+    REQUIRE_FALSE(outstation.context.OnTxReady());
+}
+
+TEST_CASE("ProductionAuthentication - zero service fairly attempts both users with renewal disabled", "[sa-zero-runtime]")
+{
+    auto source = std::make_shared<RuntimeCredentials>();
+    auto policy = std::make_shared<RuntimePolicy>();
+    auto params = MasterSettings(source, policy);
+    params.authentication.replyTimeoutMs = 0;
+    params.authentication.renewalIntervalMs = 0;
+    MasterTestFixture master(params, Addresses());
+    REQUIRE(master.context->OnLowerLayerUp());
+    master.exe->run_many();
+    auto& first = ProductionAuthenticationTestAccess::Common(*master.context);
+    auto& second = ProductionAuthenticationTestAccess::Session(*master.context, 2);
+    REQUIRE_FALSE(first.NeedsExchange(0)); // User 1's expired attempt is in cooldown.
+    REQUIRE(second.NeedsExchange(0));
+    for (uint64_t tick = 1; tick <= 20; ++tick) // Include application-sequence rollover.
+    {
+        master.exe->advance_time(std::chrono::milliseconds(100));
+        master.exe->run_many();
+        const auto now = tick * 100;
+        REQUIRE(first.NeedsExchange(now) == (tick % 2 == 1));
+        REQUIRE(second.NeedsExchange(now) == (tick % 2 == 0));
+        REQUIRE_FALSE(first.IsExchanging());
+        REQUIRE_FALSE(second.IsExchanging());
+        REQUIRE(ProductionAuthenticationTestAccess::Stats(*master.context)
+                    .Value(SecurityStatistic::REPLY_TIMEOUTS) == tick + 1);
+        REQUIRE(ProductionAuthenticationTestAccess::Pending(*master.context) == 0);
+        REQUIRE(master.lower->NumWrites() == 0);
+    }
+}
+
+TEST_CASE("ProductionAuthentication - zero V4 continuation expires before V5 TX and rejects valid stale V6", "[sa-zero-runtime]")
+{
+    auto source = std::make_shared<RuntimeCredentials>();
+    auto policy = std::make_shared<RuntimePolicy>();
+    auto config = OutSettings(source, policy);
+    config.params.authentication.replyTimeoutMs = 0;
+    OutstationTestObject out(config);
+    out.LowerLayerUp();
+    auto& owner = ProductionAuthenticationTestAccess::Session(out.context, 2);
+    auto& other = ProductionAuthenticationTestAccess::Common(out.context);
+    const auto otherKSQ = other.Sequence();
+    SessionKeys::Config peerConfig;
+    SessionKeys peer(SessionKeys::Role::MASTER, 7, 2, peerConfig);
+    REQUIRE(peer.Configure(rseq_t(source->keys[1].data(), 32), 10000000, 0) == SessionKeys::Result::OK);
+    std::array<uint8_t, 2048> request{}, status{}, change{};
+    size_t requestSize = 0, statusSize = 0, changeSize = 0;
+    REQUIRE(peer.Begin(7, 0, 0, wseq_t(request.data(), request.size()), requestSize) == SessionKeys::Result::OK);
+    out.SendToOutstation(HexConversions::to_hex(rseq_t(request.data(), requestSize)));
+    REQUIRE(out.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(out.context) == 0);
+    REQUIRE_FALSE(owner.Ready(0));
+    // Capture a fresh real core-generated status solely to form a matching,
+    // cryptographically valid V6. Runtime receipt must expire its owner first.
+    REQUIRE(owner.Process(7, rseq_t(request.data(), requestSize), 0,
+                          wseq_t(status.data(), status.size()), statusSize) == SessionKeys::Result::OK);
+    REQUIRE(peer.Process(7, rseq_t(status.data(), statusSize), 0,
+                         wseq_t(change.data(), change.size()), changeSize) == SessionKeys::Result::OK);
+    REQUIRE(changeSize != 0);
+    out.SendToOutstation(HexConversions::to_hex(rseq_t(change.data(), changeSize)));
+    REQUIRE(out.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(out.context) == 0);
+    REQUIRE_FALSE(owner.Ready(0));
+    REQUIRE(owner.ControlKey(0).is_empty());
+    REQUIRE(other.Sequence() == otherKSQ);
+    REQUIRE_FALSE(other.Ready(0));
+    REQUIRE(out.cmdHandler->NumInvocations() == 0);
 }

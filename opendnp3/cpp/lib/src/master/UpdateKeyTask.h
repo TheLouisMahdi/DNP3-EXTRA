@@ -21,6 +21,7 @@ public:
     bool IsRecurring() const override { return false; }
     bool IsAuthenticationTask() const override { return true; }
     bool BuildRequest(APDURequest& request, uint8_t sequence) override;
+    void OnRequestBuildFailure(Timestamp now) override;
     bool AcceptsAuthenticationResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects) override;
     bool RetryOnResponseTimeout() override { return started && engine.Retry(Now()); }
     uint32_t ResponseTimeoutMs() const override { return engine.TimeoutMs(); }

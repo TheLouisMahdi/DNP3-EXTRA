@@ -1320,6 +1320,21 @@ void OContext::TransmitPendingAuthentication()
         && auth.pendingWire[4] == 120 && auth.pendingWire[5] == 2;
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
+    // Only V12 owns a remote continuation. Status acknowledgments and completed
+    // V15 responses have different ownership and must survive its expiry.
+    if (auth.remoteResponsePending && auth.pendingWireSize >= 6
+        && auth.pendingWire[1] == 0x83 && auth.pendingWire[4] == 120 && auth.pendingWire[5] == 12
+        && auth.sessions->config.replyTimeoutMs == 0 && auth.sessions->remote)
+    {
+        auth.sessions->remote->Tick(now);
+        if (!auth.sessions->remote->Busy())
+        {
+            crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+            auth.pendingWireSize = 0;
+            auth.remoteResponsePending = false;
+            return;
+        }
+    }
     auto* session = reply ? auth.sessions->Find(1) : nullptr;
     if (reply)
     {
@@ -1530,6 +1545,16 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             const auto result = session->Process(auth.association, message.payload, now,
                                                  ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
                                                  size, GetResponseIIN());
+            if (objects[1] == 4 && result == SessionKeys::Result::OK
+                && auth.sessions->config.replyTimeoutMs == 0)
+            {
+                // This V5 owns a wait for V6 starting at MakeStatus, not at TX.
+                // Settle immediate expiry before dispatching its unsent bytes.
+                // An INSTALLED V6's final V5 has no such continuation.
+                session->Tick(now);
+                crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), size));
+                size = 0;
+            }
             if (result == SessionKeys::Result::INSTALLED)
             {
                 const auto index = auth.sessions->Index(session->User());

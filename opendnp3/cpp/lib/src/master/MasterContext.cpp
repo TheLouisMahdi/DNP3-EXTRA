@@ -888,7 +888,7 @@ MContext::TaskState MContext::ResumeActiveTask()
     /// try to build a requst for the task
     if (!this->activeTask->BuildRequest(request, this->solSeq))
     {
-        activeTask->OnMessageFormatError(Timestamp(executor->get_time()));
+        activeTask->OnRequestBuildFailure(Timestamp(executor->get_time()));
         this->CompleteActiveTask();
         return TaskState::IDLE;
     }
@@ -1596,7 +1596,11 @@ void MContext::ServiceAuthentication()
         && !(auth.recoveringKeys && auth.errorAttempt.valid && (auth.replyPending || auth.replyInFlight))
         && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE && !auth.recoveringKeys))
     {
-        const size_t first = auth.recoveringKeys ? auth.sessions->Index(auth.errorAttempt.user) : 0;
+        // Immediate expiry must not let the first user consume every service tick.
+        // Reuse the settled exchange sequence; recovery still selects its exact owner.
+        const size_t first = auth.recoveringKeys ? auth.sessions->Index(auth.errorAttempt.user)
+            : (auth.sessions->config.replyTimeoutMs == 0 && auth.sessions->Size()
+                   ? auth.exchangeSequence % auth.sessions->Size() : 0);
         for (size_t offset = 0; offset < auth.sessions->Size(); ++offset)
         {
             const size_t n = (first + offset) % auth.sessions->Size();
@@ -1607,7 +1611,20 @@ void MContext::ServiceAuthentication()
                                    ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
                                    auth.pendingWireSize)
                     == SessionKeys::Result::OK)
+                {
                     auth.exchangeIndex = n;
+                    if (auth.sessions->config.replyTimeoutMs == 0)
+                    {
+                        session->Tick(now);
+                        if (!session->IsExchanging())
+                        {
+                            crypto::Clear(ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()));
+                            auth.pendingWireSize = 0;
+                            auth.exchangeIndex = auth.SessionCount();
+                            auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
+                        }
+                    }
+                }
                 break;
             }
         }

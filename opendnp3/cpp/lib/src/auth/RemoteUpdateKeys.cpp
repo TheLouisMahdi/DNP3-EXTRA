@@ -198,6 +198,13 @@ void RemoteUpdateKeys::Failure()
     if (everTransmitted) owner.statistics.Increment(SecurityStatistic::FAILED_UPDATE_KEY_CHANGES);
     ClearExchange();
 }
+void RemoteUpdateKeys::Expire()
+{
+    if (!Busy()) return;
+    // Preserve nonzero accounting; an unsent zero-duration stage also expires.
+    if (TimeoutMs() == 0) owner.statistics.Increment(SecurityStatistic::REPLY_TIMEOUTS);
+    Failure();
+}
 void RemoteUpdateKeys::Cancel()
 {
     Failure();
@@ -215,6 +222,7 @@ bool RemoteUpdateKeys::Retry(uint64_t now)
 {
     if (role != SessionKeys::Role::MASTER || !Busy() || !transmitted) return false;
     owner.statistics.Increment(SecurityStatistic::REPLY_TIMEOUTS);
+    if (TimeoutMs() == 0 && now >= deadline) { Failure(); return false; }
     if (retries >= owner.config.maxUpdateKeyRetries) { Failure(); return false; }
     ++retries;
     deadline = now + TimeoutMs();
@@ -263,7 +271,7 @@ void RemoteUpdateKeys::Tick(uint64_t now)
     }
     // The native Master response timer owns retries/completion. A periodic
     // session service must not consume its timeout before that timer fires.
-    if (role == SessionKeys::Role::OUTSTATION && Busy() && now >= deadline) Failure();
+    if (role == SessionKeys::Role::OUTSTATION && Busy() && now >= deadline) Expire();
     for (size_t n = 0; n < owner.Size(); ++n)
         if (haveTrustedTime && users[n].active && now >= expires[n])
         {
@@ -359,8 +367,14 @@ bool RemoteUpdateKeys::Begin(const UpdateKeyRequest& value, uint64_t now)
 }
 bool RemoteUpdateKeys::Build(APDURequest& request, uint8_t sequence, uint64_t now)
 {
+    buildFailure = BuildFailure::OTHER;
     Tick(now);
-    if (Busy() && now >= deadline) { Failure(); return false; }
+    if (Busy() && now >= deadline)
+    {
+        Expire();
+        buildFailure = BuildFailure::TIMEOUT;
+        return false;
+    }
     if (!loaded || clockFailed || !Busy() || role != SessionKeys::Role::MASTER) return false;
     request.SetControl(AppControlField::Request(sequence));
     request.SetFunction(FunctionCode::AUTH_REQUEST);
@@ -385,7 +399,7 @@ bool RemoteUpdateKeys::Build(APDURequest& request, uint8_t sequence, uint64_t no
 RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& header, ser4cpp::rseq_t objects, uint64_t now)
 {
     Tick(now);
-    if (Busy() && now >= deadline) { Failure(); return Result::IGNORED; }
+    if (Busy() && now >= deadline) { Expire(); return Result::IGNORED; }
     if (!loaded || clockFailed || !Busy() || role != SessionKeys::Role::MASTER || !transmitted || !Framed(header)
         || header.control.SEQ != appSequence) return Result::IGNORED;
     Objects value;

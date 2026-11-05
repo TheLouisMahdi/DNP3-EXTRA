@@ -140,6 +140,7 @@ public:
      * Called when the master is unable to format the request associated with the task
      */
     void OnMessageFormatError(Timestamp now);
+    virtual void OnRequestBuildFailure(Timestamp now) { OnMessageFormatError(now); }
 
     void OnTransmitComplete(Timestamp now);
 
