@@ -6,6 +6,7 @@
 
 #include <catch.hpp>
 
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 
@@ -203,4 +204,52 @@ TEST_CASE("AuthenticationConfig - zero retains credential and range validation",
     config.replyTimeoutMs = 1;
     AuthenticationSession invalid(SessionKeys::Role::MASTER, config);
     REQUIRE_FALSE(invalid.Load(0));
+}
+
+TEST_CASE("AuthenticationConfig - renewal defaults and per-user settings survive real exchanges", "[auth-config][sa-renewal]")
+{
+    REQUIRE(AuthenticationConfig().renewalIntervalMs == 900000);
+    REQUIRE(AuthenticationConfig().renewalMessageCount == 1000);
+    auto source = std::make_shared<Credentials>();
+    auto policy = std::make_shared<Authorization>();
+    auto config = Config(source, policy);
+    config.renewalIntervalMs = GENERATE(0u, 1000u, 900000u, 7200000u);
+    config.renewalMessageCount = GENERATE(1u, 1000u, 2000u);
+    AuthenticationSession master(SessionKeys::Role::MASTER, config), outstation(SessionKeys::Role::OUTSTATION, config);
+    REQUIRE(master.Load(1000));
+    REQUIRE(outstation.Load(1000));
+    const uint64_t credentialDeadline = 1000 + source->expiry;
+    for (uint16_t user : {uint16_t(1), uint16_t(2)})
+    {
+        Exchange(*master.Find(user), *outstation.Find(user));
+        for (auto* engine : {master.Find(user), outstation.Find(user)})
+        {
+            REQUIRE(engine->RemainingMessages() == config.renewalMessageCount);
+            REQUIRE(engine->ValidUntil() == (config.renewalIntervalMs
+                ? std::min<uint64_t>(credentialDeadline, 1000ULL + config.renewalIntervalMs) : credentialDeadline));
+        }
+    }
+    master.Find(1)->CountAuthentication(1000);
+    REQUIRE(master.Find(1)->RemainingMessages() == config.renewalMessageCount - 1);
+    REQUIRE(master.Find(2)->RemainingMessages() == config.renewalMessageCount);
+    REQUIRE(outstation.Find(1)->RemainingMessages() == config.renewalMessageCount);
+    REQUIRE(outstation.Find(2)->RemainingMessages() == config.renewalMessageCount);
+}
+
+TEST_CASE("AuthenticationConfig - invalid renewal settings fail closed for both roles", "[auth-config][sa-renewal]")
+{
+    auto source = std::make_shared<Credentials>();
+    auto policy = std::make_shared<Authorization>();
+    auto config = Config(source, policy);
+    const auto invalid = GENERATE(0, 1, 2, 3, 4);
+    if (invalid == 0) config.renewalIntervalMs = 999;
+    if (invalid == 1) config.renewalIntervalMs = 900001;
+    if (invalid == 2) config.renewalIntervalMs = 7200001;
+    if (invalid == 3) config.renewalMessageCount = 0;
+    if (invalid == 4) config.renewalMessageCount = 0x80000000u;
+    const auto role = GENERATE(SessionKeys::Role::MASTER, SessionKeys::Role::OUTSTATION);
+    AuthenticationSession session(role, config);
+    REQUIRE_FALSE(session.Load(1000));
+    REQUIRE_FALSE(session.Find(1)->Ready(1000));
+    REQUIRE_FALSE(session.Find(2)->Ready(1000));
 }

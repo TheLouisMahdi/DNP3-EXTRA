@@ -962,3 +962,90 @@ TEST_CASE("SessionKeys - nonzero deadline boundaries clear pending candidates", 
         REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
     }
 }
+
+TEST_CASE("SessionKeys - selected renewal deadlines expire and reinstall with fresh budgets", "[session-keys][sa-renewal]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = GENERATE(900000u, 7200000u);
+    const auto offset = GENERATE(uint64_t(0), uint64_t(1));
+    KeyPair pair(config);
+    pair.Exchange();
+    const auto deadline = pair.now + config.intervalMs;
+    const auto sequence = pair.master.Sequence();
+    pair.master.CountAuthentication(pair.now);
+    pair.outstation.CountAuthentication(pair.now);
+    REQUIRE(pair.master.RemainingMessages() == config.messageLimit - 1);
+    REQUIRE(pair.outstation.RemainingMessages() == config.messageLimit - 1);
+    REQUIRE(pair.master.Ready(deadline - 1));
+    REQUIRE(pair.outstation.Ready(deadline - 1));
+    pair.now = deadline + offset;
+    REQUIRE_FALSE(pair.master.Ready(pair.now));
+    REQUIRE_FALSE(pair.outstation.Ready(pair.now));
+    REQUIRE(pair.master.ControlKey(pair.now).is_empty());
+    REQUIRE(pair.outstation.MonitoringKey(pair.now).is_empty());
+    REQUIRE(pair.master.NeedsExchange(pair.now));
+    pair.Exchange();
+    REQUIRE(pair.master.Sequence() != sequence);
+    REQUIRE(pair.master.RemainingMessages() == config.messageLimit);
+    REQUIRE(pair.outstation.RemainingMessages() == config.messageLimit);
+}
+
+TEST_CASE("SessionKeys - renewal lifetime starts at each role's actual installation", "[session-keys][sa-renewal]")
+{
+    SessionKeys::Config config;
+    config.intervalMs = GENERATE(900000u, 7200000u);
+    KeyPair pair(config);
+    pair.ToChange();
+    const auto outInstalled = pair.now;
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            == R::INSTALLED);
+    pair.now += 17;
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+            == R::INSTALLED);
+    const auto outDeadline = outInstalled + config.intervalMs;
+    const auto masterDeadline = pair.now + config.intervalMs;
+    REQUIRE(pair.outstation.ValidUntil() == outDeadline);
+    REQUIRE(pair.master.ValidUntil() == masterDeadline);
+    REQUIRE(pair.outstation.Ready(outDeadline - 1));
+    REQUIRE(pair.master.Ready(outDeadline - 1));
+    REQUIRE_FALSE(pair.outstation.Ready(outDeadline));
+    REQUIRE(pair.master.Ready(outDeadline));
+    REQUIRE_FALSE(pair.outstation.Ready(outDeadline + 1));
+    REQUIRE(pair.master.Ready(masterDeadline - 1));
+    REQUIRE_FALSE(pair.master.Ready(masterDeadline));
+    REQUIRE_FALSE(pair.master.Ready(masterDeadline + 1));
+    pair.now = masterDeadline + 1;
+    pair.Exchange();
+    REQUIRE(pair.master.RemainingMessages() == config.messageLimit);
+    REQUIRE(pair.outstation.RemainingMessages() == config.messageLimit);
+}
+
+TEST_CASE("SessionKeys - configured count limits are local and reinstall resets the budget", "[session-keys][sa-renewal]")
+{
+    SessionKeys::Config config;
+    REQUIRE(config.messageLimit == 1000);
+    config.messageLimit = GENERATE(1u, 1000u, 2000u);
+    const bool countMaster = GENERATE(false, true);
+    KeyPair pair(config);
+    pair.Exchange();
+    auto& counted = countMaster ? pair.master : pair.outstation;
+    auto& independent = countMaster ? pair.outstation : pair.master;
+    const auto end = config.messageLimit < 1001 ? 1001u : config.messageLimit + 1;
+    for (uint32_t n = 1; n <= end; ++n)
+    {
+        counted.CountAuthentication(pair.now);
+        if (n == 1 || n == 999 || n == 1000 || n == 1001 || n == config.messageLimit)
+        {
+            CAPTURE(n, config.messageLimit, countMaster);
+            REQUIRE(counted.Ready(pair.now) == (n < config.messageLimit));
+            REQUIRE(counted.RemainingMessages() == (n < config.messageLimit ? config.messageLimit - n : 0));
+            REQUIRE(independent.Ready(pair.now));
+            REQUIRE(independent.RemainingMessages() == config.messageLimit);
+        }
+    }
+    REQUIRE(counted.ControlKey(pair.now).is_empty());
+    REQUIRE(counted.MonitoringKey(pair.now).is_empty());
+    pair.Exchange();
+    REQUIRE(pair.master.RemainingMessages() == config.messageLimit);
+    REQUIRE(pair.outstation.RemainingMessages() == config.messageLimit);
+}

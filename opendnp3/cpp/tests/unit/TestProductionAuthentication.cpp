@@ -3611,3 +3611,74 @@ TEST_CASE("ProductionAuthentication - zero V4 continuation expires before V5 TX 
     REQUIRE_FALSE(other.Ready(0));
     REQUIRE(out.cmdHandler->NumInvocations() == 0);
 }
+
+TEST_CASE("ProductionAuthentication - simultaneous timed renewal preserves both user budgets", "[production-sa][sa-renewal]")
+{
+    RuntimePair pair;
+    pair.Pump();
+    REQUIRE(pair.changes == 2);
+    auto& first = ProductionAuthenticationTestAccess::Common(*pair.master.context);
+    auto& second = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+    auto& outFirst = ProductionAuthenticationTestAccess::Common(pair.outstation.context);
+    auto& outSecond = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2);
+    const auto firstKSQ = first.Sequence();
+    const auto secondKSQ = second.Sequence();
+    const auto firstKey = HexConversions::to_hex(first.ControlKey(0));
+    const auto secondKey = HexConversions::to_hex(second.ControlKey(0));
+    const auto interval = pair.master.context->params.authentication.renewalIntervalMs;
+    const auto budget = pair.master.context->params.authentication.renewalMessageCount;
+    REQUIRE(first.ValidUntil() == interval);
+    REQUIRE(second.ValidUntil() == interval);
+    REQUIRE(first.Ready(interval - 1));
+    REQUIRE(second.Ready(interval - 1));
+    pair.outstation.AdvanceTime(TimeDuration::Milliseconds(interval));
+    pair.master.exe->advance_time(std::chrono::milliseconds(interval));
+    pair.master.exe->run_many();
+    REQUIRE_FALSE(first.Ready(interval));
+    REQUIRE_FALSE(second.Ready(interval));
+    REQUIRE_FALSE(outFirst.Ready(interval));
+    REQUIRE_FALSE(outSecond.Ready(interval));
+    // Exactly four request/response steps: V4/V5 and V6/V5 for each user.
+    for (size_t step = 0; step < 4; ++step)
+    {
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto request = pair.master.lower->PopWriteAsHex();
+        HexSequence wire(request);
+        REQUIRE(wire.ToRSeq()[2] == 120);
+        REQUIRE(wire.ToRSeq()[3] == (step % 2 == 0 ? 4 : 6));
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto response = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(response));
+        pair.master.exe->run_many();
+        if (step == 1)
+        {
+            REQUIRE(first.Ready(interval));
+            REQUIRE(outFirst.Ready(interval));
+            REQUIRE_FALSE(second.Ready(interval));
+            REQUIRE_FALSE(outSecond.Ready(interval));
+            REQUIRE(second.RemainingMessages() == 0);
+            REQUIRE(outSecond.RemainingMessages() == 0);
+        }
+        if (step >= 1)
+        {
+            REQUIRE(first.RemainingMessages() == budget);
+            REQUIRE(outFirst.RemainingMessages() == budget);
+        }
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(first.Sequence() != firstKSQ);
+    REQUIRE(second.Sequence() != secondKSQ);
+    REQUIRE(first.Sequence() == outFirst.Sequence());
+    REQUIRE(second.Sequence() == outSecond.Sequence());
+    REQUIRE(HexConversions::to_hex(first.ControlKey(interval)) != firstKey);
+    REQUIRE(HexConversions::to_hex(second.ControlKey(interval)) != secondKey);
+    REQUIRE(first.ControlKey(interval).equals(outFirst.ControlKey(interval)));
+    REQUIRE(second.ControlKey(interval).equals(outSecond.ControlKey(interval)));
+    REQUIRE(second.RemainingMessages() == budget);
+    REQUIRE(outSecond.RemainingMessages() == budget);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
