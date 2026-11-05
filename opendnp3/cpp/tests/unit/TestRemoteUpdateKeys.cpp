@@ -1464,3 +1464,108 @@ TEST_CASE("RemoteUpdateKeys - Outstation zero preserves certified status before 
     REQUIRE_FALSE(pair.Out().Find(1)->Ready(0));
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
 }
+
+TEST_CASE("AuthenticationConfig - configured user capacity boundaries never fall back to usable defaults", "[auth-config][sa-v06-boundary]")
+{
+    const uint16_t capacity = GENERATE(uint16_t(1), uint16_t(2), uint16_t(16), uint16_t(17));
+    const auto role = GENERATE(SessionKeys::Role::MASTER, SessionKeys::Role::OUTSTATION);
+    auto credentials = std::make_shared<remote_update_test::RemoteCredentials>();
+    auto policy = std::make_shared<remote_update_test::RemotePolicy>();
+    auto authority = std::make_shared<remote_update_test::RemoteAuthority>();
+    auto config = remote_update_test::RemoteSettings(credentials, policy, authority, capacity);
+    if (role == SessionKeys::Role::MASTER) config.updateKeyTrust.reset();
+    AuthenticationSession session(role, config);
+    const bool valid = capacity == 2 || capacity == 16;
+    REQUIRE(session.Load(0) == valid);
+    REQUIRE(session.config.userCapacity == capacity);
+    if (valid)
+    {
+        REQUIRE(session.Size() == capacity);
+        REQUIRE(session.At(capacity) == nullptr);
+        REQUIRE_FALSE(session.Find(1)->UpdateKey(0).is_empty());
+        REQUIRE_FALSE(session.Find(2)->UpdateKey(0).is_empty());
+    }
+    for (size_t n = 0; n < session.Size(); ++n)
+    {
+        REQUIRE(session.At(n)->User() == n + 1);
+        REQUIRE_FALSE(session.At(n)->Ready(0));
+        if (!valid) REQUIRE(session.At(n)->UpdateKey(0).is_empty());
+    }
+    REQUIRE(credentials->writes == 0);
+    REQUIRE(credentials->attempts == 0);
+}
+
+TEST_CASE("RemoteUpdateKeys - seventeenth active user cannot alter a full credential table", "[remote-update-keys][remote-update-runtime][sa-v06-boundary]")
+{
+    RemotePair pair(16);
+    for (uint16_t user = 3; user <= 16; ++user)
+    {
+        CAPTURE(user);
+        pair.authority->nextKey.fill(static_cast<uint8_t>(user + 3));
+        auto completed = pair.Start(pair.authority->Status(1, 0, "user" + std::to_string(user)));
+        pair.Pump();
+        REQUIRE(completed->results.size() == 1);
+        REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    }
+    REQUIRE(pair.Master().Size() == 16);
+    REQUIRE(pair.Out().Size() == 16);
+    const auto masterUsers = pair.masterCredentials->users;
+    const auto outUsers = pair.outCredentials->users;
+    const auto masterStatus = pair.Master().GetStatus(0);
+    const auto outStatus = pair.Out().GetStatus(0);
+    std::array<uint32_t, 16> masterKSQ{}, outKSQ{};
+    for (size_t n = 0; n < 16; ++n)
+    {
+        CAPTURE(n);
+        REQUIRE(masterUsers[n].active);
+        REQUIRE(outUsers[n].active);
+        masterKSQ[n] = pair.Master().At(n)->Sequence();
+        outKSQ[n] = pair.Out().At(n)->Sequence();
+    }
+    const auto masterWrites = pair.masterCredentials->writes, outWrites = pair.outCredentials->writes;
+    const auto masterAttempts = pair.masterCredentials->attempts, outAttempts = pair.outCredentials->attempts;
+    auto rejected = pair.Start(pair.authority->Status(1, 0, "overflow"));
+    pair.Pump();
+    REQUIRE(rejected->results.size() == 1);
+    REQUIRE(rejected->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE_FALSE(pair.Master().remote->Busy());
+    REQUIRE_FALSE(pair.Out().remote->Busy());
+    HexSequence wire(pair.outWire.back());
+    REQUIRE(wire.ToRSeq().length() >= 10);
+    REQUIRE(wire.ToRSeq()[4] == 120);
+    REQUIRE(wire.ToRSeq()[5] == 7);
+    Group120Var7 error;
+    REQUIRE(error.Read(wire.ToRSeq().skip(10)));
+    REQUIRE(error.errorCode == 10); // Existing V10 no-slot rejection: Invalid Certification Data.
+    // No WriteUser attempt means neither committed nor pending journal state changed.
+    REQUIRE(pair.masterCredentials->writes == masterWrites);
+    REQUIRE(pair.outCredentials->writes == outWrites);
+    REQUIRE(pair.masterCredentials->attempts == masterAttempts);
+    REQUIRE(pair.outCredentials->attempts == outAttempts);
+    const auto afterMaster = pair.Master().GetStatus(0), afterOut = pair.Out().GetStatus(0);
+    for (size_t n = 0; n < 16; ++n)
+    {
+        CAPTURE(n);
+        REQUIRE(pair.masterCredentials->users[n].name == masterUsers[n].name);
+        REQUIRE(pair.outCredentials->users[n].name == outUsers[n].name);
+        REQUIRE(pair.masterCredentials->users[n].statusSequence == masterUsers[n].statusSequence);
+        REQUIRE(pair.outCredentials->users[n].statusSequence == outUsers[n].statusSequence);
+        REQUIRE(pair.masterCredentials->users[n].active);
+        REQUIRE(pair.outCredentials->users[n].active);
+        REQUIRE(crypto::ConstantTimeEqual(R(pair.masterCredentials->users[n].updateKey), R(masterUsers[n].updateKey)));
+        REQUIRE(crypto::ConstantTimeEqual(R(pair.outCredentials->users[n].updateKey), R(outUsers[n].updateKey)));
+        REQUIRE(pair.Master().At(n)->Sequence() == masterKSQ[n]);
+        REQUIRE(pair.Out().At(n)->Sequence() == outKSQ[n]);
+        REQUIRE(afterMaster.users[n].ready == masterStatus.users[n].ready);
+        REQUIRE(afterOut.users[n].ready == outStatus.users[n].ready);
+        REQUIRE(afterMaster.users[n].exchanging == masterStatus.users[n].exchanging);
+        REQUIRE(afterOut.users[n].exchanging == outStatus.users[n].exchanging);
+        REQUIRE(afterMaster.users[n].remainingMessages == masterStatus.users[n].remainingMessages);
+        REQUIRE(afterOut.users[n].remainingMessages == outStatus.users[n].remainingMessages);
+    }
+    REQUIRE(pair.Master().GetStatus(0).statistics[static_cast<size_t>(SecurityStatistic::UPDATE_KEY_CHANGES)]
+            == masterStatus.statistics[static_cast<size_t>(SecurityStatistic::UPDATE_KEY_CHANGES)]);
+    REQUIRE(pair.Out().GetStatus(0).statistics[static_cast<size_t>(SecurityStatistic::UPDATE_KEY_CHANGES)]
+            == outStatus.statistics[static_cast<size_t>(SecurityStatistic::UPDATE_KEY_CHANGES)]);
+    REQUIRE(pair.out.cmdHandler->NumInvocations() == 0);
+}

@@ -940,27 +940,39 @@ TEST_CASE("SessionKeys - zero at clock origin expires once with bounded recovery
     recovered.Exchange();
 }
 
-TEST_CASE("SessionKeys - nonzero deadline boundaries clear pending candidates", "[sa-reply-timeout]")
+TEST_CASE("SessionKeys - nonzero deadline boundaries clear pending candidates", "[sa-reply-timeout][sa-v06-boundary]")
 {
-    const uint64_t elapsed = GENERATE(99u, 100u, 101u);
+    const uint32_t timeout = GENERATE(100u, 120000u);
+    const uint64_t elapsed = uint64_t(timeout) - 1 + GENERATE(0u, 1u, 2u);
+    CAPTURE(timeout, elapsed);
     SessionKeys::Config config;
-    config.replyTimeoutMs = 100;
-    KeyPair pair(config);
+    config.replyTimeoutMs = timeout;
     AuthenticationStatistics stats(7, true, DefaultSecurityStatisticThresholds());
+    KeyPair pair(config);
     pair.master.SetStatistics(&stats);
     pair.ToChange();
     pair.master.Tick(pair.now + elapsed);
-    pair.outstation.Tick(pair.now + elapsed);
-    REQUIRE(pair.master.IsExchanging() == (elapsed < 100));
+    REQUIRE(pair.master.IsExchanging() == (elapsed < timeout));
     REQUIRE(pair.master.ControlKey(pair.now + elapsed).is_empty());
-    if (elapsed >= 100)
+    if (elapsed >= timeout)
     {
         REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now + elapsed,
                                         pair.confirmation.Write(), pair.confirmation.size) != R::INSTALLED);
         REQUIRE_FALSE(pair.outstation.Ready(pair.now + elapsed));
         pair.master.Tick(pair.now + elapsed);
+        pair.master.Tick(pair.now + elapsed + 1);
         REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
     }
+    else
+    {
+        REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now + elapsed,
+                                        pair.confirmation.Write(), pair.confirmation.size) == R::INSTALLED);
+        REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now + elapsed,
+                                   pair.request.Write(), pair.request.size) == R::INSTALLED);
+        REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 0);
+    }
+    pair.outstation.Tick(pair.now + elapsed);
+    REQUIRE(pair.outstation.Ready(pair.now + elapsed) == (elapsed < timeout));
 }
 
 TEST_CASE("SessionKeys - selected renewal deadlines expire and reinstall with fresh budgets", "[session-keys][sa-renewal]")
@@ -1048,4 +1060,46 @@ TEST_CASE("SessionKeys - configured count limits are local and reinstall resets 
     pair.Exchange();
     REQUIRE(pair.master.RemainingMessages() == config.messageLimit);
     REQUIRE(pair.outstation.RemainingMessages() == config.messageLimit);
+}
+
+TEST_CASE("SessionKeys - status and confirmation V5 cannot bypass Reply Timer expiry", "[sa-reply-timeout][sa-v06-boundary]")
+{
+    const uint32_t timeout = GENERATE(100u, 120000u);
+    const uint64_t elapsed = uint64_t(timeout) - 1 + GENERATE(0u, 1u, 2u);
+    const bool confirmation = GENERATE(false, true);
+    CAPTURE(timeout, elapsed, confirmation);
+    SessionKeys::Config config;
+    config.replyTimeoutMs = timeout;
+    AuthenticationStatistics stats(7, true, DefaultSecurityStatisticThresholds());
+    KeyPair pair(config);
+    pair.master.SetStatistics(&stats);
+    if (confirmation)
+    {
+        pair.ToChange();
+        REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now,
+                                        pair.confirmation.Write(), pair.confirmation.size) == R::INSTALLED);
+    }
+    else pair.ToStatus();
+    const auto reply = confirmation ? pair.confirmation.Read() : pair.status.Read();
+    const auto now = pair.now + elapsed;
+    const auto result = pair.master.Process(7, reply, now, pair.request.Write(), pair.request.size);
+    if (elapsed < timeout)
+    {
+        REQUIRE(result == (confirmation ? R::INSTALLED : R::OK));
+        REQUIRE(pair.master.Ready(now) == confirmation);
+        REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 0);
+    }
+    else
+    {
+        REQUIRE(result != R::INSTALLED);
+        REQUIRE(result != R::OK);
+        REQUIRE(pair.request.size == 0);
+        REQUIRE_FALSE(pair.master.Ready(now));
+        REQUIRE(pair.master.ControlKey(now).is_empty());
+        REQUIRE(pair.master.MonitoringKey(now).is_empty());
+        REQUIRE(pair.master.Process(7, reply, now, pair.request.Write(), pair.request.size) != R::INSTALLED);
+        pair.master.Tick(now);
+        pair.master.Tick(now + 1);
+        REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
+    }
 }

@@ -47,14 +47,15 @@ struct Fixture
     std::array<uint8_t, Challenger::MAX_REQUEST_SIZE> authorized{};
     size_t size = 0;
 
-    explicit Fixture(size_t tag = 16, uint16_t associationId = 7)
-        : association(associationId), tagSize(tag), engine(associationId, tag)
+    explicit Fixture(size_t tag = 16, uint16_t associationId = 7, uint32_t replyMs = 2000,
+                     uint64_t validUntil = 100000)
+        : association(associationId), tagSize(tag), engine(associationId, tag, replyMs)
     {
         key1.fill(0x11);
         key2.fill(0x22);
         REQUIRE(engine.GetState() == State::NO_SESSION_KEYS);
-        REQUIRE(engine.SetSessionKey(1, Read(key1), 100000, 1000) == Result::OK);
-        REQUIRE(engine.SetSessionKey(2, Read(key2), 100000, 1000) == Result::OK);
+        REQUIRE(engine.SetSessionKey(1, Read(key1), validUntil, 1000) == Result::OK);
+        REQUIRE(engine.SetSessionKey(2, Read(key2), validUntil, 1000) == Result::OK);
         REQUIRE(engine.GetState() == State::IDLE);
     }
 
@@ -507,14 +508,28 @@ TEST_CASE("OutstationChallenger - immediate expiry never releases an ASDU", "[sa
     REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 2);
 }
 
-TEST_CASE("OutstationChallenger - nonzero reply expiry boundaries remain exclusive", "[sa-reply-timeout]")
+TEST_CASE("OutstationChallenger - nonzero reply expiry boundaries remain exclusive", "[sa-reply-timeout][sa-v06-boundary]")
 {
-    const uint64_t elapsed = GENERATE(1999u, 2000u, 2001u);
-    Fixture f;
+    const uint32_t timeout = GENERATE(100u, 2000u, 120000u);
+    const uint64_t elapsed = uint64_t(timeout) - 1 + GENERATE(0u, 1u, 2u);
+    CAPTURE(timeout, elapsed);
+    AuthenticationStatistics stats(7, false, DefaultSecurityStatisticThresholds());
+    Fixture f(16, 7, timeout, uint64_t(1000) + timeout + 10000);
+    f.engine.SetStatistics(&stats);
     f.Start();
+    const auto csq = f.Sequence();
     const auto tag = f.Tag(Read(f.key1));
-    const auto result = f.Reply(tag, 1, 1000 + elapsed);
-    REQUIRE(result == (elapsed < 2000 ? Result::AUTHENTICATED : Result::EXPIRED));
-    REQUIRE(f.size == (elapsed < 2000 ? f.request.size() : 0));
-    if (elapsed >= 2000) REQUIRE(IsZero(f.authorized));
+    const auto now = 1000 + elapsed;
+    const auto result = f.Reply(tag, 1, now);
+    REQUIRE(result == (elapsed < timeout ? Result::AUTHENTICATED : Result::EXPIRED));
+    REQUIRE(f.size == (elapsed < timeout ? f.request.size() : 0));
+    if (elapsed < timeout) REQUIRE(Read(f.authorized).take(f.size).equals(Read(f.request)));
+    else REQUIRE(IsZero(f.authorized));
+    REQUIRE(f.Sequence() == csq);
+    f.engine.Tick(now);
+    f.engine.Tick(now + 1);
+    REQUIRE(f.Reply(tag, 1, now + 1) == Result::UNEXPECTED_REPLY);
+    REQUIRE(f.size == 0);
+    REQUIRE(IsZero(f.authorized));
+    REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == (elapsed < timeout ? 0 : 1));
 }
