@@ -13,6 +13,7 @@
 #include <openssl/crypto.h>
 #include <openssl/provider.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <vector>
@@ -534,5 +535,48 @@ TEST_CASE("AggressiveMode - each transcript retains its selected MAC after Code 
         REQUIRE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), size), wseq_t(output.data(), output.size()), nativeSize));
         REQUIRE(rseq_t(output.data(), nativeSize).equals(original));
         REQUIRE_FALSE(receiver.Verify(7, 1, key.Read(), rseq_t(wire.data(), size), wseq_t(output.data(), output.size()), nativeSize));
+    }
+}
+
+
+TEST_CASE("AggressiveMode - B07 signed CSQ half-window boundaries do not consume rejected tokens", "[aggressive][sa-b07]")
+{
+    const bool monitoring = GENERATE(false, true);
+    const uint32_t delta = GENERATE(uint32_t(0), uint32_t(0x7FFFFFFF), uint32_t(0x80000000),
+                                    uint32_t(0x80000001), uint32_t(0xFFFFFFFF));
+    CAPTURE(monitoring, delta);
+    AggressiveKey key;
+    AggressiveMode sender(7, 16, monitoring), receiver(7, 16, monitoring);
+    const auto seed = Seed(1, monitoring);
+    REQUIRE(sender.RememberChallenge(Read(seed), false));
+    REQUIRE(receiver.RememberChallenge(Read(seed), false));
+    HexSequence native(monitoring ? "C0 81 00 00" : "C0 01 3C 01 06");
+    std::array<uint8_t, 2048> original{}, changed{}, output{};
+    size_t size = 0, decoded = 0;
+    const uint16_t user = monitoring ? 1 : 2;
+    REQUIRE(sender.Create(7, user, key.Read(), native.ToRSeq(), wseq_t(original.data(), original.size()), size));
+    std::copy(original.begin(), original.end(), changed.begin());
+    const size_t csqOffset = monitoring ? 8 : 6;
+    const uint32_t sequence = uint32_t(1) + delta;
+    for (size_t i = 0; i < 4; ++i) changed[csqOffset + i] = static_cast<uint8_t>(sequence >> (8 * i));
+    auto transcript = seed;
+    transcript.insert(transcript.end(), changed.begin(), changed.begin() + size - 16);
+    // Give the changed CSQ a genuine valid MAC: rejection must be replay policy,
+    // not merely an integrity failure caused by flipping an authenticated byte.
+    REQUIRE(crypto::ComputeHMACSHA256(key.Read(), Read(transcript), wseq_t(changed.data() + size - 16, 16)) == crypto::Result::OK);
+    const bool forward = delta != 0 && delta < 0x80000000u;
+    REQUIRE(receiver.Verify(7, user, key.Read(), rseq_t(changed.data(), size), wseq_t(output.data(), output.size()), decoded) == forward);
+    if (forward)
+    {
+        REQUIRE(rseq_t(output.data(), decoded).equals(native.ToRSeq()));
+        REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(changed.data(), size), wseq_t(output.data(), output.size()), decoded));
+    }
+    else
+    {
+        REQUIRE(decoded == 0);
+        REQUIRE(receiver.Sequence() == 1);
+        for (auto byte : output) REQUIRE(byte == 0);
+        REQUIRE(receiver.Verify(7, user, key.Read(), rseq_t(original.data(), size), wseq_t(output.data(), output.size()), decoded));
+        REQUIRE(rseq_t(output.data(), decoded).equals(native.ToRSeq()));
     }
 }
