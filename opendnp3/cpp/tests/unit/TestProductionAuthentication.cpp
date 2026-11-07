@@ -102,6 +102,14 @@ public:
     }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
     static IINField ResponseIIN(OContext& context) { return context.GetResponseIIN(); }
+    static bool UnsolEnabled(OContext& context, PointClass clazz)
+    {
+        return context.params.unsolClassMask.Intersects(ClassField(clazz));
+    }
+    static uint32_t BufferedEvents(OContext& context, EventClass clazz)
+    {
+        return context.eventBuffer.NumEvents(clazz);
+    }
     static rseq_t PendingBytes(OContext& context)
     {
         return rseq_t(context.authentication->pendingWire.data(), context.authentication->pendingWire.size());
@@ -234,7 +242,7 @@ OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
                              bool aggressive = false, bool macAlternatives = false,
                              const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
                              uint16_t maxErrors = 2, bool suppressErrors = false, uint32_t replyTimeoutMs = 2000,
-                             bool class1Unsolicited = false)
+                             bool class1Unsolicited = false, bool selectedInputs = false)
 {
     OutstationConfig c;
     c.params.authentication.replyTimeoutMs = replyTimeoutMs;
@@ -248,7 +256,7 @@ OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
     if (class1Unsolicited)
     {
         c.params.unsolClassMask = ClassField(PointClass::Class1);
-        c.eventBufferConfig = EventBufferConfig(1);
+        c.eventBufferConfig = selectedInputs ? EventBufferConfig(1, 1, 1) : EventBufferConfig(1);
     }
     c.params.authentication.association = 7;
     c.params.authentication.credentials = source;
@@ -291,7 +299,7 @@ struct RuntimePair
                          bool selectedInputs = false)
         : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer, masterTimeoutMs, qualifier), Addresses(), "test", masterLog),
           outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors,
-                                 suppressErrors, outstationTimeoutMs, class1Unsolicited),
+                                 suppressErrors, outstationTimeoutMs, class1Unsolicited, selectedInputs),
                      class1Unsolicited ? BinaryEventDatabase(selectedInputs) : DatabaseConfig())
     {
         outstation.LowerLayerUp();
@@ -4739,11 +4747,20 @@ TEST_CASE("ProductionAuthentication - B07 selected non-command functions travers
     const std::array<uint8_t, 10> functions{{1, 2, 2, 13, 20, 21, 22, 22, 22, 23}};
     const std::array<const char*, 10> bodies{{"3C 01 06", "32 01 07 01 E8 03 00 00 00 00",
         "50 01 00 07 07 00", "", "3C 02 06 3C 03 06 3C 04 06", "3C 02 06 3C 03 06 3C 04 06",
-        "3C 02 06 01 00 06", "3C 02 06 03 00 06", "3C 02 06 1E 00 06", ""}};
+        "3C 03 06 01 00 06", "3C 03 06 03 00 06", "3C 03 06 1E 00 06", ""}};
     CAPTURE(item, functions[item], bodies[item]);
     RuntimePair pair(true, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, true,
                      IndexQualifierMode::always_two_bytes, true);
     B07Prime(pair, true);
+    if (item == 4)
+    {
+        // FC20 must enable classes 2/3 in addition to the initially enabled class 1.
+        REQUIRE(ProductionAuthenticationTestAccess::UnsolEnabled(pair.outstation.context, PointClass::Class1));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::UnsolEnabled(pair.outstation.context, PointClass::Class2));
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::UnsolEnabled(pair.outstation.context, PointClass::Class3));
+    }
+    if (item == 5)
+        REQUIRE(ProductionAuthenticationTestAccess::UnsolEnabled(pair.outstation.context, PointClass::Class1));
     pair.outstation.application->supportsAssignClass = true;
     pair.outstation.application->coldRestartSupport = RestartMode::SUPPORTED_DELAY_FINE;
     pair.outstation.application->coldRestartTimeDelay = 37;
@@ -4770,13 +4787,18 @@ TEST_CASE("ProductionAuthentication - B07 selected non-command functions travers
         REQUIRE(rseq_t(decoded.data(), decoded.size()).skip(4).equals(expected.ToRSeq()));
     }
     else REQUIRE(decoded.size() == 4);
-    if (item == 1) REQUIRE(pair.outstation.application->timestamps.size() == 1);
+    if (item == 1)
+    {
+        REQUIRE(pair.outstation.application->timestamps.size() == 1);
+        REQUIRE(pair.outstation.application->timestamps.front().msSinceEpoch == 1000);
+    }
     if (item >= 6 && item <= 8)
     {
         REQUIRE(pair.outstation.application->classAssignments.size() == 1);
         const auto type = item == 6 ? AssignClassType::BinaryInput
             : item == 7 ? AssignClassType::DoubleBinaryInput : AssignClassType::AnalogInput;
         REQUIRE(std::get<0>(pair.outstation.application->classAssignments.front()) == type);
+        REQUIRE(std::get<1>(pair.outstation.application->classAssignments.front()) == PointClass::Class2);
         REQUIRE(std::get<2>(pair.outstation.application->classAssignments.front()) == 0);
         REQUIRE(std::get<3>(pair.outstation.application->classAssignments.front()) == 0);
     }
@@ -4789,6 +4811,52 @@ TEST_CASE("ProductionAuthentication - B07 selected non-command functions travers
     REQUIRE(rseq_t(task->received.data(), task->received.size()).equals(rseq_t(decoded.data(), decoded.size()).skip(4)));
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1); // Bootstrap only; no optional output function added.
     REQUIRE(pair.results.values.empty());
+
+    if (item == 4 || item == 5)
+    {
+        const bool enabled = item == 4;
+        for (auto clazz : {PointClass::Class1, PointClass::Class2, PointClass::Class3})
+            REQUIRE(ProductionAuthenticationTestAccess::UnsolEnabled(pair.outstation.context, clazz) == enabled);
+
+        REQUIRE(pair.outstation.lower->NumWrites() == 0);
+        const auto received = pair.master.meas->TotalReceived();
+        const auto buffered = ProductionAuthenticationTestAccess::BufferedEvents(pair.outstation.context, EventClass::EC1);
+        pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true), 0); });
+        if (enabled)
+        {
+            REQUIRE(pair.outstation.lower->NumWrites() == 1);
+            const auto unsolicited = pair.outstation.lower->PopWriteAsHex();
+            const auto native = B07Envelope(unsolicited, true, 1);
+            REQUIRE(native[1] == 0x82);
+            REQUIRE(native.size() > 4);
+            REQUIRE(native[4] == 2); // G2 binary event, not just an unsolicited header.
+            pair.outstation.OnTxReady();
+            REQUIRE(pair.master.SendToMaster(unsolicited));
+            pair.Pump(); // Authenticated unsolicited event and native CONFIRM.
+            REQUIRE(pair.master.meas->TotalReceived() > received);
+        }
+        else
+        {
+            // NumEvents counts unwritten records; an active unsolicited response has already marked its event written.
+            REQUIRE(ProductionAuthenticationTestAccess::BufferedEvents(pair.outstation.context, EventClass::EC1) == buffered + 1);
+            REQUIRE(pair.outstation.lower->NumWrites() == 0);
+            REQUIRE(pair.master.meas->TotalReceived() == received);
+        }
+    }
+    if (item >= 6 && item <= 8)
+    {
+        const auto before1 = ProductionAuthenticationTestAccess::BufferedEvents(pair.outstation.context, EventClass::EC1);
+        const auto before2 = ProductionAuthenticationTestAccess::BufferedEvents(pair.outstation.context, EventClass::EC2);
+        pair.outstation.Transaction([&](IUpdateHandler& update) {
+            if (item == 6) update.Update(Binary(true), 0);
+            if (item == 7) update.Update(DoubleBitBinary(DoubleBit::DETERMINED_ON), 0);
+            if (item == 8) update.Update(Analog(42.0), 0);
+        });
+        // The assigned point started in class 1. A genuine update must now be class 2.
+        REQUIRE(ProductionAuthenticationTestAccess::BufferedEvents(pair.outstation.context, EventClass::EC1) == before1);
+        REQUIRE(ProductionAuthenticationTestAccess::BufferedEvents(pair.outstation.context, EventClass::EC2) == before2 + 1);
+        REQUIRE(pair.outstation.lower->NumWrites() == 0); // Only class 1 is unsolicited-enabled here.
+    }
 }
 
 TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending control and both borrowed transmissions",
