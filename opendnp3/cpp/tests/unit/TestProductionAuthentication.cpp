@@ -4907,6 +4907,17 @@ TEST_CASE("ProductionAuthentication - B07 expired monitoring keys and reconnect 
     const bool unsolicited = GENERATE(false, true);
     RuntimePair pair(unsolicited, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, unsolicited);
     pair.Pump();
+    const auto masterNow = [&]() -> uint64_t {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            pair.master.exe->get_time().time_since_epoch()).count());
+    };
+    // Existing snapshots wipe their private key copies and expose only boolean comparisons.
+    MACPolicySessionSnapshot oldMaster1(ProductionAuthenticationTestAccess::Session(*pair.master.context, 1), masterNow());
+    MACPolicySessionSnapshot oldMaster2(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), masterNow());
+    MACPolicySessionSnapshot oldOut1(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 1),
+                                   ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    MACPolicySessionSnapshot oldOut2(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2),
+                                   ProductionAuthenticationTestAccess::Now(pair.outstation.context));
     if (unsolicited)
     {
         pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
@@ -4954,4 +4965,146 @@ TEST_CASE("ProductionAuthentication - B07 expired monitoring keys and reconnect 
     REQUIRE(pair.results.values.size() == callbacks);
     REQUIRE(pair.master.context->confirmQueue.empty());
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+
+    // Prove renewed sessions on both peers, rather than relying on Pump's lack of writes.
+    const auto fresh = [](const MACPolicySessionSnapshot& old, SessionKeys& session, uint64_t now) {
+        REQUIRE(session.Ready(now));
+        REQUIRE_FALSE(session.IsExchanging());
+        REQUIRE(session.Sequence() != old.sequence);
+        REQUIRE(session.ControlKey(now).length() == old.control.size());
+        REQUIRE(session.MonitoringKey(now).length() == old.monitoring.size());
+        REQUIRE_FALSE(crypto::ConstantTimeEqual(session.ControlKey(now), rseq_t(old.control.data(), old.control.size())));
+        REQUIRE_FALSE(crypto::ConstantTimeEqual(session.MonitoringKey(now), rseq_t(old.monitoring.data(), old.monitoring.size())));
+    };
+    fresh(oldMaster1, ProductionAuthenticationTestAccess::Session(*pair.master.context, 1), masterNow());
+    fresh(oldMaster2, ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), masterNow());
+    fresh(oldOut1, ProductionAuthenticationTestAccess::Session(pair.outstation.context, 1),
+          ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    fresh(oldOut2, ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2),
+          ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    for (uint16_t user : {uint16_t(1), uint16_t(2)})
+    {
+        auto& master = ProductionAuthenticationTestAccess::Session(*pair.master.context, user);
+        auto& out = ProductionAuthenticationTestAccess::Session(pair.outstation.context, user);
+        const auto outNow = ProductionAuthenticationTestAccess::Now(pair.outstation.context);
+        REQUIRE(master.Sequence() == out.Sequence());
+        REQUIRE(crypto::ConstantTimeEqual(master.ControlKey(masterNow()), out.ControlKey(outNow)));
+        REQUIRE(crypto::ConstantTimeEqual(master.MonitoringKey(masterNow()), out.MonitoringKey(outNow)));
+    }
+
+    const auto repliesBeforePrime = pair.monitorReplies;
+    if (unsolicited)
+    {
+        // Re-establish UNS history with the genuine startup null Challenge/Reply and CONFIRM.
+        pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+        pair.Pump();
+        REQUIRE(ProductionAuthenticationTestAccess::StartupNullConfirmed(pair.outstation.context));
+        REQUIRE(pair.monitorReplies > repliesBeforePrime);
+    }
+    pair.SelectOperate(); pair.Pump(); // Real user-2 control and solicited user-1 monitoring exchanges.
+    REQUIRE(pair.results.values.size() == callbacks + 1);
+    REQUIRE(pair.results.values.back().summary == TaskCompletion::SUCCESS);
+    REQUIRE(pair.monitorReplies > repliesBeforePrime);
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+
+    std::string currentRequest;
+    if (unsolicited)
+        pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(false), 0); });
+    else
+    {
+        auto config = TaskConfig::Default(); config.authenticationUser = 2;
+        pair.master.context->DirectOperate(FC6Commands(0, 3), pair.results.Callback(), config);
+        pair.master.exe->run_many();
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        currentRequest = pair.master.lower->PopWriteAsHex();
+        B07Envelope(currentRequest, false, 2);
+        // Keep the Master TX borrowed as well as the independent Outstation response TX.
+        pair.outstation.SendToOutstation(currentRequest);
+    }
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto currentResponse = pair.outstation.lower->PopWriteAsHex();
+    const auto native = B07Envelope(currentResponse, true, 1);
+    REQUIRE(native[1] == (unsolicited ? 0x82 : 0x81));
+    HexSequence current(currentResponse);
+    MACPolicySessionSnapshot renewedMaster1(ProductionAuthenticationTestAccess::Session(*pair.master.context, 1), masterNow());
+    MACPolicySessionSnapshot renewedMaster2(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), masterNow());
+    MACPolicySessionSnapshot renewedOut1(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 1),
+                                       ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    MACPolicySessionSnapshot renewedOut2(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2),
+                                       ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    const auto currentSuccesses = ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+    const auto currentMeasurements = pair.master.meas->TotalReceived();
+    const auto currentCallbacks = pair.results.values.size();
+    const auto currentOperations = pair.outstation.cmdHandler->NumOperate();
+    const auto currentSelections = pair.outstation.cmdHandler->NumSelect();
+    REQUIRE(currentCallbacks == callbacks + 1);
+    const auto task = pair.master.context->activeTask;
+    if (!unsolicited)
+    {
+        REQUIRE(task);
+        REQUIRE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    }
+    const auto taskState = pair.master.context->tstate;
+    const auto responder = ProductionAuthenticationTestAccess::ResponderState(*pair.master.context);
+    const auto challenger = ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context);
+    REQUIRE(ProductionAuthenticationTestAccess::Transmitting(pair.outstation.context));
+    REQUIRE(pair.master.SendToMaster(response)); // Old session transcript, after genuine renewed eligibility.
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == currentSuccesses);
+    REQUIRE(pair.master.meas->TotalReceived() == currentMeasurements);
+    REQUIRE(pair.results.values.size() == currentCallbacks);
+    REQUIRE(pair.master.context->activeTask == task);
+    REQUIRE(pair.master.context->tstate == taskState);
+    REQUIRE(ProductionAuthenticationTestAccess::ResponderState(*pair.master.context) == responder);
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context) == challenger);
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == currentOperations);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == currentSelections);
+    REQUIRE(ProductionAuthenticationTestAccess::Transmitting(pair.outstation.context));
+    renewedMaster1.Check(ProductionAuthenticationTestAccess::Session(*pair.master.context, 1), masterNow());
+    renewedMaster2.Check(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), masterNow());
+    renewedOut1.Check(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 1), ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    renewedOut2.Check(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2), ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::AggressiveBytes(pair.outstation.context, current.ToRSeq().length()).equals(current.ToRSeq()));
+    if (!unsolicited)
+    {
+        HexSequence request(currentRequest);
+        REQUIRE(ProductionAuthenticationTestAccess::AggressiveBytes(*pair.master.context, request.ToRSeq().length()).equals(request.ToRSeq()));
+        REQUIRE(pair.master.context->OnTxReady());
+    }
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(currentResponse));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == currentSuccesses + 1);
+    REQUIRE(pair.master.meas->TotalReceived() == currentMeasurements + (unsolicited ? 1 : 0));
+    REQUIRE(pair.results.values.size() == currentCallbacks + (unsolicited ? 0 : 1));
+    if (!unsolicited) REQUIRE(pair.results.values.back().summary == TaskCompletion::SUCCESS);
+    const auto confirmWrites = pair.master.lower->NumWrites();
+    REQUIRE(confirmWrites == (unsolicited ? 1 : 0));
+    const auto confirmPending = ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context);
+    REQUIRE(confirmPending == unsolicited);
+    REQUIRE(pair.master.context->isSending == unsolicited);
+    const auto confirmBytes = HexConversions::to_hex(pair.master.context->txBuffer.as_rslice().take(2));
+    const auto confirmCount = pair.master.context->confirmQueue.size();
+    // Duplicate rejection must also preserve the newly owned, in-flight native CONFIRM.
+    REQUIRE(pair.master.SendToMaster(currentResponse));
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == currentSuccesses + 1);
+    REQUIRE(pair.master.meas->TotalReceived() == currentMeasurements + (unsolicited ? 1 : 0));
+    REQUIRE(pair.results.values.size() == currentCallbacks + (unsolicited ? 0 : 1));
+    REQUIRE(pair.master.lower->NumWrites() == confirmWrites);
+    REQUIRE(pair.master.context->confirmQueue.size() == confirmCount);
+    REQUIRE(pair.master.context->isSending == unsolicited);
+    REQUIRE(HexConversions::to_hex(pair.master.context->txBuffer.as_rslice().take(2)) == confirmBytes);
+    REQUIRE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context) == confirmPending);
+    pair.Pump(); // Complete only the genuine current response's CONFIRM exchange.
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == currentOperations);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == currentSelections);
 }
