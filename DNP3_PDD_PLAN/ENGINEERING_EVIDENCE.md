@@ -2795,3 +2795,49 @@ response rejection without SOE/CONFIRM/task completion and current response acce
 This distinguishes stale-session/history rejection from reset eligibility gating.
 Do not alter production code unless that focused extension reproduces a defect.
 Matrix R2/R4/R5 list subsequent native-effect/isolated-fault/dirty-output hardening.
+
+<a id="record-14"></a>
+
+## Record 14 - 2026-11-07: B07 Host hardening (user-reported Windows evidence)
+
+**Current committed revision:** `develop` at
+`b1a6c9491fc1af26861b68145b4e3fb550362ec9`.
+Independent test-only commits: B07-D `82fcaed`, B07-B `dc255d3`,
+B07-C `fdfc890`, B07-E `b1a6c94`. No change to production authentication
+code, public APIs, or selected MAC algorithms in these slices.
+
+**Environment:** Windows PowerShell, MSVC Release, `build-sa-b06-vcpkg`.
+Reported build command:
+
+```powershell
+cmake --build build-sa-b06-vcpkg --config Release --target unittests integrationtests --parallel 4
+```
+
+| Checkpoint | User-reported executed results |
+| --- | --- |
+| B07-D | `[sa-b07]` 5 cases / 20,773 assertions PASS; full unit 791 / 91,580 PASS; integration 16 / 12,534 PASS |
+| B07-B | focused 1 / 887 PASS; `[sa-b07]` 5 / 20,825 PASS; unit 791 / 91,632 PASS; integration 16 / 12,534 PASS |
+| B07-C | focused 1 / 1,974 PASS; `[sa-b07]` 5 / 21,458 PASS; unit 791 / 92,265 PASS; integration 16 / 12,534 PASS |
+| B07-E | boundary 1 / 120 PASS; invalid-MAC 1 / 32 PASS; `[sa-b07]` 6 / 5,120 PASS; unit 792 / 75,927 PASS; integration 16 / 12,534 PASS |
+
+Final unfiltered total: **808 test cases / 88,461 assertions PASS**.
+Assertion totals are not a coverage metric: B07-E replaced byte-by-byte
+checks of a 2048-byte output with equivalent whole-buffer `std::all_of`
+assertions, accounting for most of the decrease from the preceding checkpoint.
+The builds/tests were executed by the user; no agent-side Windows execution,
+new B07 separate-process TCP, or independent-peer interoperability is claimed.
+
+**Reconciled findings:** R1 proves stale response rejection after genuine
+renewed session readiness and Challenge eligibility. R2 asserts selected
+native effects of authenticated FC2, FC20/21 and FC22. R4 isolates valid-MAC
+wrong-user, valid-framing corrupted-data and valid-MAC malformed-qualifier
+rejections with CSQ/budget and ownership preservation. R5 asserts full dirty
+output erasure after replay/boundary and MAC failures in the codec fixture.
+
+**Outstanding limits:** R3 does not finish the pending SBO/CONFIRM cycle; a
+valid FC5 may execute before a failed monitoring response. R6 independent-peer
+interoperability is open. Product MAC-SELECTION, TIMEOUT-ZERO, P4-OPEN-01 and
+the provisional G120V7 code 5/7 meanings remain unresolved. G0V209 stays
+unadvertised; G120V8 runtime, selected Profile/CFG/SEC subcases and physical
+STM32H743/FreeRTOS acceptance remain separate. No full SA v5 or general
+IEEE Level 4 compliance is asserted.

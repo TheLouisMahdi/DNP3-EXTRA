@@ -34,7 +34,7 @@ Historical issue descriptions below remain searchable. Only PDF-selected require
 | CLASS-EDGE | Dangling and unsupported class header behavior. |
 | IIN-WRITE-SCOPE | Narrow restart-bit write support and qualifier coverage. |
 | RESTART-APP | Native restart hook requires an application implementation. |
-| AGGRESSIVE-SCOPE | [B07 reviewed matrix](B07_ACCEPTANCE_MATRIX.md) and [Record 13](ENGINEERING_EVIDENCE.md#record-13) record user-supplied Windows Release/unit/integration PASS and VERIFIED_HOST for the mapped selected envelope/runtime witnesses. Review R1-R6 limit native side-effect, renewed-eligibility replay and isolated-fault claims; the next slice is test-only B07-D hardening. Independent-peer, product MAC and other stated gates remain open. No general IEEE Level 4 or full SA v5 acceptance is implied. |
+| AGGRESSIVE-SCOPE | [B07 current disposition](B07_ACCEPTANCE_MATRIX.md#current-b07-hardening-disposition-2026-11-07) and [Record 14](ENGINEERING_EVIDENCE.md#record-14) report six B07 cases and passing Windows Host regressions through `b1a6c94`. R1/R2/R4/R5 were hardened for their scoped witnesses; R3 (full pending SBO/CONFIRM cycle) and R6 (independent-peer) remain open. Selected Profile/CFG/SEC subcases, G0V209, MAC-SELECTION, TIMEOUT-ZERO, P4-OPEN-01 and RTU hardware acceptance are not closed. |
 | TIMEOUT-ZERO | Meaning and handling of a zero security timeout. |
 | MAC-SELECTION | Product MAC choices require resolution. |
 | METHOD-SELECTION | Additional selectable remote key methods require a product decision. |

@@ -1,6 +1,31 @@
 # B07 selected Aggressive Mode acceptance matrix
 
 Source baseline: `develop`, `3478a2b448b6ba092cfa5e2b03fb6b09af7f2fd7`.
+
+## Current B07 hardening disposition (2026-11-07)
+
+The original review below is historical. Its R1/R2/R4/R5 limitations and
+five-case counts are superseded by this section and
+[Record 14](ENGINEERING_EVIDENCE.md#record-14). The reviewed code is committed
+through `b1a6c9491fc1af26861b68145b4e3fb550362ec9` on `develop`.
+
+| Finding | Current executed Host evidence | Disposition |
+| --- | --- | --- |
+| R1, B07-D (`82fcaed`) | Both users' renewed sessions are ready on Master and Outstation; KSQ and directional keys change; genuine fresh Challenge/Reply restores eligibility; retained old response is rejected after renewal, a current response accepted once | Addressed for this Host witness |
+| R2, B07-B (`dc255d3`) | G50V1 callback value 1000 ms; FC20/21 class masks plus genuine binary event delivery/suppression; FC22 Class1-to-Class2 reassignment and new Class2 binary, double-binary and analog events | Addressed for selected native effects, not all CFG-11/point variations |
+| R4, B07-C (`fdfc890`) | Configured wrong monitoring USR with recomputed valid MAC; value-only payload mutation with unchanged MAC; malformed V3 qualifier with recomputed valid MAC; no rejected-message CSQ/budget consumption or lost independent owner | Addressed for these isolated negatives |
+| R5, B07-E (`b1a6c94`) | Nonzero 2048-byte output cleared after rejected CSQ boundary/replay and invalid MAC; valid token still accepted | Addressed in codec/helper tests, not an independent/runtime peer boundary |
+| R3 | A pending SELECT/OPERATE and CONFIRM cycle is not fully completed by B07-C; a previously valid FC5 may have already executed | OPEN |
+| R6 | Independent-peer interoperability and target RTU validation were not performed in these B07 tests | OPEN |
+
+Final user-reported Windows MSVC Release results: `[sa-b07]` **6 cases / 5,120
+assertions PASS**; unfiltered unit **792 / 75,927 PASS**; integration **16 /
+12,534 PASS** (808 cases total). These are same-project Host results; B07-E
+is helper evidence. No new production code, complete SA v5, IEEE Level 4 or
+product-wide conformance claim follows from them.
+
+## Original B07 review (historical)
+
 Review date: 2026-11-07. **Disposition: VERIFIED_HOST for the selected Aggressive
 envelope/runtime witnesses mapped below, based on user-reported Windows execution
 and static review of the current B07 diff.** This is a scoped Host disposition,
@@ -152,7 +177,7 @@ reused. Neither label promotes every payload variation or native side effect.
 | Timeout/disconnect/no unauthorized execution; PROFILE-019/035..037, CFG-08 and 7.5.2.3.2(i) for FC6 | MC task timers/OnLowerLayerDown, OC one-shot authenticated release/authorization and no-response dispatcher; independent owners retained | P aggressive invalid MAC/authorization and TX lifetime; nine B03 phase/negative cases; AuthenticationRuntime timeout/disconnect; T interrupted renewal; B07-D no monitoring delivery | R/H for asserted phases. A valid operation may precede a lost/rejected monitoring response; no claim that response failure rolls it back |
 | Unsupported/disallowed MAL; PROFILE-050/056 V1-history dependency; preserve P4-OPEN-01 | MasterResponder rejects V1 MAL; MC `CancelAuthenticationReply` and OC monitoring-only cleanup preserve independent exchange/TX owners; AGG uses retained history's algorithm | All three P [sa-v06-mac-policy] cases for2/6; A each transcript retains selected MAC after Code5 | R: included in reported full unit pass, no new focused count. MAL is in V1, not invented in V3/V9. GMAC6 remains unsupported; Code5/7 interpretation stays provisional |
 
-## Assertion audit and review concerns
+## Original assertion audit and review concerns (historical; see current disposition above)
 
 These are limits on the claim, not newly demonstrated production defects. Passing
 the suite does not turn an unasserted property into executed evidence.
@@ -166,7 +191,7 @@ the suite does not turn an unasserted property into executed evidence.
 | R5 - B07-E boundary/output | Correctly re-MACed deltas isolate stale/half-window rejection from MAC corruption; rejected candidate leaves Sequence and next valid token usable | Output starts zero; the rejected-candidate zero-byte loop alone cannot prove clearing pre-existing nonzero bytes. Forward-then-replay branch asserts rejection but not output bytes. A exact READ/Table A9 test separately checks output erasure after a successful decode followed by replay; Guard clearing also reviewed statically | Accept signed boundary/codec evidence. Do not attribute a new dirty-buffer erasure proof to B07-E |
 | R6 - evidence independence | A/B07-A assemble Table A-9 inputs separately; runtime fixtures use genuine negotiation and production routing; reported suites pass | Both peers/helpers and crypto provider belong to this project. B07NativeTask intentionally validates only single-response/request-error framing and captures bytes; external semantic checks are limited to the witnesses above | Accept same-project Host evidence only, not independent-peer interoperability, RTU behavior or full SA v5 |
 
-## Smallest justified next engineering slice
+## Original suggested next slice (historical; superseded by current disposition)
 
 Extend **B07-D only**, with test/fixture assertions and no production change unless
 that extension reproduces a defect: assert both users are ready after reconnect,
