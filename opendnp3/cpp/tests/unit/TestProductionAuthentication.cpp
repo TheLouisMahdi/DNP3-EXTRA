@@ -3,6 +3,7 @@
 #include "app/APDURequest.h"
 #include "crypto/CryptoProvider.h"
 #include "gen/objects/Group121.h"
+#include "master/TaskPriority.h"
 #include "utils/BufferHelpers.h"
 #include "utils/CommandCallbackQueue.h"
 #include "utils/MasterTestFixture.h"
@@ -16,6 +17,7 @@
 #include <array>
 #include <chrono>
 #include <functional>
+#include <tuple>
 #include <vector>
 
 using namespace opendnp3;
@@ -25,6 +27,10 @@ namespace opendnp3
 class ProductionAuthenticationTestAccess
 {
 public:
+    static void Schedule(MContext& context, const std::shared_ptr<IMasterTask>& task)
+    {
+        context.ScheduleAdhocTask(task);
+    }
     static AuthenticationStatistics& Stats(MContext& context) { return context.authentication->sessions->statistics; }
     static AuthenticationStatistics& Stats(OContext& context) { return context.authentication->sessions->statistics; }
     static void ObserveClose(OContext& context, std::function<void()> callback)
@@ -249,12 +255,17 @@ OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
     c.params.authentication.authorization = policy;
     return c;
 }
-DatabaseConfig BinaryEventDatabase()
+DatabaseConfig BinaryEventDatabase(bool selectedInputs = false)
 {
     DatabaseConfig db;
     BinaryConfig binary;
     binary.clazz = PointClass::Class1;
     db.binary_input.emplace(0, binary);
+    if (selectedInputs)
+    {
+        db.double_binary.emplace(0, DoubleBitBinaryConfig());
+        db.analog_input.emplace(0, AnalogConfig());
+    }
     return db;
 }
 struct RuntimePair
@@ -276,11 +287,12 @@ struct RuntimePair
                          uint16_t maxErrors = 2, bool suppressErrors = false,
                          uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000,
                          bool class1Unsolicited = false,
-                         IndexQualifierMode qualifier = IndexQualifierMode::always_two_bytes)
+                         IndexQualifierMode qualifier = IndexQualifierMode::always_two_bytes,
+                         bool selectedInputs = false)
         : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer, masterTimeoutMs, qualifier), Addresses(), "test", masterLog),
           outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors,
                                  suppressErrors, outstationTimeoutMs, class1Unsolicited),
-                     class1Unsolicited ? BinaryEventDatabase() : DatabaseConfig())
+                     class1Unsolicited ? BinaryEventDatabase(selectedInputs) : DatabaseConfig())
     {
         outstation.LowerLayerUp();
         REQUIRE(master.context->OnLowerLayerUp());
@@ -4571,4 +4583,375 @@ TEST_CASE("ProductionAuthentication - FC6 TX completion at its deadline cannot r
     pair.master.exe->run_many();
     REQUIRE(pair.results.values.size() == 1);
     REQUIRE(pair.master.lower->NumWrites() == 0);
+}
+
+
+namespace
+{
+// The envelope uses NETWORK's configured default MAL=4. No optional algorithm is enabled here.
+std::vector<uint8_t> B07Envelope(const std::string& hex, bool response, uint16_t user)
+{
+    HexSequence wire(hex);
+    const auto apdu = wire.ToRSeq();
+    const size_t header = response ? 4 : 2;
+    REQUIRE(apdu.length() >= header + 10 + 22);
+    REQUIRE(apdu[header] == 120);
+    REQUIRE(apdu[header + 1] == 3);
+    REQUIRE(apdu[header + 2] == 0x07);
+    REQUIRE(apdu[header + 3] == 1);
+    auto prefix = apdu.skip(header + 4);
+    Group120Var3 v3;
+    REQUIRE(Group120Var3::Read(prefix, v3));
+    REQUIRE(v3.userNum == user);
+    const auto suffix = apdu.length() - 22;
+    REQUIRE(apdu[suffix] == 120);
+    REQUIRE(apdu[suffix + 1] == 9);
+    REQUIRE(apdu[suffix + 2] == 0x5B);
+    REQUIRE(apdu[suffix + 3] == 1);
+    REQUIRE(apdu[suffix + 4] == 16);
+    REQUIRE(apdu[suffix + 5] == 0);
+    std::vector<uint8_t> native(static_cast<const uint8_t*>(apdu), static_cast<const uint8_t*>(apdu) + header);
+    native.insert(native.end(), static_cast<const uint8_t*>(apdu) + header + 10,
+                  static_cast<const uint8_t*>(apdu) + suffix);
+    return native;
+}
+void B07CheckMAC(const std::string& hex, rseq_t challenge, rseq_t key)
+{
+    HexSequence wire(hex);
+    const auto apdu = wire.ToRSeq();
+    REQUIRE(apdu.length() >= 16);
+    std::vector<uint8_t> transcript(static_cast<const uint8_t*>(challenge),
+                                     static_cast<const uint8_t*>(challenge) + challenge.length());
+    transcript.insert(transcript.end(), static_cast<const uint8_t*>(apdu),
+                      static_cast<const uint8_t*>(apdu) + apdu.length() - 16);
+    std::array<uint8_t, 16> mac{};
+    // Independent assembly of Table A-9: full genuine Challenge + full current
+    // fragment through V9's header/prefix. No addresses or MAC value in the input.
+    REQUIRE(crypto::ComputeHMACSHA256(key, rseq_t(transcript.data(), transcript.size()),
+                                     wseq_t(mac.data(), mac.size())) == crypto::Result::OK);
+    REQUIRE(crypto::ConstantTimeEqual(rseq_t(mac.data(), mac.size()), apdu.skip(apdu.length() - 16)));
+}
+void B07Prime(RuntimePair& pair, bool unsolicited)
+{
+    pair.Pump();
+    if (unsolicited)
+    {
+        pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+        pair.Pump(); // Genuine null-response monitoring exchange and authenticated native CONFIRM.
+        REQUIRE(ProductionAuthenticationTestAccess::StartupNullConfirmed(pair.outstation.context));
+    }
+    pair.SelectOperate();
+    pair.Pump(); // User 2 and solicited monitoring histories come from real production exchanges.
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.back().summary == TaskCompletion::SUCCESS);
+    pair.results.values.clear();
+}
+// Capture native replies for selected non-command functions without adding a
+// public API or bypassing the scheduler, SA routing, or native Outstation handlers.
+class B07NativeTask final : public IMasterTask
+{
+public:
+    B07NativeTask(MContext& context, uint8_t function, const std::string& objects)
+        : IMasterTask(context.tasks.context, *context.application,
+                      TaskBehavior::SingleExecutionNoRetry(Timestamp(context.executor->get_time()) + context.params.taskStartTimeout),
+                      context.logger, Config()), function(function), objects(objects) {}
+    const char* Name() const override { return "B07 selected function"; }
+    int Priority() const override { return priority::USER_REQUEST; }
+    bool IsRecurring() const override { return false; }
+    bool BuildRequest(APDURequest& request, uint8_t seq) override
+    {
+        request.ConfigureHeader(FunctionCodeSpec::from_type(function), seq);
+        HexSequence body(objects);
+        return request.AppendObjects(body.ToRSeq());
+    }
+    size_t completions = 0;
+    TaskCompletion completion = TaskCompletion::FAILURE_BAD_RESPONSE;
+    std::vector<uint8_t> received;
+private:
+    static TaskConfig Config() { auto config = TaskConfig::Default(); config.authenticationUser = 2; return config; }
+    bool BlocksLowerPriority() const override { return false; }
+    MasterTaskType GetTaskType() const override { return MasterTaskType::USER_TASK; }
+    ResponseResult ProcessResponse(const APDUResponseHeader& header, const rseq_t& data) override
+    {
+        if (!ValidateSingleResponse(header) || header.IIN.HasRequestError()) return ResponseResult::ERROR_BAD_RESPONSE;
+        received.assign(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + data.length());
+        return ResponseResult::OK_FINAL;
+    }
+    void OnTaskComplete(TaskCompletion result, Timestamp) override { completion = result; ++completions; }
+    const uint8_t function;
+    const std::string objects;
+};
+}
+
+TEST_CASE("ProductionAuthentication - B07 selected FC3 FC4 FC5 envelopes retain typed qualifier and echo bytes",
+          "[production-sa][sa-b07]")
+{
+    const auto type = GENERATE(0u, 1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    const bool direct = GENERATE(false, true);
+    CAPTURE(type, wide, direct);
+    RuntimePair pair(false, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+    B07Prime(pair, false);
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto selections = pair.outstation.cmdHandler->NumSelect();
+    auto config = TaskConfig::Default(); config.authenticationUser = 2;
+    if (direct) pair.master.context->DirectOperate(FC6Commands(type, wide ? 0x1234 : 3), pair.results.Callback(), config);
+    else pair.master.context->SelectAndOperate(FC6Commands(type, wide ? 0x1234 : 3), pair.results.Callback(), config);
+    pair.master.exe->run_many();
+    for (unsigned phase = 0; phase < (direct ? 1u : 2u); ++phase)
+    {
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto request = pair.master.lower->PopWriteAsHex();
+        const auto native = B07Envelope(request, false, 2);
+        REQUIRE(native[1] == (direct ? 5 : phase == 0 ? 3 : 4));
+        REQUIRE(native[2] == (type == 0 ? 12 : 41));
+        REQUIRE(native[3] == (type == 0 ? 1 : type));
+        REQUIRE(native[4] == (wide ? 0x28 : 0x17));
+        B07CheckMAC(request, ProductionAuthenticationTestAccess::AcceptedChallenge(pair.outstation.context),
+                    ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).ControlKey(0));
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto response = pair.outstation.lower->PopWriteAsHex();
+        const auto echoed = B07Envelope(response, true, 1);
+        REQUIRE(echoed[1] == 0x81);
+        REQUIRE((echoed[0] & 0x0F) == (native[0] & 0x0F));
+        REQUIRE(rseq_t(echoed.data(), echoed.size()).skip(4).equals(rseq_t(native.data(), native.size()).skip(2)));
+        HexSequence seed(pair.monitoringChallenge);
+        B07CheckMAC(response, seed.ToRSeq(), ProductionAuthenticationTestAccess::Common(pair.outstation.context).MonitoringKey(0));
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(response));
+        pair.master.exe->run_many();
+    }
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    REQUIRE(pair.results.values.front().results.front().status == CommandStatus::SUCCESS);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + (direct ? 0 : 1));
+}
+
+TEST_CASE("ProductionAuthentication - B07 selected non-command functions traverse native Aggressive routing",
+          "[production-sa][sa-b07]")
+{
+    // FC1-31 is the envelope range, not a request to implement optional functions.
+    const auto item = GENERATE(0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u);
+    const std::array<uint8_t, 10> functions{{1, 2, 2, 13, 20, 21, 22, 22, 22, 23}};
+    const std::array<const char*, 10> bodies{{"3C 01 06", "32 01 07 01 E8 03 00 00 00 00",
+        "50 01 00 07 07 00", "", "3C 02 06 3C 03 06 3C 04 06", "3C 02 06 3C 03 06 3C 04 06",
+        "3C 02 06 01 00 06", "3C 02 06 03 00 06", "3C 02 06 1E 00 06", ""}};
+    CAPTURE(item, functions[item], bodies[item]);
+    RuntimePair pair(true, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, true,
+                     IndexQualifierMode::always_two_bytes, true);
+    B07Prime(pair, true);
+    pair.outstation.application->supportsAssignClass = true;
+    pair.outstation.application->coldRestartSupport = RestartMode::SUPPORTED_DELAY_FINE;
+    pair.outstation.application->coldRestartTimeDelay = 37;
+    auto task = std::make_shared<B07NativeTask>(*pair.master.context, functions[item], bodies[item]);
+    ProductionAuthenticationTestAccess::Schedule(*pair.master.context, task);
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    const auto native = B07Envelope(request, false, 2);
+    REQUIRE(native[1] == functions[item]);
+    HexSequence body(bodies[item]);
+    REQUIRE(rseq_t(native.data(), native.size()).skip(2).equals(body.ToRSeq()));
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto response = pair.outstation.lower->PopWriteAsHex();
+    const auto decoded = B07Envelope(response, true, 1);
+    REQUIRE(decoded[1] == 0x81);
+    REQUIRE((decoded[3] & 0x07) == 0); // No parameter/unknown-object/unsupported-function IIN.
+    if (item == 0) { REQUIRE(decoded.size() > 4); REQUIRE(decoded[4] == 1); }
+    else if (item == 3 || item == 9)
+    {
+        HexSequence expected(item == 3 ? "34 02 07 01 25 00" : "34 02 07 01 00 00");
+        REQUIRE(rseq_t(decoded.data(), decoded.size()).skip(4).equals(expected.ToRSeq()));
+    }
+    else REQUIRE(decoded.size() == 4);
+    if (item == 1) REQUIRE(pair.outstation.application->timestamps.size() == 1);
+    if (item >= 6 && item <= 8)
+    {
+        REQUIRE(pair.outstation.application->classAssignments.size() == 1);
+        const auto type = item == 6 ? AssignClassType::BinaryInput
+            : item == 7 ? AssignClassType::DoubleBinaryInput : AssignClassType::AnalogInput;
+        REQUIRE(std::get<0>(pair.outstation.application->classAssignments.front()) == type);
+        REQUIRE(std::get<2>(pair.outstation.application->classAssignments.front()) == 0);
+        REQUIRE(std::get<3>(pair.outstation.application->classAssignments.front()) == 0);
+    }
+    if (item == 2) REQUIRE_FALSE(ProductionAuthenticationTestAccess::ResponseIIN(pair.outstation.context).IsSet(IINBit::DEVICE_RESTART));
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(response));
+    pair.master.exe->run_many();
+    REQUIRE(task->completions == 1);
+    REQUIRE(task->completion == TaskCompletion::SUCCESS);
+    REQUIRE(rseq_t(task->received.data(), task->received.size()).equals(rseq_t(decoded.data(), decoded.size()).skip(4)));
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1); // Bootstrap only; no optional output function added.
+    REQUIRE(pair.results.values.empty());
+}
+
+TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending control and both borrowed transmissions",
+          "[production-sa][sa-b07]")
+{
+    const bool unsolicited = GENERATE(false, true);
+    // Unknown user, foreign association, bad tag, coherent shortened tag, changed IIN,
+    // altered native data, wrong V3 qualifier/count, wrong V9 qualifier.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8);
+    CAPTURE(unsolicited, fault);
+    RuntimePair pair(unsolicited, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, unsolicited);
+    pair.Pump();
+    if (unsolicited)
+    {
+        pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+        pair.Pump(); // Only UNS history/common control has been established; user 2 is still unprimed.
+        pair.SelectOperate();
+    }
+    else
+    {
+        pair.SelectOperate(); pair.Pump(); pair.results.values.clear();
+        auto config = TaskConfig::Default(); config.authenticationUser = 2;
+        pair.master.context->DirectOperate(FC6Commands(0, 3), pair.results.Callback(), config);
+        pair.master.exe->run_many();
+    }
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex(); // Keep the native/Aggressive Master buffer borrowed.
+    HexSequence heldRequest(request);
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    auto response = pair.outstation.lower->PopWriteAsHex();
+    std::string controlChallenge;
+    if (unsolicited)
+    {
+        controlChallenge = response;
+        pair.outstation.OnTxReady();
+        pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true), 0); });
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        response = pair.outstation.lower->PopWriteAsHex();
+        REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+            == OutstationChallenger::State::WAITING_FOR_REPLY);
+    }
+    HexSequence packet(response);
+    auto native = B07Envelope(response, true, 1);
+    REQUIRE(native[1] == (unsolicited ? 0x82 : 0x81));
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto selections = pair.outstation.cmdHandler->NumSelect();
+    const auto successes = ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+    const auto state = ProductionAuthenticationTestAccess::ResponderState(*pair.master.context);
+    const auto measurements = pair.master.meas->TotalReceived();
+    HexSequence seed(pair.monitoringChallenge);
+    B07CheckMAC(response, seed.ToRSeq(), ProductionAuthenticationTestAccess::Common(pair.outstation.context)
+        .MonitoringKey(ProductionAuthenticationTestAccess::Now(pair.outstation.context)));
+    std::vector<uint8_t> changed(static_cast<const uint8_t*>(packet.ToRSeq()),
+                               static_cast<const uint8_t*>(packet.ToRSeq()) + packet.ToRSeq().length());
+    const size_t suffix = changed.size() - 22;
+    if (fault == 0) changed[12] = 99;
+    if (fault == 2) changed.back() ^= 1;
+    if (fault == 3) { changed[suffix + 4] = 15; changed.pop_back(); }
+    if (fault == 4) changed[2] ^= 1;
+    if (fault == 5) changed[14] ^= 1;
+    if (fault == 6) changed[6] = 8;
+    if (fault == 7) changed[7] = 2;
+    if (fault == 8) changed[suffix + 2] = 7;
+    if (fault == 1)
+        REQUIRE_FALSE(pair.master.context->OnReceive(Message(Addresses(99, pair.master.addresses.source),
+                                                             rseq_t(changed.data(), changed.size()))));
+    else REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(changed.data(), changed.size()))));
+    REQUIRE(pair.results.values.empty());
+    REQUIRE(pair.master.meas->TotalReceived() == measurements);
+    REQUIRE(pair.master.context->activeTask);
+    if (unsolicited)
+        REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+            == OutstationChallenger::State::WAITING_FOR_REPLY);
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::ResponderState(*pair.master.context) == state);
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == successes);
+    const auto borrowed = unsolicited ? pair.master.context->txBuffer.as_rslice().take(heldRequest.ToRSeq().length())
+        : ProductionAuthenticationTestAccess::AggressiveBytes(*pair.master.context, heldRequest.ToRSeq().length());
+    REQUIRE(borrowed.equals(heldRequest.ToRSeq()));
+    REQUIRE(ProductionAuthenticationTestAccess::AggressiveBytes(pair.outstation.context, packet.ToRSeq().length()).equals(packet.ToRSeq()));
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections);
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.OnTxReady();
+    // Rejection did not consume the authentic CSQ. The original wire still authenticates once.
+    REQUIRE(pair.master.SendToMaster(response));
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == successes + 1);
+    const auto delivered = pair.master.meas->TotalReceived();
+    if (unsolicited) REQUIRE(delivered > measurements);
+    REQUIRE(pair.master.SendToMaster(response)); // Monitoring replay must not redeliver, confirm, or complete a task twice.
+    REQUIRE(pair.master.meas->TotalReceived() == delivered);
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == successes + 1);
+    if (unsolicited)
+    {
+        REQUIRE(pair.master.context->confirmQueue.size() == 1);
+        const auto reply = ReplyFC6(pair, controlChallenge); // Same V1/V2 wire ownership as FC6; original task is SELECT.
+        pair.outstation.SendToOutstation(reply);
+        REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+        REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context) == OutstationChallenger::State::IDLE);
+    }
+    else
+    {
+        REQUIRE(pair.results.values.size() == 1);
+        REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    }
+}
+
+
+TEST_CASE("ProductionAuthentication - B07 expired monitoring keys and reconnect reject retained Aggressive responses",
+          "[production-sa][sa-b07]")
+{
+    const bool unsolicited = GENERATE(false, true);
+    RuntimePair pair(unsolicited, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, unsolicited);
+    pair.Pump();
+    if (unsolicited)
+    {
+        pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+        pair.Pump();
+        pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true), 0); });
+    }
+    else
+    {
+        pair.SelectOperate(); pair.Pump(); pair.results.values.clear();
+        auto config = TaskConfig::Default(); config.authenticationUser = 2;
+        pair.master.context->DirectOperate(FC6Commands(0, 3), pair.results.Callback(), config);
+        pair.master.exe->run_many();
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto request = pair.master.lower->PopWriteAsHex();
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.outstation.SendToOutstation(request);
+    }
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto response = pair.outstation.lower->PopWriteAsHex();
+    B07Envelope(response, true, 1);
+    HexSequence held(response);
+    const auto successes = ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+    const auto measurements = pair.master.meas->TotalReceived();
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto expiry = ProductionAuthenticationTestAccess::Common(*pair.master.context).ValidUntil();
+    pair.master.exe->advance_time(std::chrono::milliseconds(expiry)); // Both Master users expire; no key injection.
+    REQUIRE(pair.master.SendToMaster(response));
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == successes);
+    REQUIRE(pair.master.meas->TotalReceived() == measurements);
+    REQUIRE(pair.results.values.empty());
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(ProductionAuthenticationTestAccess::AggressiveBytes(pair.outstation.context, held.ToRSeq().length()).equals(held.ToRSeq()));
+    // Cancel the borrowed lower-layer TX before reconnect, then negotiate through
+    // the real V4/V5/V6/V5 path. The old transcript must not gain eligibility.
+    REQUIRE(pair.master.context->OnLowerLayerDown());
+    pair.outstation.LowerLayerDown();
+    pair.outstation.LowerLayerUp();
+    REQUIRE(pair.master.context->OnLowerLayerUp());
+    pair.master.exe->run_many(); pair.Pump();
+    const auto afterReconnect = ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+    const auto callbacks = pair.results.values.size();
+    REQUIRE(pair.master.SendToMaster(response));
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == afterReconnect);
+    REQUIRE(pair.master.meas->TotalReceived() == measurements);
+    REQUIRE(pair.results.values.size() == callbacks);
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
 }
