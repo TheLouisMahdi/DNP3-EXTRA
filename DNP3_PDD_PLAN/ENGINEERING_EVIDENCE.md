@@ -2704,3 +2704,94 @@ Primary external references used where needed:
 **Assessment:** `VERIFIED_HOST` for the specific V-06c and B03 behaviors exercised above. These are same-implementation Host results, not independent-peer interoperability or a complete certification. All 69 PROFILE + 36 SEC + 14 CFG requirements retain their own acceptance scope and subcase obligations; do not blanket-upgrade matrices. B03 primarily adds evidence for the FC6 portions of PROFILE-019, PROFILE-035/036/037 and CFG-08, not all control/physical I/O conditions.
 
 **Open/limited:** `TIMEOUT-ZERO` requires normative/product clarification; configured Aggressive FC6 without usable retained Challenge history fails locally; `CFG-09` CROB Trip/Close mapping and rejected forms remain pending; G0V209, G120V8, MAC/TLS selections, independent-peer interoperability, trusted RTU I/O, STM32H743/FreeRTOS, NVM/entropy/hardware acceptance remain open. Preserve `P4-OPEN-01` and the provisional G120V7 Code 5/7 meanings. No full SA v5 or Level 4 conformance claim.
+
+
+<a id="record-12"></a>
+
+## Record 12 - 2026-11-07: B07 selected Aggressive acceptance source coverage (unexecuted)
+
+Historical status at source-authoring time. Subsequent user-supplied Windows
+execution and the bounded Host acceptance review are recorded in [Record 13](#record-13);
+the original no-execution statement below is retained as history.
+
+Baseline: `develop`, `3478a2b448b6ba092cfa5e2b03fb6b09af7f2fd7`, plus B07 test/document changes.
+The [B07 acceptance matrix](B07_ACCEPTANCE_MATRIX.md) maps PROFILE-050/056 and SEC-T1-04/05
+through the exact selected functions, directions, qualifiers and ownership boundaries.
+It distinguishes existing permanent coverage from five new parameterized test cases.
+
+Changes add exact typed FC3/4/5 envelopes/ECHO, selected non-command native routing,
+actual FC129/130 monitoring corruption/contention, receiving-key expiry/reconnect,
+and correctly signed CSQ half-window boundary checks. Runtime seeds and keys come
+from genuine production negotiation and Challenge/Reply. The isolated codec boundary
+fixture is explicitly identified separately. No production defect was established;
+no production code, public API, optional MAC selection or capability advertisement changed.
+
+Validation: scoped `git diff --check` only. **NOT BUILT / NOT TESTED.** No new Host
+execution result or VERIFIED_HOST promotion is claimed. Record 11's V-06c/B03
+results remain historical evidence for their stated scope. Windows execution,
+independent-peer interoperability, MAC-SELECTION, TIMEOUT-ZERO and P4-OPEN-01
+remain open; provisional G120V7 Code 5/7 meanings are preserved.
+
+
+<a id="record-13"></a>
+
+## Record 13 - 2026-11-07: B07 Windows Host acceptance review (user-reported execution)
+
+**Revision and provenance:** reviewed `develop` HEAD
+`3478a2b448b6ba092cfa5e2b03fb6b09af7f2fd7` plus the current uncommitted B07 test diff
+in TestProductionAuthentication.cpp and TestAggressiveMode.cpp. The supplied results
+are attributed to that B07 tree as reported by the user, not to baseline HEAD alone.
+No test or production source was changed during this documentation review. Exact
+run commands, build directory/compiler version, execution timestamps, per-case logs
+and a tested-binary/source hash binding were not supplied; no values are inferred.
+
+**Windows execution supplied by the user:**
+
+| Scope | Result supplied | Evidence category and limit |
+| --- | --- | --- |
+| Release build | PASS | Reported Windows compilation; not protocol acceptance by itself |
+| Unit suite | PASS; 791 cases, 91,225 assertions | Host unit execution of the reviewed suite, including the five parameterized B07 cases and existing B03/V-06c coverage. Totals are suite-wide, not B07-only; no separate focused B07 totals were supplied |
+| Integration suite | PASS; 16 cases, 12,534 assertions | Existing same-project integration/TCP regression. It does not add a B07-specific separate-process run, external implementation or RTU endpoint |
+
+The agent did **not** run builds or tests. Agent work here was static code/assertion
+review, documentation changes and scoped `git diff --check`. Record 12's initial
+NOT BUILT / NOT TESTED statement is historical; the current evidence is the supplied
+execution above. Record 11's ProcessSmoke Method4/68 and other process results remain
+historical evidence with their stated scope; no new ProcessSmoke run was supplied.
+
+**Traceability and assertion audit:** the [reviewed B07 matrix](B07_ACCEPTANCE_MATRIX.md)
+maps every selected-function and security/ownership row to PROFILE-050/056, exact
+native witness requirements, directions, payload/envelope qualifiers, user/association,
+production methods and permanent tests. C2 denotes user2/Control/Master-to-Outstation;
+M1/129 and M1/130 denote common user1/Monitoring/Outstation-to-Master. New cases use
+the existing NETWORK MAL4/16-octet policy, V3 Q07/count1 and V9 Q5B/count1.
+
+| B07 evidence | Supported finding | Accepted boundary |
+| --- | --- | --- |
+| A: selected FC3 FC4 FC5 envelopes retain typed qualifier and echo bytes | G12V1/G41V1,V2,V3 Q17/Q28, real prior Challenge history, exact per-stage ECHO/SEQ, independently assembled Table A-9 MAC inputs, callbacks and invocation counts | Host typed positive envelope/SBO/direct witness; same provider/implementation, not independent interoperability or physical control proof |
+| B: selected non-command functions traverse native Aggressive routing | Native FC1,2,13,20,21,22,23 witnesses, real SA routing and captured verified responses, native time/IIN/assignment callback observations | Capture task is a test-only native task, not an authentication bypass. Native side-effect closure is limited: no post-enable/disable event check, no timestamp-value assertion, and Class1 assignment is idempotent with no target-class/database transition assertion (matrix R2) |
+| C: monitoring faults preserve pending control and both borrowed transmissions | FC129/130 rejection without SOE, task completion, CONFIRM or extra operations; original valid token works once; duplicate rejected; both TX owners retained; UNS branch can complete its original user2 SELECT authentication | Solicited FC5 already executed validly; UNS branch stops before the full SBO/CONFIRM cycle finishes (R3). USR99 mutation also changes authenticated input; native group mutation can fail parsing before MAC, so these do not isolate valid-MAC wrong-USR or valid-encoding data tampering (R4) |
+| D: expired monitoring keys and reconnect reject retained Aggressive responses | Real expiry prevents native delivery/acknowledgment; borrowed Outstation buffer retained; old response rejected immediately after reconnect | Reconnect clears eligibility. No explicit new ready/KSQ/key assertion or fresh Challenge re-priming precedes replay; not proof of old-response rejection after renewed eligibility (R1) |
+| E: signed CSQ half-window boundaries do not consume rejected tokens | Correctly re-MACed delta0/7FFFFFFF/80000000/80000001/FFFFFFFF in both helper directions isolates CSQ policy; rejected token preserves next valid token | Executed codec evidence, not a runtime negotiated boundary. Zero-initialized output weakens this case's dirty-buffer clearing claim; existing exact READ/Table-A9 replay case separately checks clearing after nonzero successful decode (R5) |
+
+**Disposition:** `VERIFIED_HOST` for the selected Aggressive envelope/dispatch/replay/
+ownership witnesses explicitly mapped in B07, using the supplied execution and static
+review together. No blocking production defect was established. Existing FC6, V-06c,
+CONFIRM, timeout/disconnect and unsupported-MAC cases are reused; no new production
+fix, public API or algorithm is justified by this review. Full PROFILE-050/056 payload
+cross-products/native semantic acceptance and all other Profile/CFG/SEC obligations
+are not blanket-promoted. PROFILE_MATRIX.csv and SECURITY_MATRIX.csv remain unchanged.
+
+**Remaining gates and smallest next slice:** preserve MAC-SELECTION, TIMEOUT-ZERO,
+P4-OPEN-01/provisional G120V7 Code5/7, independent-peer and G0V209 limitations. No
+complete SA v5, IEEE Level4, physical restart/I/O, STM32H743/FreeRTOS, entropy/NVM or
+RTU hardware acceptance is claimed. Host fake-lower-layer tests, same-project TCP,
+independent-peer interoperability and physical RTU evidence are distinct categories.
+
+The smallest next engineering slice is a **test-only B07-D extension**: explicitly
+prove both users' post-reconnect readiness and changed session identity/material,
+restore the appropriate history via genuine fresh Challenge/Reply, then assert old
+response rejection without SOE/CONFIRM/task completion and current response acceptance.
+This distinguishes stale-session/history rejection from reset eligibility gating.
+Do not alter production code unless that focused extension reproduces a defect.
+Matrix R2/R4/R5 list subsequent native-effect/isolated-fault/dirty-output hardening.
