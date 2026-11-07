@@ -565,18 +565,61 @@ TEST_CASE("AggressiveMode - B07 signed CSQ half-window boundaries do not consume
     // not merely an integrity failure caused by flipping an authenticated byte.
     REQUIRE(crypto::ComputeHMACSHA256(key.Read(), Read(transcript), wseq_t(changed.data() + size - 16, 16)) == crypto::Result::OK);
     const bool forward = delta != 0 && delta < 0x80000000u;
+    output.fill(0xA5); // A rejected candidate must erase previously populated output.
     REQUIRE(receiver.Verify(7, user, key.Read(), rseq_t(changed.data(), size), wseq_t(output.data(), output.size()), decoded) == forward);
     if (forward)
     {
         REQUIRE(rseq_t(output.data(), decoded).equals(native.ToRSeq()));
+        output.fill(0x5A); // Replay after acceptance must also erase dirty output.
         REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(changed.data(), size), wseq_t(output.data(), output.size()), decoded));
+        REQUIRE(decoded == 0);
+        REQUIRE(receiver.Sequence() == sequence);
+        REQUIRE(std::all_of(output.begin(), output.end(), [](uint8_t byte) { return byte == 0; }));
     }
     else
     {
         REQUIRE(decoded == 0);
         REQUIRE(receiver.Sequence() == 1);
-        for (auto byte : output) REQUIRE(byte == 0);
+        REQUIRE(std::all_of(output.begin(), output.end(), [](uint8_t byte) { return byte == 0; }));
         REQUIRE(receiver.Verify(7, user, key.Read(), rseq_t(original.data(), size), wseq_t(output.data(), output.size()), decoded));
         REQUIRE(rseq_t(output.data(), decoded).equals(native.ToRSeq()));
     }
+}
+
+TEST_CASE("AggressiveMode - B07 invalid MAC clears dirty output without consuming valid CSQ", "[aggressive][sa-b07]")
+{
+    const bool monitoring = GENERATE(false, true);
+    CAPTURE(monitoring);
+    AggressiveKey key;
+    AggressiveMode sender(7, 16, monitoring), receiver(7, 16, monitoring);
+    const auto challenge = Seed(1, monitoring);
+    REQUIRE(sender.RememberChallenge(Read(challenge), false));
+    REQUIRE(receiver.RememberChallenge(Read(challenge), false));
+    HexSequence native(monitoring ? "C0 81 00 00" : "C0 01 3C 01 06");
+    std::array<uint8_t, 2048> wire{}, corrupted{}, output{};
+    size_t size = 0, decoded = 0;
+    const uint16_t user = monitoring ? 1 : 2;
+    REQUIRE(sender.Create(7, user, key.Read(), native.ToRSeq(), wseq_t(wire.data(), wire.size()), size));
+    REQUIRE(size >= 16);
+    std::copy(wire.begin(), wire.end(), corrupted.begin());
+    corrupted[size - 1] ^= 1; // Valid structure and eligible CSQ, but an incorrect MAC.
+
+    const auto initialSequence = receiver.Sequence();
+    output.fill(0xA5);
+    REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(corrupted.data(), size),
+                                  wseq_t(output.data(), output.size()), decoded));
+    REQUIRE(decoded == 0);
+    REQUIRE(receiver.Sequence() == initialSequence);
+    REQUIRE(std::all_of(output.begin(), output.end(), [](uint8_t byte) { return byte == 0; }));
+
+    REQUIRE(receiver.Verify(7, user, key.Read(), rseq_t(wire.data(), size),
+                            wseq_t(output.data(), output.size()), decoded));
+    REQUIRE(rseq_t(output.data(), decoded).equals(native.ToRSeq()));
+    const auto acceptedSequence = receiver.Sequence();
+    output.fill(0x5A);
+    REQUIRE_FALSE(receiver.Verify(7, user, key.Read(), rseq_t(wire.data(), size),
+                                  wseq_t(output.data(), output.size()), decoded));
+    REQUIRE(decoded == 0);
+    REQUIRE(receiver.Sequence() == acceptedSequence);
+    REQUIRE(std::all_of(output.begin(), output.end(), [](uint8_t byte) { return byte == 0; }));
 }
