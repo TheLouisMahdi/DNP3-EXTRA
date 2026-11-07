@@ -193,6 +193,11 @@ bool MContext::OnReceive(const Message& message)
             executor->get_time().time_since_epoch()).count());
         ServiceSecurityStatistics(now);
         auto& auth = *authentication;
+        if (IsAuthenticatedNoResponseTask() && result.header.function == FunctionCode::RESPONSE)
+        {
+            auth.sessions->statistics.Unexpected();
+            return true;
+        }
         const bool normalResponse = (result.header.function == FunctionCode::RESPONSE && !result.header.control.UNS)
             || (result.header.function == FunctionCode::UNSOLICITED_RESPONSE && result.header.control.UNS);
         if (normalResponse)
@@ -238,6 +243,51 @@ bool MContext::OnReceive(const Message& message)
     return true;
 }
 
+bool MContext::IsAuthenticatedNoResponseTask() const
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    return authentication && authentication->protectedTask && activeTask && !activeTask->ExpectsResponse()
+        && (tstate == TaskState::WAIT_FOR_AUTH_REQUEST_TX || tstate == TaskState::WAIT_FOR_AUTH_CHALLENGE
+            || tstate == TaskState::WAIT_FOR_AUTH_REPLY_TX || tstate == TaskState::WAIT_FOR_AGGRESSIVE_TX);
+#else
+    return false;
+#endif
+}
+
+bool MContext::IsWaitingForNoResponseChallenge() const
+{
+    return IsAuthenticatedNoResponseTask()
+        && (tstate == TaskState::WAIT_FOR_AUTH_REQUEST_TX || tstate == TaskState::WAIT_FOR_AUTH_CHALLENGE);
+}
+
+void MContext::CompleteAuthenticatedNoResponseTask(bool success)
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!IsAuthenticatedNoResponseTask()) return;
+    auto& auth = *authentication;
+    // Release only this task's responder. Monitoring, queued CONFIRMs and
+    // transport-owned reply/aggressive buffers have independent lifetimes.
+    if (auth.responderUser == activeTask->AuthenticationUser())
+    {
+        auth.responder.Reset(); // Keep the responder's association-wide CSQ watermark.
+        if (auth.replyPending)
+        {
+            auth.replyPending = false;
+            auth.replySize = 0;
+            crypto::Clear(ser4cpp::wseq_t(auth.reply.data(), auth.reply.size()));
+        }
+    }
+    responseTimer.cancel();
+    solSeq.Increment();
+    if (success) activeTask->OnTransmitComplete(Timestamp(executor->get_time()));
+    else activeTask->OnResponseTimeout(Timestamp(executor->get_time()));
+    CompleteActiveTask();
+    tstate = TaskState::IDLE;
+#else
+    (void)success;
+#endif
+}
+
 bool MContext::OnTxReady()
 {
     if (!this->isOnline || !this->isSending)
@@ -249,6 +299,24 @@ bool MContext::OnTxReady()
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
     {
+        auto& auth = *authentication;
+        const bool replyCompleted = IsAuthenticatedNoResponseTask() && tstate == TaskState::WAIT_FOR_AUTH_REPLY_TX
+            && auth.replyInFlight && auth.responderUser == activeTask->AuthenticationUser();
+        const bool aggressiveCompleted = IsAuthenticatedNoResponseTask() && tstate == TaskState::WAIT_FOR_AGGRESSIVE_TX;
+        if (replyCompleted || aggressiveCompleted)
+        {
+            const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                executor->get_time().time_since_epoch()).count());
+            auto* session = auth.sessions->Find(activeTask->AuthenticationUser());
+            const bool valid = auth.replyIssued && session && executor->get_time() < responseTimer.expires_at()
+                && (replyCompleted ? (now < auth.replyDeadline && session->Sequence() == auth.replyKSQ
+                                      && (session->IsReady(now) || auth.replyCountExhausted))
+                                   : (session->IsReady(now) && auth.errorAttempt.valid
+                                      && session->Sequence() == auth.errorAttempt.ksq));
+            CompleteAuthenticatedNoResponseTask(valid);
+        }
+        else if (IsAuthenticatedNoResponseTask() && tstate == TaskState::WAIT_FOR_AUTH_REQUEST_TX)
+            tstate = TaskState::WAIT_FOR_AUTH_CHALLENGE;
         // The lower layer has released the previous APDU before any next TX starts.
         crypto::Clear(ser4cpp::wseq_t(authentication->aggressiveWire.data(), authentication->aggressiveWire.size()));
         if (authentication->replyInFlight)
@@ -285,6 +353,11 @@ void MContext::OnResponseTimeout()
 {
     if (isOnline)
     {
+        if (IsAuthenticatedNoResponseTask())
+        {
+            CompleteAuthenticatedNoResponseTask(false);
+            return;
+        }
         if (!activeTask || !activeTask->IsAuthenticationTask()) this->ResetAuthentication();
         this->tstate = this->OnResponseTimeoutEvent();
     }
@@ -362,9 +435,6 @@ bool MContext::DirectOperateNoAck(CommandSet&& commands,
                                   const CommandResultCallbackT& callback,
                                   const TaskConfig& config)
 {
-    if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
-        return false;
-
     const auto timeout = Timestamp(this->executor->get_time()) + params.taskStartTimeout;
     this->ScheduleAdhocTask(CommandTask::CreateDirectOperateNoAck(
         this->tasks.context, std::move(commands), this->params.controlQualifierMode, *application, callback, timeout,
@@ -545,7 +615,8 @@ bool MContext::CheckConfirmTransmit()
             return false;
         }
         if ((auth.protectedConfirm && !auth.nativeConfirmQueued) || auth.exchangeIndex < auth.SessionCount() || auth.pendingWireSize
-            || (auth.protectedTask && !auth.replyIssued && tstate == TaskState::WAIT_FOR_RESPONSE)
+            || (auth.protectedTask && !auth.replyIssued
+                && (tstate == TaskState::WAIT_FOR_RESPONSE || IsAuthenticatedNoResponseTask()))
             || !session || !session->Ready(now)
             || auth.responder.GetState() == MasterResponder::State::WAITING_FOR_CHALLENGE)
             return false;
@@ -631,8 +702,19 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
 
 void MContext::StartResponseTimer()
 {
-    auto timeout = [self = shared_from_this()]() { self->OnResponseTimeout(); };
+    const auto owner = activeTask;
+    auto timeout = [self = shared_from_this(), owner]() {
+        if (owner && self->activeTask == owner) self->OnResponseTimeout();
+    };
     const auto milliseconds = activeTask ? activeTask->ResponseTimeoutMs() : 0;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (IsAuthenticatedNoResponseTask())
+    {
+        // Same bound as retained Challenge/Reply state, including zero's immediate expiry.
+        this->responseTimer = executor->start(std::chrono::milliseconds(params.authentication.replyTimeoutMs), timeout);
+        return;
+    }
+#endif
     this->responseTimer = this->executor->start(milliseconds ? std::chrono::milliseconds(milliseconds)
         : this->params.responseTimeout.value, timeout);
 }
@@ -766,7 +848,7 @@ bool MContext::Run(const std::shared_ptr<IMasterTask>& task)
             && !auth.protectedConfirm && !auth.deferredAuthenticationCount && !auth.monitorWaiting
             && !auth.controlAggressive.HasPendingConfirm()
             && auth.responder.GetState() != MasterResponder::State::WAITING_FOR_CHALLENGE;
-        auth.allowUnkeyedCritical = auth.userCritical && session->CanSendUnkeyedCritical(now);
+        auth.allowUnkeyedCritical = task->ExpectsResponse() && auth.userCritical && session->CanSendUnkeyedCritical(now);
         auth.errorAttempt.valid = auth.recoveringKeys = false;
     }
 #endif
@@ -907,6 +989,7 @@ MContext::TaskState MContext::ResumeActiveTask()
     }
 #endif
     auto apdu = request.ToRSeq();
+    auto nextState = activeTask->ExpectsResponse() ? TaskState::WAIT_FOR_RESPONSE : TaskState::WAIT_FOR_TX_COMPLETION;
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
     {
@@ -948,6 +1031,19 @@ MContext::TaskState MContext::ResumeActiveTask()
                 session->CountAuthentication(now);
             }
         }
+        if (authentication->protectedTask && !activeTask->ExpectsResponse())
+        {
+            // FC6 never uses the keyless exception or silently downgrades a
+            // configured Aggressive submission lacking a usable Challenge.
+            if (unkeyedCritical || !authentication->sessions
+                || (authentication->sessions->config.aggressiveTransmit && !aggressive))
+            {
+                activeTask->OnMessageFormatError(Timestamp(executor->get_time()));
+                CompleteActiveTask();
+                return TaskState::IDLE;
+            }
+            nextState = aggressive ? TaskState::WAIT_FOR_AGGRESSIVE_TX : TaskState::WAIT_FOR_AUTH_REQUEST_TX;
+        }
         // 7.5.3.4(c): this normal transmission grants no trust. With no usable
         // key, do not create an Aggressive Request or require keyed request retention.
         if (authentication->protectedTask && !aggressive && !unkeyedCritical
@@ -966,10 +1062,11 @@ MContext::TaskState MContext::ResumeActiveTask()
     }
 #endif
     this->RecordLastRequest(apdu);
+    tstate = nextState;
     this->StartResponseTimer(); // Also bounds waiting for lower-layer transmit completion.
     this->Transmit(apdu);
 
-    return activeTask->ExpectsResponse() ? TaskState::WAIT_FOR_RESPONSE : TaskState::WAIT_FOR_TX_COMPLETION;
+    return nextState;
 }
 
 //// --- State tables ---
@@ -1333,17 +1430,18 @@ void MContext::ResetAuthentication()
 #endif
 }
 
-void MContext::CancelAuthenticationReply()
+void MContext::CancelAuthenticationReply(bool rejectedChallenge)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     auto& auth = *authentication;
-    if (!auth.replyPending || auth.replyInFlight)
+    if ((!auth.replyPending && !rejectedChallenge) || auth.replyInFlight)
         return;
     // A queued native CONFIRM can be independent of the task Reply being cancelled.
     const bool ownsConfirm = auth.protectedConfirm && !auth.nativeConfirmQueued
-        && auth.responderUser == 1 && !auth.controlAggressive.HasPendingConfirm();
+        && auth.responderUser == 1 && !auth.controlAggressive.HasPendingConfirm() && !IsAuthenticatedNoResponseTask();
     const bool ownsTask = !ownsConfirm && auth.protectedTask && activeTask
-        && tstate == TaskState::WAIT_FOR_RESPONSE && activeTask->AuthenticationUser() == auth.responderUser;
+        && (tstate == TaskState::WAIT_FOR_RESPONSE || IsAuthenticatedNoResponseTask())
+        && activeTask->AuthenticationUser() == auth.responderUser;
     auth.replyPending = false;
     auth.replySize = 0;
     auth.replyDeadline = auth.replyKSQ = 0;
@@ -1361,7 +1459,18 @@ void MContext::CancelAuthenticationReply()
         // This task cannot authenticate its response without the cancelled Reply.
         // Complete only its timeout; monitoring, CONFIRMs and borrowed TX bytes have independent owners.
         responseTimer.cancel();
-        tstate = OnResponseTimeout_WaitForResponse();
+        if (IsAuthenticatedNoResponseTask())
+            CompleteAuthenticatedNoResponseTask(false);
+        else if (rejectedChallenge)
+        {
+            // Algorithm rejection is terminal for this request, even for tasks that retry timeouts.
+            activeTask->OnResponseTimeout(Timestamp(executor->get_time()));
+            solSeq.Increment();
+            CompleteActiveTask();
+            tstate = TaskState::IDLE;
+        }
+        else
+            tstate = OnResponseTimeout_WaitForResponse();
     }
 #endif
 }
@@ -1551,6 +1660,15 @@ void MContext::ServiceAuthentication()
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
 
+    // A no-response task can be admitted while an independent key exchange owns TX.
+    // Its start deadline must not depend on that borrowed buffer being released.
+    if (activeTask && !activeTask->ExpectsResponse() && tstate == TaskState::TASK_READY
+        && Timestamp(executor->get_time()) >= activeTask->StartExpirationTime())
+    {
+        activeTask->OnStartTimeout(Timestamp(executor->get_time()));
+        CompleteActiveTask();
+        tstate = TaskState::IDLE;
+    }
     if (auth.recoveringKeys && auth.errorAttempt.valid && !auth.protectedConfirm
         && !auth.deferredAuthenticationCount && !auth.replyPending && !auth.replyInFlight
         && (auth.errorAttempt.user != 1 || !auth.monitorWaiting))
@@ -1594,7 +1712,8 @@ void MContext::ServiceAuthentication()
         && !(activeTask && activeTask->IsAuthenticationTask())
         // Key expiry must not bypass the deferred Code 1 recovery above while its Reply still owns TX.
         && !(auth.recoveringKeys && auth.errorAttempt.valid && (auth.replyPending || auth.replyInFlight))
-        && !(auth.protectedTask && tstate == TaskState::WAIT_FOR_RESPONSE && !auth.recoveringKeys))
+        && !(auth.protectedTask && (tstate == TaskState::WAIT_FOR_RESPONSE || IsAuthenticatedNoResponseTask())
+             && !auth.recoveringKeys))
     {
         // Immediate expiry must not let the first user consume every service tick.
         // Reuse the settled exchange sequence; recovery still selects its exact owner.
@@ -1706,7 +1825,8 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
         auto* owner = auth.sessions ? auth.sessions->Find(error.value.userNum) : nullptr;
         const auto& attempt = auth.errorAttempt;
         const bool ownsAttempt = attempt.valid
-            && activeTask && tstate == TaskState::WAIT_FOR_RESPONSE && now < attempt.deadline
+            && activeTask && (tstate == TaskState::WAIT_FOR_RESPONSE || IsAuthenticatedNoResponseTask())
+            && now < attempt.deadline
             && owner && owner->LastKeyStatus() && owner->Sequence() == attempt.ksq
             && error.value.userNum == attempt.user && error.value.seqNum == attempt.csq
             && header.control.SEQ == attempt.appSequence && attempt.appSequence == solSeq.Get()
@@ -1748,6 +1868,11 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     error.value.seqNum, error.value.errorCode, discarded);
             }
             catch (...) {} // Diagnostics must never alter protocol/TX ownership.
+        }
+        if (!discarded && !ambiguous && ownsAttempt && IsAuthenticatedNoResponseTask())
+        {
+            CompleteAuthenticatedNoResponseTask(false); // FC6 never retries an owned authentication failure.
+            return true;
         }
         if (!discarded && !ambiguous && recover)
         {
@@ -2028,10 +2153,17 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
     }
     if (header.function == FunctionCode::AUTH_RESPONSE)
     {
+        const bool noResponseTask = IsAuthenticatedNoResponseTask();
+        if (noResponseTask && (!IsWaitingForNoResponseChallenge() || header.control.SEQ != solSeq.Get()
+            || apdu.length() < 6 || apdu[4] != 120 || apdu[5] != 1))
+        {
+            if (statistics) statistics->Unexpected();
+            return true;
+        }
         if (authentication->controlAggressive.HasPendingConfirm())
             return true;
         if ((!authentication->protectedConfirm
-             && (!authentication->protectedTask || tstate != TaskState::WAIT_FOR_RESPONSE))
+             && (!authentication->protectedTask || (tstate != TaskState::WAIT_FOR_RESPONSE && !noResponseTask)))
             || authentication->replyPending || authentication->replyInFlight)
         {
             if (statistics) statistics->Unexpected();
@@ -2040,13 +2172,16 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
         }
         const auto now = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
-        if (authentication->responder.Respond(
-                authentication->association, apdu, now,
-                ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()), authentication->replySize)
-            != MasterResponder::Result::OK)
+        const auto result = authentication->responder.Respond(
+            authentication->association, apdu, now,
+            ser4cpp::wseq_t(authentication->reply.data(), authentication->reply.size()), authentication->replySize);
+        if (result != MasterResponder::Result::OK)
         {
             if (statistics) statistics->Unexpected();
-            this->ResetAuthentication();
+            if (noResponseTask || result == MasterResponder::Result::UNSUPPORTED_ALGORITHM)
+                CancelAuthenticationReply(true); // Only this responder's task or native CONFIRM owns the failure.
+            else
+                this->ResetAuthentication();
             return true;
         }
         authentication->replyPending = true;
@@ -2066,7 +2201,8 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                     && (session->Sequence() != authentication->deferredAuthenticationKSQ
                         || now >= authentication->confirmDeadline)))
             {
-                ResetAuthentication();
+                if (noResponseTask) CancelAuthenticationReply(true);
+                else ResetAuthentication();
                 return true;
             }
             authentication->replyKSQ = session->Sequence();
@@ -2079,7 +2215,8 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 session->CountAuthentication(now);
             }
         }
-        if (!authentication->protectedConfirm)
+        if (noResponseTask) tstate = TaskState::WAIT_FOR_AUTH_REPLY_TX;
+        if (noResponseTask || !authentication->protectedConfirm)
         {
             responseTimer.cancel();
             this->StartResponseTimer();

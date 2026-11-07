@@ -9,6 +9,7 @@
 #include <opendnp3/auth/SecurityStatistic.h>
 #include <opendnp3/auth/AuthenticationStatus.h>
 #include <opendnp3/master/DefaultMasterApplication.h>
+#include <opendnp3/master/ICommandTaskResult.h>
 #include <opendnp3/outstation/DefaultOutstationApplication.h>
 #include <opendnp3/outstation/SimpleCommandHandler.h>
 
@@ -214,6 +215,28 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     read();
     control();
     REQUIRE(commands->operated.load() == 4);
+    // FC6 local completion is distinct from the independently observed RTU count.
+    // A following authenticated read acts as a wire/executor barrier for the receiver.
+    auto submitted = std::make_shared<std::promise<CommandStatus>>();
+    auto submittedFuture = submitted->get_future();
+    auto config = TaskConfig::Default(); config.authenticationUser = 2;
+    REQUIRE(master->DirectOperateNoAck(ControlRelayOutputBlock(OperationType::LATCH_OFF), 0,
+        [submitted](const ICommandTaskResult& result) {
+            struct Points final : IVisitor<CommandPointResult>
+            {
+                CommandStatus status = CommandStatus::SUCCESS;
+                size_t count = 0;
+                void OnValue(const CommandPointResult& value) override { status = value.status; ++count; }
+            } points;
+            result.Foreach(points);
+            submitted->set_value(result.summary == TaskCompletion::SUCCESS && points.count == 1
+                                    ? points.status : CommandStatus::FORMAT_ERROR);
+        }, config));
+    REQUIRE(submittedFuture.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    REQUIRE(submittedFuture.get() == CommandStatus::UNDEFINED);
+    read();
+    REQUIRE(commands->selected.load() == 4);
+    REQUIRE(commands->operated.load() == 5);
     manager.Shutdown();
 }
 

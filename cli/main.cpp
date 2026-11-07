@@ -561,7 +561,7 @@ int RunMaster(diagnostic::Options o)
                 {
                     if (!master->DirectOperateNoAck(command, index, onNoAckResult, task))
                     {
-                        Console::Print("ERROR", "FC6 noack rejected: unavailable when authentication is REQUIRED");
+                        Console::Print("ERROR", "FC6 noack rejected locally");
                         continue;
                     }
                 }
@@ -597,7 +597,7 @@ int RunMaster(diagnostic::Options o)
                 if (variation == 4) accepted = send(AnalogOutputDouble64(value));
                 if (!accepted)
                 {
-                    Console::Print("ERROR", "FC6 noack rejected: unavailable when authentication is REQUIRED");
+                    Console::Print("ERROR", "FC6 noack rejected locally");
                     continue;
                 }
             }

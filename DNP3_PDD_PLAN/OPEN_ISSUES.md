@@ -4,7 +4,7 @@ Acceptance follows [PDF_SCOPE.md](PDF_SCOPE.md). Profile and security CSVs prese
 
 ## Selected requirement blockers
 
-- SA v5 remains partial. G0V209 must report actual verified capability, and G120V8 needs runtime certificate handling. Authenticated FC6 is rejected in REQUIRED mode.
+- SA v5 remains partial. G0V209 must report actual verified capability, and G120V8 needs runtime certificate handling. Authenticated FC6 B03 Host validation passed (focused, unit/integration regression and same-project TCP); independent-peer interoperability remains open.
 - Resolve MAC selection, TLS 1.3 suite naming, remote update-key methods, revocation interval and trusted-time/provisioning policy.
 - Verify zero security-response timeout semantics, configurable limits, security statistics retention/quality and failure ordering.
 - Resolve Profile blank sizes/timeouts and control policy, default event and restart unsolicited selections. See CFG-01 through CFG-14.
@@ -29,7 +29,7 @@ Historical issue descriptions below remain searchable. Only PDF-selected require
 | P6-OPEN-03 | Authentication-failure user ownership. |
 | STAT-RETENTION | Durable retention, quality and rearming limits. |
 | G122-UNTIMED | Explicit V2 cannot time an untimed historical event. |
-| FC6-REQUIRED-MODE | Product deliberately rejects FC6 in REQUIRED mode; authenticated FC6 challenge/aggressive handling under section 7.5.2.3.2(i) is not implemented. |
+| FC6-REQUIRED-MODE | B03 adds authenticated FC6 Challenge/Reply and Aggressive submission under section 7.5.2.3.2(i). Host-focused, regression and same-project TCP tests PASS (2026-11-07); independent-peer verification remains open. SUCCESS denotes local authenticated submission only, with CommandStatus::UNDEFINED. Configured Aggressive FC6 without usable Challenge history fails locally; prime through a genuine exchange. |
 | TIME-QUALIFIERS | G50 READ and WRITE qualifier edges remain. |
 | CLASS-EDGE | Dangling and unsupported class header behavior. |
 | IIN-WRITE-SCOPE | Narrow restart-bit write support and qualifier coverage. |

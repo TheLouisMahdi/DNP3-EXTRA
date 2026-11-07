@@ -1592,10 +1592,10 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
                 return true;
             }
             size_t size = 0;
-            if (auth.monitoring.Respond(auth.association, message.payload, now,
-                                        ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()), size,
-                                        GetResponseIIN())
-                == MasterResponder::Result::OK)
+            const auto result = auth.monitoring.Respond(auth.association, message.payload, now,
+                                                       ser4cpp::wseq_t(auth.pendingWire.data(), auth.pendingWire.size()),
+                                                       size, GetResponseIIN());
+            if (result == MasterResponder::Result::OK)
             {
                 auth.monitoringPending = false;
                 // Keep the existing timeout active until a queued Reply actually starts transmission.
@@ -1613,7 +1613,18 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
             else
             {
                 if (statistics) statistics->Unexpected();
-                ResetAuthentication();
+                if (result == MasterResponder::Result::UNSUPPORTED_ALGORITHM)
+                {
+                    // Respond() already erased this responder while preserving its CSQ watermark.
+                    // Held counts belong to the retained response; settle them once on abandonment.
+                    FinalizeControlCounts(now);
+                    auth.monitoringPending = false;
+                    auth.monitoringTimer.cancel();
+                    // No Reply was queued. Control Challenges, key exchanges and borrowed TX bytes
+                    // have independent owners and must not be reset or cleared here.
+                }
+                else
+                    ResetAuthentication();
             }
             return true;
         }

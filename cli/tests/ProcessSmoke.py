@@ -74,11 +74,6 @@ class Peer:
                        for line in self.lines[cursor:]), self.lines[cursor:]
         return completion
 
-    def rejected_noack(self, command, timeout=25):
-        cursor = self.send(command)
-        self.wait(r"\[ERROR\] FC6 noack rejected: unavailable when authentication is REQUIRED$", cursor, timeout)
-        assert not any("[SUBMITTED]" in line and command in line for line in self.lines[cursor:]), self.lines[cursor:]
-
     def executed(self, expected):
         cursor = self.send("status")
         self.wait(r"channel=.* executed=" + str(expected) + r"$", cursor)
@@ -222,9 +217,6 @@ def secure(exe, method):
         master.task("read 1 2 0 0")
         master.task("crob 0 on")
         out.executed(1)
-        master.rejected_noack("crob 0 off noack")
-        master.rejected_noack("analog 1 0 7 noack")
-        out.executed(1)
         out.wait(r"\[SA-OBJECT\] TX G120V1$")
         master.wait(r"\[SA-OBJECT\] TX G120V2$")
         cursor = master.task("attr 210")
@@ -260,6 +252,12 @@ def secure(exe, method):
         master.task("read 30 5 0 0")
         master.task("crob 2 on")
         out.executed(4)
+        # Selected authenticated FC6 forms, with independent execution evidence.
+        for command, count in (("crob 0 off noack", 5), ("analog 1 0 7 noack", 6),
+                               ("analog 2 0 -23 noack", 7), ("analog 3 0 6.75 noack", 8)):
+            master.noack(command)
+            master.task("read 1 2 0 0") # Receiver barrier; local completion alone proves no execution.
+            out.executed(count)
         # Recreate each process using its independently persisted credentials.
         master.close(); master = None
         out.close(); out = None
@@ -274,6 +272,10 @@ def secure(exe, method):
         master.send("user 99")
         master.task("crob 4 on", success=False)
         out.executed(1)
+        master.send("user 2")
+        master.noack("crob 3 off noack") # Genuine prior exchange seeded Aggressive history.
+        master.task("read 1 2 0 0")
+        out.executed(2)
     finally:
         try:
             stop(out, master)

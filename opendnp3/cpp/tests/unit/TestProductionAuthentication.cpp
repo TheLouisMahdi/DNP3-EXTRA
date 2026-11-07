@@ -41,8 +41,12 @@ public:
     static bool ControlEligible(MContext& context) { return context.authentication->controlEligible[1]; }
     static bool ReplyIssued(MContext& context) { return context.authentication->replyIssued; }
     static bool ReplyPending(MContext& context) { return context.authentication->replyPending; }
+    static bool ReplyInFlight(MContext& context) { return context.authentication->replyInFlight; }
+    static bool WireInFlight(MContext& context) { return context.authentication->wireInFlight; }
+    static bool ProtectedConfirm(MContext& context) { return context.authentication->protectedConfirm; }
     static bool CheckConfirm(MContext& context) { return context.CheckConfirmTransmit(); }
     static bool MonitoringWaiting(MContext& context) { return context.authentication->monitorWaiting; }
+    static MasterResponder::State ResponderState(MContext& context) { return context.authentication->responder.GetState(); }
     static size_t Pending(MContext& context) { return context.authentication->pendingWireSize; }
     static rseq_t PendingBytes(MContext& context)
     {
@@ -72,6 +76,24 @@ public:
     {
         return *context.authentication->sessions->Find(user);
     }
+    static bool SessionReady(OContext& context, uint16_t user)
+    {
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            context.executor->get_time().time_since_epoch()).count());
+        return Session(context, user).IsReady(now);
+    }
+    static bool IsIdle(OContext& context) { return context.state->IsIdle(); }
+    static bool StartupNullConfirmed(OContext& context) { return context.unsol.completedNull; }
+    static const char* NativeState(OContext& context) { return context.state->Name(); }
+    static int64_t ServiceDeadline(MContext& context)
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            context.authentication->serviceTimer.expires_at().time_since_epoch()).count();
+    }
+    static rseq_t AcceptedChallenge(OContext& context)
+    {
+        return context.authentication->challenger.LastAcceptedChallenge();
+    }
     static size_t Pending(OContext& context) { return context.authentication->pendingWireSize; }
     static IINField ResponseIIN(OContext& context) { return context.GetResponseIIN(); }
     static rseq_t PendingBytes(OContext& context)
@@ -79,6 +101,11 @@ public:
         return rseq_t(context.authentication->pendingWire.data(), context.authentication->pendingWire.size());
     }
     static bool MonitoringPending(OContext& context) { return context.authentication->monitoringPending; }
+    static MasterResponder::State MonitoringResponderState(OContext& context)
+    {
+        return context.authentication->monitoring.GetState();
+    }
+    static bool Transmitting(OContext& context) { return context.isTransmitting; }
     static OutstationChallenger::State ChallengeState(OContext& context)
     {
         return context.authentication->challenger.GetState();
@@ -86,6 +113,11 @@ public:
     static rseq_t ChallengeBytes(OContext& context)
     {
         return rseq_t(context.authentication->challenge.data(), context.authentication->challenge.size());
+    }
+    static uint64_t Now(OContext& context)
+    {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            context.executor->get_time().time_since_epoch()).count());
     }
     static uint8_t Deferred(OContext& context) { return context.authentication->deferredControlCount; }
     static rseq_t AggressiveBytes(OContext& context, size_t size)
@@ -174,9 +206,11 @@ MasterParams MasterSettings(const std::shared_ptr<RuntimeCredentials>& source,
                             bool aggressive = false,
                             bool receiveAggressive = false, bool macAlternatives = false,
                             const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
-                            uint32_t replyTimeoutMs = 2000)
+                            uint32_t replyTimeoutMs = 2000,
+                            IndexQualifierMode qualifier = IndexQualifierMode::always_two_bytes)
 {
     auto p = NoStartupTasks();
+    p.controlQualifierMode = qualifier;
     p.authentication.errorObserver = observer;
     p.authentication.replyTimeoutMs = replyTimeoutMs;
     if (macAlternatives) p.authentication.permittedMACAlgorithms = {{4, 2, 0, 0}};
@@ -193,7 +227,8 @@ OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
                              bool unsolicited = false,
                              bool aggressive = false, bool macAlternatives = false,
                              const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
-                             uint16_t maxErrors = 2, bool suppressErrors = false, uint32_t replyTimeoutMs = 2000)
+                             uint16_t maxErrors = 2, bool suppressErrors = false, uint32_t replyTimeoutMs = 2000,
+                             bool class1Unsolicited = false)
 {
     OutstationConfig c;
     c.params.authentication.replyTimeoutMs = replyTimeoutMs;
@@ -204,10 +239,23 @@ OutstationConfig OutSettings(const std::shared_ptr<RuntimeCredentials>& source,
     c.params.authentication.aggressiveTransmit = aggressive;
     c.params.authentication.aggressiveReceive = aggressive;
     c.params.allowUnsolicited = unsolicited;
+    if (class1Unsolicited)
+    {
+        c.params.unsolClassMask = ClassField(PointClass::Class1);
+        c.eventBufferConfig = EventBufferConfig(1);
+    }
     c.params.authentication.association = 7;
     c.params.authentication.credentials = source;
     c.params.authentication.authorization = policy;
     return c;
+}
+DatabaseConfig BinaryEventDatabase()
+{
+    DatabaseConfig db;
+    BinaryConfig binary;
+    binary.clazz = PointClass::Class1;
+    db.binary_input.emplace(0, binary);
+    return db;
 }
 struct RuntimePair
 {
@@ -226,9 +274,13 @@ struct RuntimePair
                          const std::shared_ptr<ILogHandler>& masterLog = nullptr, bool macAlternatives = false,
                          const std::shared_ptr<IAuthenticationErrorObserver>& observer = nullptr,
                          uint16_t maxErrors = 2, bool suppressErrors = false,
-                         uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000)
-        : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer, masterTimeoutMs), Addresses(), "test", masterLog),
-          outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors, suppressErrors, outstationTimeoutMs))
+                         uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000,
+                         bool class1Unsolicited = false,
+                         IndexQualifierMode qualifier = IndexQualifierMode::always_two_bytes)
+        : master(MasterSettings(source, policy, aggressive, receiveAggressive, macAlternatives, observer, masterTimeoutMs, qualifier), Addresses(), "test", masterLog),
+          outstation(OutSettings(source, policy, unsolicited, aggressive, macAlternatives, observer, maxErrors,
+                                 suppressErrors, outstationTimeoutMs, class1Unsolicited),
+                     class1Unsolicited ? BinaryEventDatabase() : DatabaseConfig())
     {
         outstation.LowerLayerUp();
         REQUIRE(master.context->OnLowerLayerUp());
@@ -3681,4 +3733,842 @@ TEST_CASE("ProductionAuthentication - simultaneous timed renewal preserves both 
     REQUIRE(second.RemainingMessages() == budget);
     REQUIRE(outSecond.RemainingMessages() == budget);
     REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
+
+namespace
+{
+struct MACPolicySessionSnapshot
+{
+    uint32_t sequence, remaining;
+    bool ready, exchanging;
+    std::array<uint8_t, 32> control{}, monitoring{};
+    MACPolicySessionSnapshot(SessionKeys& session, uint64_t now)
+        : sequence(session.Sequence()), remaining(session.RemainingMessages()),
+          ready(session.Ready(now)), exchanging(session.IsExchanging())
+    {
+        REQUIRE(ready);
+        const auto c = session.ControlKey(now), m = session.MonitoringKey(now);
+        REQUIRE(c.length() == control.size());
+        REQUIRE(m.length() == monitoring.size());
+        std::copy(static_cast<const uint8_t*>(c), static_cast<const uint8_t*>(c) + c.length(), control.begin());
+        std::copy(static_cast<const uint8_t*>(m), static_cast<const uint8_t*>(m) + m.length(), monitoring.begin());
+    }
+    ~MACPolicySessionSnapshot()
+    {
+        crypto::Clear(wseq_t(control.data(), control.size()));
+        crypto::Clear(wseq_t(monitoring.data(), monitoring.size()));
+    }
+    void Check(SessionKeys& session, uint64_t now) const
+    {
+        REQUIRE(session.Sequence() == sequence);
+        REQUIRE(session.Ready(now) == ready);
+        REQUIRE(session.IsExchanging() == exchanging);
+        REQUIRE(session.RemainingMessages() == remaining);
+        REQUIRE(crypto::ConstantTimeEqual(session.ControlKey(now), rseq_t(control.data(), control.size())));
+        REQUIRE(crypto::ConstantTimeEqual(session.MonitoringKey(now), rseq_t(monitoring.data(), monitoring.size())));
+    }
+};
+
+std::string UnsupportedMACChallenge(const std::string& original, bool response, uint8_t algorithm)
+{
+    HexSequence wire(original);
+    const size_t prefix = response ? 10 : 8;
+    REQUIRE(wire.ToRSeq().length() > prefix + 8);
+    REQUIRE(wire.ToRSeq()[1] == (response ? 0x83 : 0x20));
+    REQUIRE(wire.ToRSeq()[prefix - 6] == 120);
+    REQUIRE(wire.ToRSeq()[prefix - 5] == 1);
+    REQUIRE(wire.ToRSeq()[prefix - 4] == 0x5B);
+    Group120Var1 before;
+    REQUIRE(before.Read(wire.ToRSeq().skip(prefix)));
+    REQUIRE(before.macAlgorithm == 4);
+    REQUIRE(before.reason == 1);
+    std::vector<uint8_t> bytes(static_cast<const uint8_t*>(wire.ToRSeq()),
+                              static_cast<const uint8_t*>(wire.ToRSeq()) + wire.ToRSeq().length());
+    bytes[prefix + 6] = algorithm; // CSQ and USR precede MAL in A.45.1.
+    Group120Var1 after;
+    REQUIRE(after.Read(rseq_t(bytes.data(), bytes.size()).skip(prefix)));
+    REQUIRE(after.seqNum == before.seqNum);
+    REQUIRE(after.userNum == before.userNum);
+    REQUIRE(after.reason == before.reason);
+    REQUIRE(after.challengeData.equals(before.challengeData));
+    REQUIRE(after.macAlgorithm == algorithm);
+    return HexConversions::to_hex(rseq_t(bytes.data(), bytes.size()));
+}
+} // namespace
+
+TEST_CASE("ProductionAuthentication - unsupported control MAC drops silently without cancelling independent monitoring",
+          "[production-sa][sa-v06-mac-policy]")
+{
+    // 2 is implemented legacy HMAC-SHA1 but disallowed by default; 6 is unsupported GMAC.
+    const uint8_t algorithm = GENERATE(uint8_t(2), uint8_t(6));
+    CAPTURE(algorithm);
+    auto observer = std::make_shared<RuntimeErrorObserver>();
+    RuntimePair pair(false, false, false, nullptr, false, observer);
+    pair.Pump();
+    pair.SelectOperate();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    HexSequence original(request);
+    pair.outstation.SendToOutstation(request); // Keep SELECT's Master TX buffer borrowed.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster("F0 82 00 00")); // Independent Common-user monitoring exchange.
+    pair.master.exe->run_many();
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    const auto pendingSize = ProductionAuthenticationTestAccess::Pending(*pair.master.context);
+    REQUIRE(pendingSize != 0);
+    const auto pending = HexConversions::to_hex(ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context).take(pendingSize));
+    MACPolicySessionSnapshot common(ProductionAuthenticationTestAccess::Common(*pair.master.context), 0);
+    MACPolicySessionSnapshot control(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), 0);
+    const auto before = ProductionAuthenticationTestAccess::Stats(*pair.master.context).Values();
+    const auto sequence = pair.master.context->solSeq.Get();
+    REQUIRE(pair.master.SendToMaster(UnsupportedMACChallenge(challenge, true, algorithm)));
+    pair.master.exe->run_many();
+    // Actual runtime TX queue: neither an authentication Reply nor Code 5/7 was emitted.
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    REQUIRE(observer->sent == 0);
+    REQUIRE(observer->denied == 0);
+    auto& statistics = ProductionAuthenticationTestAccess::Stats(*pair.master.context);
+    REQUIRE(statistics.Value(SecurityStatistic::UNEXPECTED_MESSAGES) == before[0] + 1);
+    REQUIRE(statistics.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == before[12]);
+    REQUIRE(statistics.Value(SecurityStatistic::SESSION_KEY_CHANGES) == before[13]);
+    REQUIRE(statistics.Value(SecurityStatistic::ERROR_MESSAGES_SENT) == before[10]);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHORIZATION_FAILURES) == before[1]);
+    REQUIRE(pair.master.context->isSending);
+    REQUIRE(pair.master.context->txBuffer.as_rslice().take(original.ToRSeq().length()).equals(original.ToRSeq()));
+    // Regression: unsupported control MAC must settle only its responder owner.
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == pendingSize);
+    REQUIRE(HexConversions::to_hex(ProductionAuthenticationTestAccess::PendingBytes(*pair.master.context).take(pendingSize)) == pending);
+    common.Check(ProductionAuthenticationTestAccess::Common(*pair.master.context), 0);
+    control.Check(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), 0);
+    REQUIRE_FALSE(pair.master.context->activeTask);
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.master.context->solSeq.Get() == ((sequence + 1) & 0x0F));
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    REQUIRE(pair.master.lower->PopWriteAsHex() == pending); // The independent Challenge survives TX completion.
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 0); // No retry of the rejected SELECT or authenticated OPERATE.
+    REQUIRE(pair.results.values.size() == 1);
+}
+
+TEST_CASE("ProductionAuthentication - unsupported monitoring MAC drops silently without cancelling independent control",
+          "[production-sa][sa-v06-mac-policy]")
+{
+    const uint8_t algorithm = GENERATE(uint8_t(2), uint8_t(6));
+    CAPTURE(algorithm);
+    auto observer = std::make_shared<RuntimeErrorObserver>();
+    RuntimePair pair(true, false, false, nullptr, false, observer, 2, false, 10000, 10000, true);
+    pair.Pump();
+    const auto masterNow = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        pair.master.exe->get_time().time_since_epoch()).count());
+    REQUIRE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 1).IsReady(masterNow));
+    REQUIRE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).IsReady(masterNow));
+    REQUIRE(ProductionAuthenticationTestAccess::SessionReady(pair.outstation.context, 1));
+    REQUIRE(ProductionAuthenticationTestAccess::SessionReady(pair.outstation.context, 2));
+    // LowerLayerUp entered native UnsolicitedConfirmWait before keys existed:
+    // BeginTx suppressed that null response. Pump completes V4/V5/V6/V5 for
+    // both users, but cannot fire the Outstation's native confirmation timer.
+    CAPTURE(ProductionAuthenticationTestAccess::NativeState(pair.outstation.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::StartupNullConfirmed(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::ResponderState(*pair.master.context)
+        == MasterResponder::State::NO_SESSION_KEYS); // No critical request retained yet.
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.NumPendingTimers() == 1); // Native null-confirm timeout.
+    // Advance the timer's owning executor exactly once, as in the existing
+    // embedded-confirm fixture. The retry and its two SA exchanges are genuine.
+    pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    pair.Pump();
+    // Individual assertions identify every startup owner instead of short-circuiting
+    // startupSettled(). The recurring Master service timer is expected to remain.
+    CAPTURE(masterNow, ProductionAuthenticationTestAccess::Now(pair.outstation.context),
+            ProductionAuthenticationTestAccess::ServiceDeadline(*pair.master.context),
+            pair.master.exe->num_pending_timers(), pair.outstation.NumPendingTimers());
+    REQUIRE(ProductionAuthenticationTestAccess::ServiceDeadline(*pair.master.context)
+        > static_cast<int64_t>(masterNow));
+    REQUIRE(pair.outstation.NumPendingTimers() == 0);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE_FALSE(pair.master.context->isSending);
+    REQUIRE_FALSE(pair.master.context->activeTask);
+    REQUIRE(pair.master.context->tstate == MContext::TaskState::IDLE);
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyInFlight(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::WireInFlight(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::ResponderState(*pair.master.context) == MasterResponder::State::IDLE);
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(*pair.master.context) == 0);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::StartupNullConfirmed(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringResponderState(pair.outstation.context)
+        == MasterResponder::State::IDLE);
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+        == OutstationChallenger::State::IDLE);
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(pair.outstation.context) == 0);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Transmitting(pair.outstation.context));
+    pair.SelectOperate();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto request = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto controlChallenge = pair.outstation.lower->PopWriteAsHex();
+    HexSequence controlChallengePacket(controlChallenge);
+    REQUIRE(controlChallengePacket.ToRSeq()[1] == 0x83);
+    REQUIRE(controlChallengePacket.ToRSeq()[4] == 120);
+    REQUIRE(controlChallengePacket.ToRSeq()[5] == 1);
+    Group120Var1 controlChallengeValue;
+    REQUIRE(controlChallengeValue.Read(controlChallengePacket.ToRSeq().skip(10)));
+    // IEEE A.45.1.2.2: the Outstation does not know the responding user yet.
+    REQUIRE(controlChallengeValue.userNum == 0);
+    HexSequence held(controlChallenge);
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeBytes(pair.outstation.context)
+        .take(held.ToRSeq().length()).equals(held.ToRSeq()));
+    pair.outstation.OnTxReady(); // The Challenger owns the pending request after TX completes.
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Transmitting(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+        == OutstationChallenger::State::WAITING_FOR_REPLY);
+    REQUIRE(pair.master.SendToMaster(controlChallenge));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto controlReply = pair.master.lower->PopWriteAsHex();
+    HexSequence controlReplyPacket(controlReply);
+    REQUIRE(controlReplyPacket.ToRSeq()[1] == 0x20);
+    REQUIRE(controlReplyPacket.ToRSeq()[2] == 120);
+    REQUIRE(controlReplyPacket.ToRSeq()[3] == 2);
+    Group120Var2 controlReplyValue;
+    REQUIRE(controlReplyValue.Read(controlReplyPacket.ToRSeq().skip(8)));
+    REQUIRE(controlReplyValue.userNum == 2);
+    REQUIRE(controlReplyValue.seqNum == controlChallengeValue.seqNum);
+    REQUIRE((controlReplyPacket.ToRSeq()[0] & 0x0F) == (controlChallengePacket.ToRSeq()[0] & 0x0F));
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(ProductionAuthenticationTestAccess::ReplyIssued(*pair.master.context));
+    REQUIRE(pair.master.context->activeTask);
+    REQUIRE(pair.master.context->tstate == MContext::TaskState::WAIT_FOR_RESPONSE);
+
+    // The native state is idle even while the independent SA Challenger waits.
+    // CheckForUnsolicited can therefore emit a new event after Challenge TX ends.
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true), 0); });
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto response = pair.outstation.lower->PopWriteAsHex();
+    HexSequence eventResponse(response);
+    REQUIRE(eventResponse.ToRSeq()[1] == 0x82);
+    REQUIRE((eventResponse.ToRSeq()[0] & 0x30) == 0x30);
+    REQUIRE(eventResponse.ToRSeq()[4] == 2);
+    pair.outstation.OnTxReady();
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::Transmitting(pair.outstation.context));
+    REQUIRE(pair.master.SendToMaster(response));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto monitoringChallenge = pair.master.lower->PopWriteAsHex();
+    HexSequence monitoringChallengePacket(monitoringChallenge);
+    REQUIRE(monitoringChallengePacket.ToRSeq()[1] == 0x20);
+    REQUIRE(monitoringChallengePacket.ToRSeq()[2] == 120);
+    REQUIRE(monitoringChallengePacket.ToRSeq()[3] == 1);
+    Group120Var1 monitoringChallengeValue;
+    REQUIRE(monitoringChallengeValue.Read(monitoringChallengePacket.ToRSeq().skip(8)));
+    REQUIRE(monitoringChallengeValue.userNum == 1);
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringResponderState(pair.outstation.context)
+        == MasterResponder::State::WAITING_FOR_CHALLENGE);
+    // Respond() cleared user 2's retained request when it produced controlReply.
+    // The monitoring Challenger owns the event; no native CONFIRM is issued yet.
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::ResponderState(*pair.master.context)
+        == MasterResponder::State::IDLE);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context));
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    const auto owner = ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context);
+    REQUIRE(owner == OutstationChallenger::State::WAITING_FOR_REPLY);
+    const auto now = ProductionAuthenticationTestAccess::Now(pair.outstation.context);
+    REQUIRE(now < 10000); // Both user-2's Reply and the session keys are still within their lifetimes.
+    MACPolicySessionSnapshot common(ProductionAuthenticationTestAccess::Common(pair.outstation.context), now);
+    MACPolicySessionSnapshot control(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2), now);
+    const auto before = ProductionAuthenticationTestAccess::Stats(pair.outstation.context).Values();
+    pair.outstation.SendToOutstation(UnsupportedMACChallenge(monitoringChallenge, false, algorithm));
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::Pending(pair.outstation.context) == 0);
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringPending(pair.outstation.context));
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringResponderState(pair.outstation.context)
+        == MasterResponder::State::NO_SESSION_KEYS);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    REQUIRE(observer->sent == 0);
+    REQUIRE(observer->denied == 0);
+    auto& statistics = ProductionAuthenticationTestAccess::Stats(pair.outstation.context);
+    REQUIRE(statistics.Value(SecurityStatistic::UNEXPECTED_MESSAGES) == before[0] + 1);
+    REQUIRE(statistics.Value(SecurityStatistic::DISCARDED_MESSAGES)
+        == before[static_cast<size_t>(SecurityStatistic::DISCARDED_MESSAGES)] + 1);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHENTICATION_FAILURES)
+        == before[static_cast<size_t>(SecurityStatistic::AUTHENTICATION_FAILURES)]);
+    REQUIRE(statistics.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == before[12]);
+    REQUIRE(statistics.Value(SecurityStatistic::SESSION_KEY_CHANGES) == before[13]);
+    REQUIRE(statistics.Value(SecurityStatistic::ERROR_MESSAGES_SENT) == before[10]);
+    REQUIRE(statistics.Value(SecurityStatistic::AUTHORIZATION_FAILURES) == before[1]);
+    // Regression: resetting the monitoring responder must not reset user 2's Challenger.
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context) == owner);
+    common.Check(ProductionAuthenticationTestAccess::Common(pair.outstation.context), now);
+    control.Check(ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2), now);
+    // The preserved Control Challenge can still complete using its original, genuine Reply.
+    pair.outstation.SendToOutstation(controlReply);
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
+        == OutstationChallenger::State::IDLE);
+    REQUIRE(statistics.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) == before[12] + 1);
+    REQUIRE(ProductionAuthenticationTestAccess::AcceptedChallenge(pair.outstation.context).equals(held.ToRSeq()));
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == 1); // Released through authorization and native SELECT.
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    REQUIRE(observer->denied == 0);
+}
+
+TEST_CASE("ProductionAuthentication - unsupported MAC settles only its native CONFIRM responder",
+          "[production-sa][sa-v06-mac-policy]")
+{
+    const uint8_t algorithm = GENERATE(uint8_t(2), uint8_t(6));
+    CAPTURE(algorithm);
+    RuntimePair pair(true);
+    pair.Pump();
+    pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto unsolicited = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(unsolicited));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto monitoring = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(monitoring);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto verified = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(verified));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto confirmation = pair.master.lower->PopWriteAsHex();
+    HexSequence borrowed(confirmation);
+    REQUIRE(borrowed.ToRSeq().length() == 2);
+    REQUIRE(borrowed.ToRSeq()[1] == 0);
+    REQUIRE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context));
+    pair.outstation.SendToOutstation(confirmation); // Keep the Master CONFIRM buffer borrowed.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    MACPolicySessionSnapshot control(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), 0);
+    const auto sequence = pair.master.context->solSeq.Get();
+    REQUIRE(pair.master.SendToMaster(UnsupportedMACChallenge(challenge, true, algorithm)));
+    pair.master.exe->run_many();
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context));
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::Deferred(*pair.master.context) == 0);
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE(pair.master.context->solSeq.Get() == sequence); // A CONFIRM is not a solicited task.
+    REQUIRE(pair.master.context->isSending);
+    REQUIRE(pair.master.context->txBuffer.as_rslice().take(borrowed.ToRSeq().length()).equals(borrowed.ToRSeq()));
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    control.Check(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2), 0);
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 0); // No Reply, Error, or retry of the abandoned CONFIRM.
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
+
+
+namespace
+{
+CommandSet FC6Commands(unsigned type, uint16_t index)
+{
+    switch (type)
+    {
+    case 0: return CommandSet({WithIndex(ControlRelayOutputBlock(OperationType::LATCH_ON), index)});
+    case 1: return CommandSet({WithIndex(AnalogOutputInt32(100), index)});
+    case 2: return CommandSet({WithIndex(AnalogOutputInt16(-23), index)});
+    default: return CommandSet({WithIndex(AnalogOutputFloat32(6.75f), index)});
+    }
+}
+std::string SubmitFC6(RuntimePair& pair, unsigned type = 0, uint16_t index = 3, uint16_t user = 2)
+{
+    auto config = TaskConfig::Default();
+    config.authenticationUser = user;
+    REQUIRE(pair.master.context->DirectOperateNoAck(FC6Commands(type, index), pair.results.Callback(), config));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    auto request = pair.master.lower->PopWriteAsHex();
+    HexSequence packet(request);
+    REQUIRE(packet.ToRSeq()[1] == 6);
+    REQUIRE(pair.results.values.empty());
+    return request;
+}
+std::string ChallengeFC6(RuntimePair& pair, const std::string& request)
+{
+    pair.outstation.SendToOutstation(request);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto challenge = pair.outstation.lower->PopWriteAsHex();
+    HexSequence packet(challenge);
+    REQUIRE(packet.ToRSeq()[1] == 0x83);
+    REQUIRE(packet.ToRSeq()[4] == 120);
+    REQUIRE(packet.ToRSeq()[5] == 1);
+    pair.outstation.OnTxReady();
+    return challenge;
+}
+std::string ReplyFC6(RuntimePair& pair, const std::string& challenge)
+{
+    REQUIRE(pair.master.SendToMaster(challenge));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto reply = pair.master.lower->PopWriteAsHex();
+    HexSequence packet(reply);
+    REQUIRE(packet.ToRSeq()[1] == 0x20);
+    REQUIRE(packet.ToRSeq()[2] == 120);
+    REQUIRE(packet.ToRSeq()[3] == 2);
+    REQUIRE(pair.results.values.empty());
+    return reply;
+}
+void RequireLocalFC6Result(RuntimePair& pair, TaskCompletion completion)
+{
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == completion);
+    REQUIRE(pair.results.values.front().results.size() == 1);
+    REQUIRE(pair.results.values.front().results.front().status == CommandStatus::UNDEFINED);
+}
+// Authentication Errors may diagnose a denial; FC6 never emits a normal command response.
+void RequireOnlyAuthenticationErrors(RuntimePair& pair)
+{
+    while (pair.outstation.lower->NumWrites())
+    {
+        HexSequence packet(pair.outstation.lower->PopWriteAsHex());
+        REQUIRE(packet.ToRSeq().length() >= 6);
+        REQUIRE(packet.ToRSeq()[1] == 0x83);
+        REQUIRE(packet.ToRSeq()[4] == 120);
+        REQUIRE(packet.ToRSeq()[5] == 7);
+        pair.outstation.OnTxReady();
+    }
+}
+}
+
+TEST_CASE("ProductionAuthentication - FC6 authenticates selected typed forms and completes only its protected TX",
+          "[production-sa][sa-fc6][profile-controls]")
+{
+    const auto type = GENERATE(0u, 1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    const bool aggressive = GENERATE(false, true);
+    const bool earlyChallenge = !aggressive ? GENERATE(false, true) : false;
+    CAPTURE(type, wide, aggressive, earlyChallenge);
+    RuntimePair pair(false, aggressive, false, nullptr, false, nullptr, 2, false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+    pair.Pump();
+    if (aggressive)
+    {
+        pair.SelectOperate();
+        pair.Pump(); // Genuine Challenge/Reply establishes Aggressive eligibility.
+        pair.results.values.clear();
+    }
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    pair.master.context->solSeq = 15; // Wire boundary, not fabricated authentication state.
+    const auto request = SubmitFC6(pair, type, wide ? 0x1234 : 3);
+    HexSequence original(request);
+    const size_t commandOffset = aggressive ? 12 : 2;
+    REQUIRE(original.ToRSeq()[commandOffset] == (type == 0 ? 12 : 41));
+    REQUIRE(original.ToRSeq()[commandOffset + 1] == (type == 0 ? 1 : type));
+    REQUIRE(original.ToRSeq()[commandOffset + 2] == (wide ? 0x28 : 0x17));
+    REQUIRE((original.ToRSeq()[0] & 15) == 15);
+    std::string protectedWire = request;
+    if (!aggressive)
+    {
+        if (!earlyChallenge)
+        {
+            REQUIRE(pair.master.context->OnTxReady());
+            REQUIRE(pair.master.context->tstate == MContext::TaskState::WAIT_FOR_AUTH_CHALLENGE);
+        }
+        const auto challenge = ChallengeFC6(pair, request);
+        if (earlyChallenge)
+        {
+            REQUIRE(pair.master.SendToMaster(challenge));
+            pair.master.exe->run_many();
+            REQUIRE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+            REQUIRE(pair.master.lower->NumWrites() == 0);
+            REQUIRE(pair.master.context->txBuffer.as_rslice().take(original.ToRSeq().length()).equals(original.ToRSeq()));
+            REQUIRE(pair.master.context->OnTxReady());
+            REQUIRE(pair.master.lower->NumWrites() == 1);
+            protectedWire = pair.master.lower->PopWriteAsHex();
+        }
+        else protectedWire = ReplyFC6(pair, challenge);
+        REQUIRE(pair.master.context->tstate == MContext::TaskState::WAIT_FOR_AUTH_REPLY_TX);
+    }
+    else
+    {
+        REQUIRE(original.ToRSeq()[2] == 120);
+        REQUIRE(original.ToRSeq()[3] == 3);
+        REQUIRE(pair.master.context->tstate == MContext::TaskState::WAIT_FOR_AGGRESSIVE_TX);
+    }
+    // Even a same-SEQ response carrying restart IIN cannot acknowledge FC6 or reset its owner.
+    const std::array<uint8_t, 4> unrelated{{original.ToRSeq()[0], 0x81, 0x80, 0}};
+    REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(unrelated.data(), unrelated.size()))));
+    REQUIRE(pair.results.values.empty());
+    pair.outstation.SendToOutstation(protectedWire);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    // Normal Reply is consumed once; Aggressive CSQ rejects an identical replay.
+    pair.outstation.SendToOutstation(protectedWire);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.results.values.empty());
+    REQUIRE(pair.master.context->OnTxReady());
+    RequireLocalFC6Result(pair, TaskCompletion::SUCCESS);
+    REQUIRE(pair.master.context->solSeq.Get() == 0);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE_FALSE(pair.master.context->activeTask);
+    pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 0); // No FC6 application retry.
+    RequireLocalFC6Result(pair, TaskCompletion::SUCCESS);
+    pair.SelectOperate();
+    pair.Pump(); // Existing FC3/4 still operate after FC6 sequence wrap and responder release.
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 2);
+}
+
+TEST_CASE("ProductionAuthentication - FC6 rejects invalid or unauthorized protected traffic without execution",
+          "[production-sa][sa-fc6]")
+{
+    const bool aggressive = GENERATE(false, true);
+    const auto type = GENERATE(0u, 1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    // MAC, unknown user, foreign association, expired receiving keys, denied control role,
+    // genuine common-user MAC with a role that cannot issue FC6.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5);
+    CAPTURE(aggressive, type, wide, fault);
+    RuntimePair pair(false, aggressive, false, nullptr, false, nullptr, 2, false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+    pair.Pump();
+    if (aggressive)
+    {
+        pair.SelectOperate(); pair.Pump();
+        if (fault == 5)
+        {
+            auto config = TaskConfig::Default(); config.authenticationUser = 1;
+            pair.master.context->ScanClasses(ClassField::AllClasses(), pair.master.meas, config);
+            pair.master.exe->run_many(); pair.Pump(); // Genuine common-user Challenge history.
+        }
+        pair.results.values.clear();
+    }
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto selects = pair.outstation.cmdHandler->NumSelect();
+    const auto request = SubmitFC6(pair, type, wide ? 0x1234 : 3, fault == 5 ? 1 : 2);
+    std::string protectedWire = request;
+    if (!aggressive)
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        // The prime is Aggressive-only, so the normal Challenger has no dispatched commands.
+        protectedWire = ReplyFC6(pair, ChallengeFC6(pair, request));
+    }
+    HexSequence packet(protectedWire);
+    std::vector<uint8_t> bytes(static_cast<const uint8_t*>(packet.ToRSeq()),
+                               static_cast<const uint8_t*>(packet.ToRSeq()) + packet.ToRSeq().length());
+    if (fault == 0) bytes.back() ^= 1;
+    if (fault == 1)
+    {
+        const size_t userOffset = aggressive ? 10 : 12;
+        bytes[userOffset] = 99; bytes[userOffset + 1] = 0;
+    }
+    if (fault == 3)
+    {
+        const auto expiry = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2).ValidUntil();
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(expiry - ProductionAuthenticationTestAccess::Now(pair.outstation.context)));
+    }
+    if (fault == 4) pair.policy->allowControl = false;
+    const rseq_t wire(bytes.data(), bytes.size());
+    if (fault == 2) ProductionAuthenticationTestAccess::ReceiveOtherAssociation(pair.outstation.context, wire);
+    else pair.outstation.SendToOutstation(HexConversions::to_hex(wire));
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selects);
+    RequireOnlyAuthenticationErrors(pair);
+    REQUIRE(pair.master.context->OnTxReady());
+    // A completed local MAC transmission cannot establish whether the receiver executed it.
+    RequireLocalFC6Result(pair, TaskCompletion::SUCCESS);
+}
+
+TEST_CASE("ProductionAuthentication - FC6 timeout and disconnect are terminal in every submission phase",
+          "[production-sa][sa-fc6]")
+{
+    // Startup key gate, initial TX, Challenge wait, queued Reply, Reply TX, Aggressive TX.
+    const auto phase = GENERATE(0, 1, 2, 3, 4, 5);
+    const bool disconnect = GENERATE(false, true);
+    CAPTURE(phase, disconnect);
+    RuntimePair pair(false, phase == 5);
+    if (phase != 0) pair.Pump();
+    if (phase == 5)
+    {
+        pair.SelectOperate(); pair.Pump(); pair.results.values.clear();
+    }
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    std::string challenge;
+    if (phase == 0)
+    {
+        auto config = TaskConfig::Default(); config.authenticationUser = 2;
+        REQUIRE(pair.master.context->DirectOperateNoAck(FC6Commands(0, 3), pair.results.Callback(), config));
+        pair.master.exe->run_many();
+        REQUIRE(pair.master.context->tstate == MContext::TaskState::TASK_READY);
+    }
+    else
+    {
+        const auto request = SubmitFC6(pair);
+        if (phase >= 2 && phase != 5)
+        {
+            if (phase != 3) REQUIRE(pair.master.context->OnTxReady());
+            challenge = ChallengeFC6(pair, request);
+            if (phase == 3)
+            {
+                REQUIRE(pair.master.SendToMaster(challenge));
+                REQUIRE(ProductionAuthenticationTestAccess::ReplyPending(*pair.master.context));
+                REQUIRE(pair.master.lower->NumWrites() == 0); // Original request still owns TX.
+            }
+            if (phase == 4) ReplyFC6(pair, challenge); // Leave the genuine Reply in flight, not delivered.
+        }
+    }
+    REQUIRE(pair.results.values.empty());
+    if (disconnect) REQUIRE(pair.master.context->OnLowerLayerDown());
+    else
+    {
+        pair.master.exe->advance_time(phase == 0 ? pair.master.context->params.taskStartTimeout.value
+                                               : std::chrono::milliseconds(2000));
+        pair.master.exe->run_many();
+    }
+    RequireLocalFC6Result(pair, disconnect ? TaskCompletion::FAILURE_NO_COMMS
+                                         : phase == 0 ? TaskCompletion::FAILURE_START_TIMEOUT
+                                                      : TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    if (pair.master.context->isSending && phase != 0) REQUIRE(pair.master.context->OnTxReady());
+    // Startup can still own V4/V6. Neither timeout nor disconnect can enqueue FC6 again.
+    while (pair.master.lower->NumWrites())
+    {
+        HexSequence packet(pair.master.lower->PopWriteAsHex());
+        REQUIRE(packet.ToRSeq()[1] != 6);
+    }
+    REQUIRE(pair.results.values.size() == 1);
+}
+
+TEST_CASE("ProductionAuthentication - FC6 ignores foreign Challenges and rejects delayed or invalid owned Challenges",
+          "[production-sa][sa-fc6]")
+{
+    // Wrong application sequence, foreign association, boundary delay, unsupported MAC, wrong USR, expired Master keys.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5);
+    CAPTURE(fault);
+    RuntimePair pair;
+    pair.Pump();
+    const auto request = SubmitFC6(pair);
+    REQUIRE(pair.master.context->OnTxReady());
+    const auto challenge = ChallengeFC6(pair, request);
+    HexSequence packet(challenge);
+    std::vector<uint8_t> bytes(static_cast<const uint8_t*>(packet.ToRSeq()),
+                               static_cast<const uint8_t*>(packet.ToRSeq()) + packet.ToRSeq().length());
+    if (fault == 0) bytes[0] ^= 1;
+    if (fault == 3) bytes[16] = 6; // G120V1 MAL follows the four-byte response header and CSQ/USR.
+    if (fault == 4) bytes[14] = 2; // Outstation-issued G120V1 requires USR=0.
+    if (fault == 2 || fault == 5)
+    {
+        const auto delay = fault == 2 ? uint64_t(2000)
+            : ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).ValidUntil();
+        pair.master.exe->advance_time(std::chrono::milliseconds(delay));
+        // Receive at the deadline before dispatching timer callbacks: the responder must still fail closed.
+    }
+    const rseq_t changed(bytes.data(), bytes.size());
+    if (fault == 1)
+        REQUIRE_FALSE(pair.master.context->OnReceive(Message(Addresses(99, pair.master.addresses.source), changed)));
+    else REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(changed)));
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    if (fault <= 1)
+    {
+        REQUIRE(pair.results.values.empty());
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+    }
+    pair.master.exe->run_many();
+    RequireLocalFC6Result(pair, TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    // Expired-key service may perform a genuine key exchange, but can never resend FC6.
+    while (pair.master.lower->NumWrites())
+    {
+        HexSequence wire(pair.master.lower->PopWriteAsHex());
+        const auto apdu = wire.ToRSeq();
+        REQUIRE(apdu.length() >= 2);
+        REQUIRE(apdu[1] != 6);
+        REQUIRE_FALSE((apdu.length() >= 4 && apdu[1] == 0x20 && apdu[3] == 2));
+    }
+}
+
+TEST_CASE("ProductionAuthentication - configured Aggressive FC6 cannot downgrade without Challenge history",
+          "[production-sa][sa-fc6]")
+{
+    RuntimePair pair(false, true);
+    pair.Pump();
+    auto config = TaskConfig::Default(); config.authenticationUser = 2;
+    REQUIRE(pair.master.context->DirectOperateNoAck(FC6Commands(0, 3), pair.results.Callback(), config));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    RequireLocalFC6Result(pair, TaskCompletion::FAILURE_MESSAGE_FORMAT_ERROR);
+}
+
+TEST_CASE("ProductionAuthentication - FC6 completion and timeout preserve a genuine independent pending CONFIRM",
+          "[production-sa][sa-fc6]")
+{
+    const bool timeout = GENERATE(false, true);
+    RuntimePair pair(true, false, false, nullptr, false, nullptr, 2, false, 2000, 2000, true);
+    pair.Pump();
+    pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+    pair.Pump(); // Real startup null response, monitoring authentication and authenticated CONFIRM.
+    const auto request = SubmitFC6(pair);
+    REQUIRE(pair.master.context->OnTxReady());
+    const auto controlChallenge = ChallengeFC6(pair, request);
+    pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true), 0); });
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto event = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(event));
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto monitoringChallenge = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(monitoringChallenge);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto monitoringReply = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(monitoringReply));
+    pair.master.exe->run_many();
+    REQUIRE(pair.master.context->confirmQueue.size() == 1);
+    const auto confirmSequence = pair.master.context->confirmQueue.front().control.SEQ;
+    REQUIRE(pair.master.lower->NumWrites() == 0); // FC6 owns the responder while waiting for its Challenge.
+    const auto reply = ReplyFC6(pair, controlChallenge);
+    REQUIRE(pair.master.context->confirmQueue.size() == 1);
+    if (timeout)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000)); pair.master.exe->run_many();
+        RequireLocalFC6Result(pair, TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+        pair.outstation.AdvanceTime(TimeDuration::Milliseconds(2000)); // Expire only the undelivered control Reply.
+        REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    }
+    else
+    {
+        pair.outstation.SendToOutstation(reply);
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+        REQUIRE(pair.results.values.empty());
+    }
+    REQUIRE(pair.master.context->confirmQueue.size() == 1);
+    REQUIRE(pair.master.context->confirmQueue.front().control.SEQ == confirmSequence);
+    REQUIRE(pair.master.context->OnTxReady());
+    RequireLocalFC6Result(pair, timeout ? TaskCompletion::FAILURE_RESPONSE_TIMEOUT : TaskCompletion::SUCCESS);
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    pair.Pump(); // The same real CONFIRM now authenticates through the ordinary production path.
+    REQUIRE(pair.master.context->confirmQueue.empty());
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    REQUIRE(pair.results.values.size() == 1);
+}
+
+
+TEST_CASE("ProductionAuthentication - FC6 timeout retains a later independent monitoring exchange",
+          "[production-sa][sa-fc6]")
+{
+    RuntimePair pair(true, false, false, nullptr, false, nullptr, 2, false, 2000, 2000, true);
+    pair.Pump();
+    pair.outstation.AdvanceTime(OutSettings(pair.source, pair.policy, true).params.unsolConfirmTimeout);
+    pair.Pump();
+    const auto request = SubmitFC6(pair);
+    REQUIRE(pair.master.context->OnTxReady());
+    ChallengeFC6(pair, request); // Genuine Control Challenge is lost, so no control Reply can execute.
+    pair.master.exe->advance_time(std::chrono::milliseconds(1000));
+    pair.master.exe->run_many();
+    pair.outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true), 0); });
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto event = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(event));
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+    const auto challenge = pair.master.lower->PopWriteAsHex();
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(challenge);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto monitoringReply = pair.outstation.lower->PopWriteAsHex();
+    pair.outstation.OnTxReady();
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    pair.master.exe->advance_time(std::chrono::milliseconds(1000));
+    pair.master.exe->run_many();
+    RequireLocalFC6Result(pair, TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+    // The monitoring exchange's own later deadline has not elapsed. Its genuine
+    // Reply still authenticates and leads to the original native CONFIRM.
+    pair.outstation.AdvanceTime(TimeDuration::Milliseconds(2000));
+    REQUIRE(pair.master.SendToMaster(monitoringReply));
+    pair.Pump();
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::MonitoringWaiting(*pair.master.context));
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.outstation.cmdHandler->NumInvocations() == 0);
+}
+
+
+TEST_CASE("ProductionAuthentication - FC6 owned authorization Error is terminal before protected TX release",
+          "[production-sa][sa-fc6]")
+{
+    const bool aggressive = GENERATE(false, true);
+    RuntimePair pair(false, aggressive);
+    pair.Pump();
+    if (aggressive) { pair.SelectOperate(); pair.Pump(); pair.results.values.clear(); }
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto request = SubmitFC6(pair);
+    std::string protectedWire = request;
+    if (!aggressive)
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        protectedWire = ReplyFC6(pair, ChallengeFC6(pair, request));
+    }
+    pair.outstation.application->SetTime(DNPTime(123456789));
+    pair.policy->allowControl = false;
+    pair.outstation.SendToOutstation(protectedWire);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+    const auto error = pair.outstation.lower->PopWriteAsHex();
+    HexSequence packet(error);
+    REQUIRE(packet.ToRSeq()[1] == 0x83);
+    REQUIRE(packet.ToRSeq()[4] == 120);
+    REQUIRE(packet.ToRSeq()[5] == 7);
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(error));
+    RequireLocalFC6Result(pair, TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    REQUIRE(pair.master.context->isSending); // The rejected task cannot erase borrowed protected bytes.
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.results.values.size() == 1);
+}
+
+TEST_CASE("ProductionAuthentication - FC6 TX completion at its deadline cannot report authenticated submission",
+          "[production-sa][sa-fc6]")
+{
+    const bool aggressive = GENERATE(false, true);
+    RuntimePair pair(false, aggressive);
+    pair.Pump();
+    if (aggressive) { pair.SelectOperate(); pair.Pump(); pair.results.values.clear(); }
+    const auto request = SubmitFC6(pair);
+    if (!aggressive)
+    {
+        REQUIRE(pair.master.context->OnTxReady());
+        ReplyFC6(pair, ChallengeFC6(pair, request));
+    }
+    pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+    // Deliberately release TX before executing expired timers: success must check its deadline itself.
+    REQUIRE(pair.master.context->OnTxReady());
+    RequireLocalFC6Result(pair, TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    pair.master.exe->run_many();
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
 }

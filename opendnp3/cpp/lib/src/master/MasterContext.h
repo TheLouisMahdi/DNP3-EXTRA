@@ -74,7 +74,11 @@ public:
         IDLE,
         TASK_READY,
         WAIT_FOR_RESPONSE,
-        WAIT_FOR_TX_COMPLETION
+        WAIT_FOR_TX_COMPLETION,
+        WAIT_FOR_AUTH_REQUEST_TX,
+        WAIT_FOR_AUTH_CHALLENGE,
+        WAIT_FOR_AUTH_REPLY_TX,
+        WAIT_FOR_AGGRESSIVE_TX
     };
 
     static std::shared_ptr<MContext> Create(const Addresses& addresses,
@@ -306,7 +310,10 @@ private:
     void ResetAuthentication();
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
     bool IsAuthenticationReplyValid(uint64_t now);
-    void CancelAuthenticationReply();
+    void CancelAuthenticationReply(bool rejectedChallenge = false);
+    bool IsAuthenticatedNoResponseTask() const;
+    bool IsWaitingForNoResponseChallenge() const;
+    void CompleteAuthenticatedNoResponseTask(bool success);
     void TransmitAuthenticationReply();
     void ServiceAuthentication();
     void InvalidateRemoteCredentials();

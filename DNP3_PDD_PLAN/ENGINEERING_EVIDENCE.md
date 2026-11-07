@@ -2679,3 +2679,28 @@ Primary external references used where needed:
 [RFC3279 §2.2.2](https://www.rfc-editor.org/rfc/rfc3279.html#section-2.2.2),
 [RFC6979 Appendix A.2.2](https://www.rfc-editor.org/rfc/rfc6979.html#appendix-A.2.2).
 
+<a id="record-11"></a>
+
+## Record 11 - 2026-11-07: V-06c MAC policy and B03 authenticated FC6 (Windows Host)
+
+**Revision identity:** `develop`, baseline Git HEAD `54a552a` at test time, plus the reviewed, then-uncommitted V-06c/B03 source and permanent tests. The eventual commit containing this record identifies the complete tested local change set. Build: `build-sa-b06-vcpkg`, MSVC Release on Windows.
+
+**Selected behavior and scope:** V-06c rejects disabled/unsupported Challenge MAC algorithms without cancelling independent responder/monitoring/CONFIRM ownership. B03 enables authenticated FC6 (DIRECT_OPERATE_NR) for G12V1 and G41V1/V2/V3, Q17/Q28, using Challenge/Reply or configured Aggressive Mode in SA REQUIRED. The Master does not retry FC6, an unusable Aggressive Challenge fails closed, and an FC6 `TaskCompletion::SUCCESS` means only local authenticated submission with `CommandStatus::UNDEFINED`, never confirmed remote execution. The Outstation must authorize execution; FC6 has no ordinary application command response.
+
+**Executed evidence (reported Windows PowerShell output):**
+
+| Scope | Command / scenario | Observed result |
+| --- | --- | --- |
+| V-06c focused | `unittests.exe '[sa-v06-mac-policy]' --reporter compact` | PASS; 3 cases, 606 assertions |
+| V-06c prior full regression | `unittests.exe --reporter compact`; `integrationtests.exe --reporter compact` | PASS; 777 cases / 64,148 assertions; 16 cases / 12,506 assertions (before B03) |
+| B03 focused | `unittests.exe '[sa-fc6]' --reporter compact` | PASS; 9 cases, 6,659 assertions |
+| B03 V-06c regression | `unittests.exe '[sa-v06-mac-policy]' --reporter compact` | PASS; 3 cases, 606 assertions |
+| B03 complete unit regression | `unittests.exe --reporter compact` | PASS; exact case/assertion totals not captured in supplied final excerpt |
+| B03 complete integration regression | `integrationtests.exe --reporter compact` | PASS; 16 cases, 12,534 assertions |
+| B03 same-project, separate-process TCP | `ProcessSmoke.py --only method4`; `--only method68` | PASS; SA lifecycle and selected authenticated FC6 command readbacks; local CLI callbacks and peer shutdown checked |
+| B03 general security TCP regression | `ProcessSmoke.py --only negative`; `--only reply-timeout` | PASS; no unauthorized command execution in tested negative scenarios; four None/0 timer configurations |
+| Source hygiene | Scoped `git diff --check` | PASS |
+
+**Assessment:** `VERIFIED_HOST` for the specific V-06c and B03 behaviors exercised above. These are same-implementation Host results, not independent-peer interoperability or a complete certification. All 69 PROFILE + 36 SEC + 14 CFG requirements retain their own acceptance scope and subcase obligations; do not blanket-upgrade matrices. B03 primarily adds evidence for the FC6 portions of PROFILE-019, PROFILE-035/036/037 and CFG-08, not all control/physical I/O conditions.
+
+**Open/limited:** `TIMEOUT-ZERO` requires normative/product clarification; configured Aggressive FC6 without usable retained Challenge history fails locally; `CFG-09` CROB Trip/Close mapping and rejected forms remain pending; G0V209, G120V8, MAC/TLS selections, independent-peer interoperability, trusted RTU I/O, STM32H743/FreeRTOS, NVM/entropy/hardware acceptance remain open. Preserve `P4-OPEN-01` and the provisional G120V7 Code 5/7 meanings. No full SA v5 or Level 4 conformance claim.

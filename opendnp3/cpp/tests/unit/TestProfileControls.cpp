@@ -541,13 +541,13 @@ TEST_CASE("ProfileControls - Master FC6 disconnect reports failure before transm
     REQUIRE(callbacks.values.front().results[0].status == CommandStatus::UNDEFINED);
 }
 
-TEST_CASE("ProfileControls - Master rejects FC6 when authentication is required", "[fc6-master][profile-controls]")
+TEST_CASE("ProfileControls - REQUIRED FC6 admission does not bypass startup session authentication", "[fc6-master][profile-controls]")
 {
     MasterTestFixture t(RequiredMasterConfig());
     CommandCallbackQueue callbacks;
     REQUIRE(t.context->params.authentication.mode == AuthenticationConfig::Mode::REQUIRED);
     REQUIRE(t.context->OnLowerLayerUp());
-    REQUIRE_FALSE(t.context->DirectOperateNoAck(Commands(0, 3), callbacks.Callback(), TaskConfig::Default()));
+    REQUIRE(t.context->DirectOperateNoAck(Commands(0, 3), callbacks.Callback(), TaskConfig::Default()));
     REQUIRE(callbacks.values.empty());
 
     t.exe->run_many();

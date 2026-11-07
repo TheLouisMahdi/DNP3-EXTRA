@@ -60,9 +60,12 @@ public:
     /**
      * Direct operate a set of commands without application-layer acknowledgment.
      *
-     * In Compatibility mode, a successful local transmission completes with
-     * TaskCompletion::SUCCESS; this does not confirm that the remote device
-     * executed the command. Scheduling is rejected when authentication is required.
+     * TaskCompletion::SUCCESS describes locally completed submission only;
+     * CommandStatus remains UNDEFINED because remote execution is unconfirmed.
+     * REQUIRED mode waits for a correlated SA Challenge and completes only after
+     * Reply transmission, or after protected Aggressive transmission. A configured
+     * Aggressive submission without usable Challenge history fails locally.
+     * FC6 is never retried at the application layer.
      *
      * @param commands Set of command headers
      * @param callback callback invoked upon local completion or failure
