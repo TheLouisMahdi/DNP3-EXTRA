@@ -57,7 +57,8 @@ public:
                 return selectedObjects.as_rslice().take(length).equals(objects);
             Unselect();
         }
-        else if (function != FunctionCode::OPERATE)
+        else if (function != FunctionCode::OPERATE &&
+                 function != FunctionCode::CONFIRM)
             Unselect();
         return true;
     }

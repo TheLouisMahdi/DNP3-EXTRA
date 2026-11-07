@@ -5010,6 +5010,31 @@ TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending con
         REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
         REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
         REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context) == OutstationChallenger::State::IDLE);
+        // Deliver the genuine SELECT response before releasing the borrowed Reply TX.
+        // Otherwise Pump sends the queued CONFIRM ahead of the SELECT monitoring
+        // exchange, leaving its authentication owner pending and blocking OPERATE.
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto selectResponse = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+        REQUIRE(pair.master.SendToMaster(selectResponse));
+        REQUIRE(pair.master.context->OnTxReady());
+        pair.Pump(); // Finish SELECT monitoring, the unsolicited CONFIRM, and OPERATE.
+
+        REQUIRE(pair.results.values.size() == 1);
+        REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+        REQUIRE(pair.results.values.front().results.size() == 1);
+        REQUIRE(pair.results.values.front().results.front().status == CommandStatus::SUCCESS);
+        REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+        REQUIRE(pair.master.context->confirmQueue.empty());
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::ProtectedConfirm(*pair.master.context));
+        REQUIRE_FALSE(pair.master.context->activeTask);
+        REQUIRE(pair.master.context->tstate == MContext::TaskState::IDLE);
+        REQUIRE_FALSE(pair.master.context->isSending);
+        REQUIRE_FALSE(ProductionAuthenticationTestAccess::Transmitting(pair.outstation.context));
+        REQUIRE(ProductionAuthenticationTestAccess::IsIdle(pair.outstation.context));
+        REQUIRE(pair.master.lower->NumWrites() == 0);
+        REQUIRE(pair.outstation.lower->NumWrites() == 0);
     }
     else
     {
