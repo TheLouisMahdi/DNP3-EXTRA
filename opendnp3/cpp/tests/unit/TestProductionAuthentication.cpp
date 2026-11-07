@@ -44,6 +44,7 @@ public:
     }
     static uint8_t Deferred(MContext& context) { return context.authentication->deferredAuthenticationCount; }
     static AggressiveMode& ControlAggressive(MContext& context) { return context.authentication->controlAggressive; }
+    static uint32_t MonitoringSequence(MContext& context) { return context.authentication->monitoringAggressive.Sequence(); }
     static bool ControlEligible(MContext& context) { return context.authentication->controlEligible[1]; }
     static bool ReplyIssued(MContext& context) { return context.authentication->replyIssued; }
     static bool ReplyPending(MContext& context) { return context.authentication->replyPending; }
@@ -4639,6 +4640,17 @@ void B07CheckMAC(const std::string& hex, rseq_t challenge, rseq_t key)
                                      wseq_t(mac.data(), mac.size())) == crypto::Result::OK);
     REQUIRE(crypto::ConstantTimeEqual(rseq_t(mac.data(), mac.size()), apdu.skip(apdu.length() - 16)));
 }
+// Recompute a valid tag for a deliberately invalid envelope. The monitoring key is
+// borrowed from the live negotiated session; no new key or eligibility is injected.
+void B07ResignMAC(std::vector<uint8_t>& wire, rseq_t challenge, rseq_t key)
+{
+    REQUIRE(wire.size() > 16);
+    std::vector<uint8_t> transcript(static_cast<const uint8_t*>(challenge),
+                                    static_cast<const uint8_t*>(challenge) + challenge.length());
+    transcript.insert(transcript.end(), wire.begin(), wire.end() - 16);
+    REQUIRE(crypto::ComputeHMACSHA256(key, rseq_t(transcript.data(), transcript.size()),
+                                     wseq_t(wire.data() + wire.size() - 16, 16)) == crypto::Result::OK);
+}
 void B07Prime(RuntimePair& pair, bool unsolicited)
 {
     pair.Pump();
@@ -4863,9 +4875,11 @@ TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending con
           "[production-sa][sa-b07]")
 {
     const bool unsolicited = GENERATE(false, true);
-    // Unknown user, foreign association, bad tag, coherent shortened tag, changed IIN,
-    // altered native data, wrong V3 qualifier/count, wrong V9 qualifier.
-    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8);
+    // Existing structural, routing, tag and user negatives (0-8); separately:
+    // 9: configured wrong user with a genuine Monitoring-key MAC,
+    // 10: native value-only tamper with unchanged MAC and intact framing,
+    // 11: malformed V3 qualifier with a newly valid MAC.
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
     CAPTURE(unsolicited, fault);
     RuntimePair pair(unsolicited, true, false, nullptr, false, nullptr, 2, false, 2000, 2000, unsolicited);
     pair.Pump();
@@ -4907,9 +4921,13 @@ TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending con
     const auto successes = ProductionAuthenticationTestAccess::Stats(*pair.master.context).Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
     const auto state = ProductionAuthenticationTestAccess::ResponderState(*pair.master.context);
     const auto measurements = pair.master.meas->TotalReceived();
+    const auto monitoringCSQ = ProductionAuthenticationTestAccess::MonitoringSequence(*pair.master.context);
+    const auto commonBudget = ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages();
+    const auto controlBudget = ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).RemainingMessages();
     HexSequence seed(pair.monitoringChallenge);
-    B07CheckMAC(response, seed.ToRSeq(), ProductionAuthenticationTestAccess::Common(pair.outstation.context)
-        .MonitoringKey(ProductionAuthenticationTestAccess::Now(pair.outstation.context)));
+    const auto monitoringKey = ProductionAuthenticationTestAccess::Common(pair.outstation.context)
+        .MonitoringKey(ProductionAuthenticationTestAccess::Now(pair.outstation.context));
+    B07CheckMAC(response, seed.ToRSeq(), monitoringKey);
     std::vector<uint8_t> changed(static_cast<const uint8_t*>(packet.ToRSeq()),
                                static_cast<const uint8_t*>(packet.ToRSeq()) + packet.ToRSeq().length());
     const size_t suffix = changed.size() - 22;
@@ -4921,12 +4939,44 @@ TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending con
     if (fault == 6) changed[6] = 8;
     if (fault == 7) changed[7] = 2;
     if (fault == 8) changed[suffix + 2] = 7;
+    if (fault == 9)
+    {
+        REQUIRE(changed[12] == 1); // Monitoring responses must use common user 1.
+        REQUIRE(changed[13] == 0);
+        changed[12] = 2; // Configured user 2, but invalid for this direction.
+        B07ResignMAC(changed, seed.ToRSeq(), monitoringKey);
+        const auto forged = HexConversions::to_hex(rseq_t(changed.data(), changed.size()));
+        B07CheckMAC(forged, seed.ToRSeq(), monitoringKey);
+        REQUIRE(B07Envelope(forged, true, 2) == native);
+    }
+    if (fault == 10)
+    {
+        REQUIRE(suffix > 4); // A real native FC129/130 data value exists.
+        changed[suffix - 1] ^= 1;
+        const auto altered = B07Envelope(HexConversions::to_hex(rseq_t(changed.data(), changed.size())), true, 1);
+        REQUIRE(altered.size() == native.size());
+        REQUIRE(std::equal(altered.begin(), altered.end() - 1, native.begin()));
+        REQUIRE(altered.back() != native.back());
+        // Its original tag is left intact: only the native value changes.
+    }
+    if (fault == 11)
+    {
+        changed[6] = 8; // Q08 instead of the required V3 Q07, with a correct tag.
+        B07ResignMAC(changed, seed.ToRSeq(), monitoringKey);
+        B07CheckMAC(HexConversions::to_hex(rseq_t(changed.data(), changed.size())),
+                    seed.ToRSeq(), monitoringKey);
+    }
+    if (fault == 2)
+        REQUIRE(B07Envelope(HexConversions::to_hex(rseq_t(changed.data(), changed.size())), true, 1) == native);
     if (fault == 1)
         REQUIRE_FALSE(pair.master.context->OnReceive(Message(Addresses(99, pair.master.addresses.source),
                                                              rseq_t(changed.data(), changed.size()))));
     else REQUIRE(pair.master.SendToMaster(HexConversions::to_hex(rseq_t(changed.data(), changed.size()))));
     REQUIRE(pair.results.values.empty());
     REQUIRE(pair.master.meas->TotalReceived() == measurements);
+    REQUIRE(ProductionAuthenticationTestAccess::MonitoringSequence(*pair.master.context) == monitoringCSQ);
+    REQUIRE(ProductionAuthenticationTestAccess::Common(*pair.master.context).RemainingMessages() == commonBudget);
+    REQUIRE(ProductionAuthenticationTestAccess::Session(*pair.master.context, 2).RemainingMessages() == controlBudget);
     REQUIRE(pair.master.context->activeTask);
     if (unsolicited)
         REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(pair.outstation.context)
