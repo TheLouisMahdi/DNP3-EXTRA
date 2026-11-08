@@ -124,7 +124,15 @@ bool IsValidAuthObject(const Group120Var5& value)
             value.hmacValue.length() == lengths[value.macAlgorithm]);
 }
 bool IsValidAuthObject(const Group120Var6& value) { return value.keyWrapData.length() != 0; }
-bool IsValidAuthObject(const Group120Var8& value) { return value.certificate.length() != 0; }
+bool IsValidAuthObject(const Group120Var8& value)
+{
+    // A.45.8: ID and Attribute Certificates use asymmetric or vendor methods.
+    // Trust, method selection and IEC/TS 62351-8 validation belong to the RUK runtime.
+    const bool method = (value.keyChangeMethod >= 67 && value.keyChangeMethod <= 71)
+        || value.keyChangeMethod >= 128;
+    return method && (value.certificateType == 1 || value.certificateType == 2)
+        && value.certificate.length() != 0;
+}
 bool IsValidAuthObject(const Group120Var9& value) { return value.hmacValue.length() != 0; }
 bool IsValidAuthObject(const Group120Var10& value)
 {
