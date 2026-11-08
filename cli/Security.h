@@ -18,6 +18,7 @@ struct Options
     bool aggressive = false, trustedTime = false, testOnly = false, denyControls = false;
     bool unsolicited = false, trace = false, tls = false;
     bool commandEvents = false;
+    bool rtuIoProfile = false;
     bool expiredTestCertificate = false, selfSignedTestCertificate = false;
 };
 Options ParseOptions(int argc, char** argv);

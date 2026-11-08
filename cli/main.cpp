@@ -356,11 +356,23 @@ void CommandResult(const std::string& label, const ICommandTaskResult& result)
 
 class SimulatedCommands final : public SimpleCommandHandler
 {
+    const bool rtuIoProfile;
+
 public:
     std::atomic<uint32_t> executions{0};
-    SimulatedCommands() : SimpleCommandHandler(CommandStatus::SUCCESS) {}
+    explicit SimulatedCommands(bool rtuIoProfile)
+        : SimpleCommandHandler(CommandStatus::SUCCESS), rtuIoProfile(rtuIoProfile)
+    {}
     template<class T> CommandStatus SelectValue(const T&, uint16_t index)
     { return index < 10 ? CommandStatus::SUCCESS : CommandStatus::OUT_OF_RANGE; }
+    CommandStatus SelectValue(const ControlRelayOutputBlock& value, uint16_t index)
+    {
+        if (index >= 10) return CommandStatus::OUT_OF_RANGE;
+        // IEEE 1815-2012 A.8.1 Table A-2: CLOSE/TRIP + PULSE_ON, no clear or queue.
+        if (rtuIoProfile && (value.count != 1 || (value.rawCode != 0x41 && value.rawCode != 0x81)))
+            return CommandStatus::NOT_SUPPORTED;
+        return CommandStatus::SUCCESS;
+    }
     template<class T> CommandStatus OperateValue(const T& value, uint16_t index, IUpdateHandler& handler)
     {
         if (index >= 10) return CommandStatus::OUT_OF_RANGE;
@@ -371,8 +383,11 @@ public:
     }
     CommandStatus OperateValue(const ControlRelayOutputBlock& value, uint16_t index, IUpdateHandler& handler)
     {
-        if (index >= 10) return CommandStatus::OUT_OF_RANGE;
-        handler.Update(BinaryOutputStatus(value.opType == OperationType::LATCH_ON), index);
+        const auto result = SelectValue(value, index);
+        if (result != CommandStatus::SUCCESS) return result;
+        const bool closed = rtuIoProfile ? value.tcc == TripCloseCode::CLOSE
+                                         : value.opType == OperationType::LATCH_ON;
+        handler.Update(BinaryOutputStatus(closed), index);
         Console::Print("EXECUTED", "CROB[" + std::to_string(index) + "] simulated count=" + std::to_string(++executions));
         return CommandStatus::SUCCESS;
     }
@@ -457,7 +472,7 @@ void RuntimeInfo(const diagnostic::Options& o)
     if (o.auth == "compat") Console::Print("SA", "SA DISABLED: explicit compatibility diagnostic mode");
     if (o.testOnly) Console::Print("INFO", "TEST-ONLY localhost credentials/authority; not a production provisioning service");
 }
-void Help(bool master)
+void Help(bool master, bool rtuIoProfile)
 {
     if (master)
     {
@@ -467,7 +482,8 @@ void Help(bool master)
         Console::Print("HELP", "ruk verify|change-key <name> | stats | events | assign <group> <class:0..3> <start> <stop>");
         Console::Print("HELP", "unsol on|off | restart cold|warm | time (G50V1 READ)");
     }
-    else Console::Print("HELP", "set binary|double|analog|counter <index:0..9> <value> [force|suppress] | show | restart (restart IIN)");
+    else Console::Print("HELP", std::string("set binary|double|analog")
+        + (rtuIoProfile ? "" : "|counter") + " <index:0..9> <value> [force|suppress] | show | restart (restart IIN)");
     Console::Print("HELP", "status | auth | users | reconnect | trace on|off (metadata only in SA) | help | quit");
 }
 uint32_t RequiredNumber(const std::string& value, uint32_t maximum)
@@ -496,7 +512,7 @@ int RunMaster(diagnostic::Options o)
     auto soe = std::make_shared<SoePrinter>();
     auto master = channel->AddMaster("cli-master-stack", soe, std::make_shared<MasterObserver>(), config);
     if (!master || !master->Enable()) throw std::runtime_error("Master could not enable");
-    Help(true);
+    Help(true, o.rtuIoProfile);
     std::string line;
     while (!stopping.load() && std::getline(std::cin, line))
     {
@@ -505,7 +521,7 @@ int RunMaster(diagnostic::Options o)
         if (Is(w, {"quit"}) || Is(w, {"exit"})) break;
         try
         {
-            if (Is(w, {"help"})) { Help(true); continue; }
+            if (Is(w, {"help"})) { Help(true, o.rtuIoProfile); continue; }
             if (Is(w, {"status"})) { Console::Print("INFO", "channel=" + std::string(ChannelStateSpec::to_string(observer->Current()))); AuthStatus(master, o); continue; }
             if (Is(w, {"auth"})) { AuthStatus(master, o); continue; }
             if (Is(w, {"users"})) { diagnostic::PrintUsers(o, true); continue; }
@@ -558,7 +574,11 @@ int RunMaster(diagnostic::Options o)
             {
                 if (w[2] != "on" && w[2] != "off") throw std::runtime_error("Expected on/off");
                 const auto index = static_cast<uint16_t>(RequiredNumber(w[1], 65535));
-                const ControlRelayOutputBlock command(w[2] == "on" ? OperationType::LATCH_ON : OperationType::LATCH_OFF);
+                const bool on = w[2] == "on";
+                const auto command = o.rtuIoProfile
+                    ? ControlRelayOutputBlock(OperationType::PULSE_ON,
+                                              on ? TripCloseCode::CLOSE : TripCloseCode::TRIP, false, 1, 100, 0)
+                    : ControlRelayOutputBlock(on ? OperationType::LATCH_ON : OperationType::LATCH_OFF);
                 const auto mode = w.size() == 3 ? std::string("sbo") : w[3];
                 if (mode == "noack")
                 {
@@ -667,6 +687,11 @@ int RunOutstation(const diagnostic::Options& o)
     auto observer = std::make_shared<ChannelObserver>();
     auto channel = MakeChannel(manager, o, observer, false);
     DatabaseConfig database(10);
+    if (o.rtuIoProfile)
+    {
+        database.counter.clear();
+        database.frozen_counter.clear();
+    }
     for (auto& p : database.binary_input) { p.second.clazz = PointClass::Class1; p.second.evariation = EventBinaryVariation::Group2Var2; }
     for (auto& p : database.double_binary) { p.second.clazz = PointClass::Class1; p.second.evariation = EventDoubleBinaryVariation::Group4Var2; }
     for (auto& p : database.analog_input) { p.second.clazz = PointClass::Class2; p.second.svariation = StaticAnalogVariation::Group30Var5; p.second.evariation = EventAnalogVariation::Group32Var7; }
@@ -685,6 +710,11 @@ int RunOutstation(const diagnostic::Options& o)
     config.outstation.params.maxTxFragSize = o.txFragmentBytes;
     config.outstation.eventBufferConfig = EventBufferConfig::AllTypes(100);
     config.outstation.eventBufferConfig.maxSecurityStatEvents = 100;
+    if (o.rtuIoProfile)
+    {
+        config.outstation.eventBufferConfig.maxCounterEvents = 0;
+        config.outstation.eventBufferConfig.maxFrozenCounterEvents = 0;
+    }
     if (o.commandEvents)
     {
         config.outstation.eventBufferConfig.maxBinaryCommandEvents = 100;
@@ -694,11 +724,11 @@ int RunOutstation(const diagnostic::Options& o)
     config.link.LocalAddr = o.local; config.link.RemoteAddr = o.remote; config.link.KeepAliveTimeout = TimeDuration::Max();
     auto application = std::make_shared<OutstationApplication>();
     if (o.trustedTime) application->WriteAbsoluteTime(UTCTimestamp(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())));
-    auto commands = std::make_shared<SimulatedCommands>();
+    auto commands = std::make_shared<SimulatedCommands>(o.rtuIoProfile);
     auto outstation = channel->AddOutstation("cli-outstation-stack", commands, application, config);
     if (!outstation || !outstation->Enable()) throw std::runtime_error("Outstation could not enable");
     std::array<LocalPoints, 10> points{};
-    Help(false);
+    Help(false, o.rtuIoProfile);
     std::string line;
     while (!stopping.load() && std::getline(std::cin, line))
     {
@@ -707,7 +737,7 @@ int RunOutstation(const diagnostic::Options& o)
         if (Is(w, {"quit"}) || Is(w, {"exit"})) break;
         try
         {
-            if (Is(w, {"help"})) { Help(false); continue; }
+            if (Is(w, {"help"})) { Help(false, o.rtuIoProfile); continue; }
             if (Is(w, {"auth"})) { AuthStatus(outstation, o); continue; }
             if (Is(w, {"users"})) { diagnostic::PrintUsers(o, false); continue; }
             if (Is(w, {"status"})) { Console::Print("INFO", "channel=" + std::string(ChannelStateSpec::to_string(observer->Current())) + " executed=" + std::to_string(commands->executions)); continue; }
@@ -716,10 +746,13 @@ int RunOutstation(const diagnostic::Options& o)
             if (Is(w, {"show"}))
             {
                 outstation->GetStackStatistics(); // Executor barrier after submitted Apply operations.
-                Console::Print("DATABASE", "Configured indices 0..9: binary/double Class1; analog G30V5/G32V7 Class2; counter Class3. Initial class assignments may be changed by Master ASSIGN_CLASS.");
+                Console::Print("DATABASE", std::string("Configured indices 0..9: binary/double Class1; analog G30V5/G32V7 Class2; ")
+                    + (o.rtuIoProfile ? "no counters. " : "counter Class3. ")
+                    + "Initial class assignments may be changed by Master ASSIGN_CLASS.");
                 for (size_t n = 0; n < points.size(); ++n)
                     Console::Print("POINT", "index=" + std::to_string(n) + " binary=" + ValueText(points[n].binary)
-                        + " double=" + ValueText(points[n].doubleBit) + " analog=" + ValueText(points[n].analog) + " counter=" + ValueText(points[n].counter));
+                        + " double=" + ValueText(points[n].doubleBit) + " analog=" + ValueText(points[n].analog)
+                        + (o.rtuIoProfile ? "" : " counter=" + ValueText(points[n].counter)));
                 Console::Print("INFO", "Input values are this application's published values; use Master READ for native database/output readback."); continue;
             }
             bool trace = false;
@@ -741,7 +774,8 @@ int RunOutstation(const diagnostic::Options& o)
                 { next.doubleBit = w[3] == "on" ? DoubleBit::DETERMINED_ON : w[3] == "off" ? DoubleBit::DETERMINED_OFF : w[3] == "intermediate" ? DoubleBit::INTERMEDIATE : DoubleBit::INDETERMINATE;
                     builder.Update(DoubleBitBinary(next.doubleBit, Flags(1), application->Now()), index, mode); }
                 else if (w[1] == "analog" && Floating(w[3], next.analog)) builder.Update(Analog(next.analog, Flags(1), application->Now()), index, mode);
-                else if (w[1] == "counter" && Unsigned(w[3], 0xFFFFFFFFu, next.counter)) builder.Update(Counter(next.counter, Flags(1), application->Now()), index, mode);
+                else if (w[1] == "counter" && !o.rtuIoProfile && Unsigned(w[3], 0xFFFFFFFFu, next.counter))
+                    builder.Update(Counter(next.counter, Flags(1), application->Now()), index, mode);
                 else throw std::runtime_error("Invalid point type/value");
                 outstation->Apply(builder.Build()); points[index] = next;
                 Console::Print("UPDATE", "submitted " + line); continue;

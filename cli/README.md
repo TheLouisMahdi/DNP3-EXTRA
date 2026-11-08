@@ -243,3 +243,15 @@ the native application buffers independently. The diagnostic range is
 250..65535 bytes, and both defaults are the library default (2048 bytes).
 These bounds govern Host memory allocation. Approve separate product limits
 before deployment to an RTU.
+
+### RTU I/O profile for the diagnostic peers
+
+Pass --rtu-io-profile to both peers to exercise the selected control and
+counter settings (device-profile PDF pp. 3–4). The master sends CLOSE (0x41)
+for crob on and TRIP (0x81) for crob off. The outstation simulates a
+complementary latch and accepts only these CROB codes with count 1, for
+SELECT, OPERATE, DIRECT_OPERATE and DIRECT_OPERATE_NO_ACK. Counter and
+frozen-counter points and event capacities are disabled in this mode.
+
+This option applies only to these I/O choices. It does not configure link,
+TLS, authentication, or physical relay timing.

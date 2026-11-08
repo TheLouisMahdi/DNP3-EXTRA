@@ -296,6 +296,7 @@ Options ParseOptions(int argc, char** argv)
         if (option == "--deny-controls") { o.denyControls = true; continue; }
         if (option == "--unsolicited") { o.unsolicited = true; continue; }
         if (option == "--command-events") { o.commandEvents = true; continue; }
+        if (option == "--rtu-io-profile") { o.rtuIoProfile = true; continue; }
         if (option == "--trace") { o.trace = true; continue; }
         if (option == "--tls") { o.tls = true; continue; }
         if (option == "--expired-test-certificate") { o.expiredTestCertificate = true; continue; }
@@ -339,6 +340,8 @@ Options ParseOptions(int argc, char** argv)
     if (!o.profile.empty() && o.host != "127.0.0.1") throw std::runtime_error("TEST credential profiles require localhost 127.0.0.1");
     if (!o.crl.empty() && (!o.tls || (o.role != "master" && o.role != "outstation")))
         throw std::runtime_error("--crl requires a TLS master or outstation");
+    if (o.rtuIoProfile && o.role != "master" && o.role != "outstation")
+        throw std::runtime_error("--rtu-io-profile requires master or outstation");
     if (o.rxFragmentBytes < 250 || o.txFragmentBytes < 250)
         throw std::runtime_error("Diagnostic fragment size must be 250..65535 bytes");
     if (o.tls && !explicitPort) o.port = 19999;
