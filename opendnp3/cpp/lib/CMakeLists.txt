@@ -196,6 +196,7 @@ set(opendnp3_private_headers
     ./src/app/Functions.h
     ./src/app/GroupVariationRecord.h
     ./src/app/HeaderWriter.h
+    ./src/app/FileObjects.h
     ./src/app/IVariableLength.h
     ./src/app/MeasurementFactory.h
 	./src/app/MeasurementTypeSpecs.h
@@ -442,6 +443,7 @@ set(opendnp3_src
     ./src/app/ControlRelayOutputBlock.cpp
     ./src/app/EventTriggers.cpp
     ./src/app/Functions.cpp
+    ./src/app/FileObjects.cpp
     ./src/app/GroupVariationRecord.cpp
     ./src/app/HeaderWriter.cpp
     ./src/app/IINField.cpp

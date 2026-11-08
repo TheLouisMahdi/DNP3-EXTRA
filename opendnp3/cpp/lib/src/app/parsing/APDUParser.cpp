@@ -164,6 +164,12 @@ ParseResult APDUParser::ParseQualifier(ser4cpp::rseq_t& buffer,
     {
         return ParseResult::INVALID_OBJECT_QUALIFIER;
     }
+    // Modern G70 payloads are length-prefixed free-format objects. Header-only
+    // selectors are handled separately by the read/class parser.
+    if (record.group == 70 && settings.ExpectsContents() && record.GetQualifierCode() != QualifierCode::FREE_FORMAT)
+    {
+        return ParseResult::INVALID_OBJECT_QUALIFIER;
+    }
     switch (record.GetQualifierCode())
     {
     case (QualifierCode::FREE_FORMAT):

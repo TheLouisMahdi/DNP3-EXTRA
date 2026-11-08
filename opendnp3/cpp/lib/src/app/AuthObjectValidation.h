@@ -37,5 +37,10 @@ bool IsValidAuthObject(const Group120Var13& value);
 bool IsValidAuthObject(const Group120Var14& value);
 bool IsValidAuthObject(const Group120Var15& value);
 
+template<class T> bool IsValidFreeFormatObject(const T& value)
+{
+    return IsValidAuthObject(value);
+}
+
 }
 #endif

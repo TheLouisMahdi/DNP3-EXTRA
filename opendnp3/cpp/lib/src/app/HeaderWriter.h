@@ -33,6 +33,7 @@
 #include "opendnp3/app/DeviceAttribute.h"
 #include "opendnp3/gen/QualifierCode.h"
 #include "app/AuthObjectValidation.h"
+#include "app/FileObjects.h"
 
 #include <ser4cpp/container/Settable.h>
 #include <ser4cpp/serialization/LittleEndian.h>
@@ -59,7 +60,7 @@ public:
         size_t required = 4;
         for (uint16_t i = 0; i < count; ++i)
         {
-            if (!IsValidAuthObject(values[i]) || values[i].Size() > 65535) return false;
+            if (!IsValidFreeFormatObject(values[i]) || values[i].Size() > 65535) return false;
             required += 2 + values[i].Size();
         }
         if (position->length() < required) return false;

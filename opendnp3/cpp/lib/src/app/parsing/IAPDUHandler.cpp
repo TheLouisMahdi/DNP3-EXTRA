@@ -44,6 +44,76 @@ IINField IAPDUHandler::ProcessHeader(const PrefixHeader&, const ICollection<Inde
 
 IAPDUHandler::IAPDUHandler() : numTotalHeaders(0), numIgnoredHeaders(0) {}
 
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileAuthentication>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileAuthentication>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileCommand>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileCommand>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileCommandStatus>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileCommandStatus>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileTransport>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileTransport>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileTransportStatus>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileTransportStatus>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileDescriptor>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileDescriptor>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
+void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<FileSpecification>& values)
+{
+    Record(header, this->ProcessHeader(header, values));
+}
+
+IINField IAPDUHandler::ProcessHeader(const FreeFormatHeader&, const ICollection<FileSpecification>&)
+{
+    return ProcessUnsupportedHeader();
+}
+
 void IAPDUHandler::OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var7>& values)
 {
     Record(header, this->ProcessHeader(header, values));

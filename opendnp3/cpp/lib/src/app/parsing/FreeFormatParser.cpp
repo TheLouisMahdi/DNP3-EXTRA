@@ -92,7 +92,7 @@ template<class T> ParseResult ParseObjects(ser4cpp::rseq_t& buffer, const Header
         ser4cpp::UInt16::read_from(input, length);
         if (input.length() < length) return ParseResult::NOT_ENOUGH_DATA_FOR_OBJECTS;
         T value;
-        if (!value.Read(input.take(length)) || !IsValidAuthObject(value)) return ParseResult::INVALID_OBJECT;
+        if (!value.Read(input.take(length)) || !IsValidFreeFormatObject(value)) return ParseResult::INVALID_OBJECT;
         input.advance(length);
     }
     if (handler)
@@ -148,6 +148,13 @@ ParseResult FreeFormatParser::Parse(ser4cpp::rseq_t& buffer, const HeaderRecord&
         return ParseResult::INVALID_OBJECT_QUALIFIER;
     switch (record.enumeration)
     {
+    case GroupVariation::Group70Var2: return ParseObjects<FileAuthentication>(buffer, record, handler);
+    case GroupVariation::Group70Var3: return ParseObjects<FileCommand>(buffer, record, handler);
+    case GroupVariation::Group70Var4: return ParseObjects<FileCommandStatus>(buffer, record, handler);
+    case GroupVariation::Group70Var5: return ParseObjects<FileTransport>(buffer, record, handler);
+    case GroupVariation::Group70Var6: return ParseObjects<FileTransportStatus>(buffer, record, handler);
+    case GroupVariation::Group70Var7: return ParseObjects<FileDescriptor>(buffer, record, handler);
+    case GroupVariation::Group70Var8: return ParseObjects<FileSpecification>(buffer, record, handler);
     case GroupVariation::Group120Var1: return ParseObjects<Group120Var1>(buffer, record, handler);
     case GroupVariation::Group120Var2: return ParseObjects<Group120Var2>(buffer, record, handler);
     case GroupVariation::Group120Var5: return ParseObjects<Group120Var5>(buffer, record, handler);

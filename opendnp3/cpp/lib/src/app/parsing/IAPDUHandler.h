@@ -20,6 +20,7 @@
 #ifndef OPENDNP3_IAPDUHANDLER_H
 #define OPENDNP3_IAPDUHANDLER_H
 
+#include "app/FileObjects.h"
 #include "app/GroupVariationRecord.h"
 #include "opendnp3/app/IINValue.h"
 #include "app/Range.h"
@@ -62,6 +63,13 @@ public:
     // read any accumulated errors
     IINField Errors() const;
 
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileAuthentication>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileCommand>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileCommandStatus>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileTransport>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileTransportStatus>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileDescriptor>& values);
+    void OnHeader(const FreeFormatHeader& header, const ICollection<FileSpecification>& values);
     void OnHeader(const FreeFormatHeader& header, const ICollection<Group120Var1>& values);
     void OnHeader(const CountHeader& header, const ICollection<Group120Var3>& values);
     void OnHeader(const CountHeader& header, const ICollection<Group120Var4>& values);
@@ -150,6 +158,13 @@ protected:
         return numTotalHeaders == 0;
     }
 
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileAuthentication>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileCommand>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileCommandStatus>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileTransport>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileTransportStatus>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileDescriptor>& values);
+    virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<FileSpecification>& values);
     virtual IINField ProcessHeader(const FreeFormatHeader& header, const ICollection<Group120Var1>& values);
     virtual IINField ProcessHeader(const CountHeader& header, const ICollection<Group120Var3>& values);
     virtual IINField ProcessHeader(const CountHeader& header, const ICollection<Group120Var4>& values);
