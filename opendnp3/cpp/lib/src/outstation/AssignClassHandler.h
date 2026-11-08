@@ -37,7 +37,7 @@ class AssignClassHandler : public IAPDUHandler
 public:
     AssignClassHandler(IOutstationApplication& application, IClassAssigner& assigner);
 
-    bool HasPendingAssignment() const { return classHeader >= 0; }
+    bool HasPendingAssignment() const { return state == State::AwaitingTarget; }
 
     virtual bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override final
     {
@@ -48,10 +48,11 @@ private:
     virtual IINField ProcessHeader(const AllObjectsHeader& header) override final;
 
     virtual IINField ProcessHeader(const RangeHeader& header) override final;
+    virtual IINField ProcessHeader(const CountHeader& header) override final;
 
     IINField RecordClass(GroupVariation gv);
 
-    bool IsExpectingAssignment();
+    enum class State { NoClass, AwaitingTarget, HasTarget };
 
     IINField ProcessAssignAll(AssignClassType type, PointClass clazz);
 
@@ -59,7 +60,7 @@ private:
 
     void NotifyApplicationOfAssignment(AssignClassType type, PointClass clazz, const Range& range);
 
-    int32_t classHeader;
+    State state = State::NoClass;
     PointClass clazz;
 
     IOutstationApplication* pApplication;

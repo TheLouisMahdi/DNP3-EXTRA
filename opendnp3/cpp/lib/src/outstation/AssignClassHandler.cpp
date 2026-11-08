@@ -28,13 +28,25 @@ namespace opendnp3
 {
 
 AssignClassHandler::AssignClassHandler(IOutstationApplication& application, IClassAssigner& assigner)
-    : classHeader(-1), clazz(PointClass::Class0), pApplication(&application), pAssigner(&assigner)
+    : clazz(PointClass::Class0), pApplication(&application), pAssigner(&assigner)
 {
 }
 
 IINField AssignClassHandler::ProcessHeader(const AllObjectsHeader& header)
 {
-    if (IsExpectingAssignment())
+    // A class header starts a new set. All following targets belong to it
+    // until the next class header (IEEE 1815-2012 4.4.14).
+    switch (header.enumeration)
+    {
+    case GroupVariation::Group60Var1:
+    case GroupVariation::Group60Var2:
+    case GroupVariation::Group60Var3:
+    case GroupVariation::Group60Var4:
+        return this->RecordClass(header.enumeration);
+    default:
+        break;
+    }
+    if (state != State::NoClass)
     {
         switch (header.enumeration)
         {
@@ -68,11 +80,17 @@ IINField AssignClassHandler::ProcessHeader(const AllObjectsHeader& header)
 
 IINField AssignClassHandler::ProcessHeader(const RangeHeader& header)
 {
-    if (IsExpectingAssignment())
+    if (state != State::NoClass)
     {
         switch (header.enumeration)
         {
-
+        case GroupVariation::Group60Var1:
+        case GroupVariation::Group60Var2:
+        case GroupVariation::Group60Var3:
+        case GroupVariation::Group60Var4:
+            // A class header with a range qualifier is malformed.
+            state = State::NoClass;
+            return IINBit::PARAM_ERROR;
         case (GroupVariation::Group1Var0):
             return ProcessAssignRange(AssignClassType::BinaryInput, clazz, header.range);
         case (GroupVariation::Group3Var0):
@@ -101,21 +119,25 @@ IINField AssignClassHandler::ProcessHeader(const RangeHeader& header)
     }
 }
 
-bool AssignClassHandler::IsExpectingAssignment()
+IINField AssignClassHandler::ProcessHeader(const CountHeader& header)
 {
-    auto current = static_cast<int32_t>(this->GetCurrentHeader());
-
-    if (current > 0 && ((current - 1) == this->classHeader))
+    switch (header.enumeration)
     {
-        this->classHeader = -1;
-        return true;
+    case GroupVariation::Group60Var1:
+    case GroupVariation::Group60Var2:
+    case GroupVariation::Group60Var3:
+    case GroupVariation::Group60Var4:
+        state = State::NoClass;
+        break;
+    default:
+        break;
     }
-
-    return false;
+    return IAPDUHandler::ProcessHeader(header);
 }
 
 IINField AssignClassHandler::ProcessAssignRange(AssignClassType type, PointClass clazz, const Range& range)
 {
+    state = State::HasTarget;
     auto actual = pAssigner->AssignClassToRange(type, clazz, range);
 
     this->NotifyApplicationOfAssignment(type, clazz, actual);
@@ -126,6 +148,7 @@ IINField AssignClassHandler::ProcessAssignRange(AssignClassType type, PointClass
 
 IINField AssignClassHandler::ProcessAssignAll(AssignClassType type, PointClass clazz)
 {
+    state = State::HasTarget;
     auto full = pAssigner->AssignClassToAll(type, clazz);
 
     this->NotifyApplicationOfAssignment(type, clazz, full);
@@ -143,24 +166,26 @@ void AssignClassHandler::NotifyApplicationOfAssignment(AssignClassType type, Poi
 
 IINField AssignClassHandler::RecordClass(GroupVariation gv)
 {
-    classHeader = this->GetCurrentHeader();
+    const bool incomplete = HasPendingAssignment();
+    state = State::AwaitingTarget;
+    const auto result = incomplete ? IINField(IINBit::PARAM_ERROR) : IINField();
 
     switch (gv)
     {
     case (GroupVariation::Group60Var1):
         clazz = PointClass::Class0;
-        return IINField();
+        return result;
     case (GroupVariation::Group60Var2):
         clazz = PointClass::Class1;
-        return IINField();
+        return result;
     case (GroupVariation::Group60Var3):
         clazz = PointClass::Class2;
-        return IINField();
+        return result;
     case (GroupVariation::Group60Var4):
         clazz = PointClass::Class3;
-        return IINField();
+        return result;
     default:
-        classHeader = -1;
+        state = State::NoClass;
         return IINBit::PARAM_ERROR;
     }
 }
