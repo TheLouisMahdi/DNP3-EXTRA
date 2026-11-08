@@ -65,6 +65,9 @@ struct OutstationParams
     /// The maximum fragment size the outstation will use for fragments it sends
     uint32_t maxTxFragSize = DEFAULT_MAX_APDU_SIZE;
 
+    /// Prefer the 8-bit count and index qualifier for G2, G4 and G32 when representable.
+    bool prefer8BitEventQualifiers = false;
+
     /// The maximum fragment size the outstation will be able to receive
     uint32_t maxRxFragSize = DEFAULT_MAX_APDU_SIZE;
 

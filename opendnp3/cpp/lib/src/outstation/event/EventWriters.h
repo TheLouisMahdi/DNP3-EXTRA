@@ -36,9 +36,15 @@ class EventWriters
 
 public:
     template<class T>
-    static uint16_t Write(HeaderWriter& writer, IEventCollection<T>& items, const DNP3Serializer<T>& serializer)
+    static uint16_t Write(HeaderWriter& writer, IEventCollection<T>& items, const DNP3Serializer<T>& serializer,
+                          bool prefer8Bit = false)
     {
-        BasicEventWriter<T> handler(writer, serializer);
+        if (prefer8Bit && items.FirstIndex() <= ser4cpp::UInt8::max_value)
+        {
+            BasicEventWriter<T, ser4cpp::UInt8> handler(writer, serializer, QualifierCode::UINT8_CNT_UINT8_INDEX);
+            return items.WriteSome(handler);
+        }
+        BasicEventWriter<T, ser4cpp::UInt16> handler(writer, serializer, QualifierCode::UINT16_CNT_UINT16_INDEX);
         return items.WriteSome(handler);
     }
 
@@ -46,60 +52,57 @@ public:
     static uint16_t WriteWithCTO(const DNPTime& cto,
                                  HeaderWriter& writer,
                                  IEventCollection<T>& items,
-                                 const DNP3Serializer<T>& serializer)
+                                 const DNP3Serializer<T>& serializer,
+                                 bool prefer8Bit = false)
     {
         if (cto.quality == TimestampQuality::SYNCHRONIZED)
         {
             Group51Var1 value;
             value.time = cto;
-            CTOEventWriter<T, Group51Var1> handler(value, writer, serializer);
-            return items.WriteSome(handler);
+            return WriteWithCTOValue(value, writer, items, serializer, prefer8Bit);
         }
         else
         {
             Group51Var2 value;
             value.time = cto;
-            CTOEventWriter<T, Group51Var2> handler(value, writer, serializer);
-            return items.WriteSome(handler);
+            return WriteWithCTOValue(value, writer, items, serializer, prefer8Bit);
         }
     }
 
     static uint16_t Write(uint8_t firstSize, HeaderWriter& writer, IEventCollection<OctetString>& items);
 
 private:
-    template<class T> class BasicEventWriter final : public IEventWriter<T>
+    template<class T, class Index> class BasicEventWriter final : public IEventWriter<T>
     {
-        PrefixedWriteIterator<ser4cpp::UInt16, T> iterator;
+        PrefixedWriteIterator<Index, T> iterator;
 
     public:
-        BasicEventWriter(HeaderWriter& writer, const DNP3Serializer<T>& serializer)
-            : iterator(writer.IterateOverCountWithPrefix<ser4cpp::UInt16, T>(QualifierCode::UINT16_CNT_UINT16_INDEX,
-                                                                             serializer))
+        BasicEventWriter(HeaderWriter& writer, const DNP3Serializer<T>& serializer, QualifierCode qualifier)
+            : iterator(writer.IterateOverCountWithPrefix<Index, T>(qualifier, serializer))
         {
         }
 
-        virtual bool Write(const T& meas, uint16_t index) override
+        bool Write(const T& meas, uint16_t index) override
         {
-            return iterator.IsValid() ? iterator.Write(meas, index) : false;
+            return index <= Index::max_value && iterator.Write(meas, static_cast<typename Index::type_t>(index));
         }
     };
 
-    template<class T, class U> class CTOEventWriter final : public IEventWriter<T>
+    template<class T, class U, class Index> class CTOEventWriter final : public IEventWriter<T>
     {
         const DNPTime cto;
-        PrefixedWriteIterator<ser4cpp::UInt16, T> iterator;
+        PrefixedWriteIterator<Index, T> iterator;
 
     public:
-        CTOEventWriter(const U& cto, HeaderWriter& writer, const DNP3Serializer<T>& serializer)
+        CTOEventWriter(const U& cto, HeaderWriter& writer, const DNP3Serializer<T>& serializer, QualifierCode qualifier)
             : cto(cto.time),
-              iterator(writer.IterateOverCountWithPrefixAndCTO<ser4cpp::UInt16, T, U>(
-                  QualifierCode::UINT16_CNT_UINT16_INDEX, serializer, cto))
+              iterator(writer.IterateOverCountWithPrefixAndCTO<Index, T, U>(qualifier, serializer, cto))
         {
         }
 
-        virtual bool Write(const T& meas, uint16_t index) override
+        bool Write(const T& meas, uint16_t index) override
         {
-            if (!this->iterator.IsValid())
+            if (!iterator.IsValid() || index > Index::max_value)
                 return false;
 
             // Check that the quality of the measurement fits with the CTO variation
@@ -127,9 +130,22 @@ private:
             auto copy = meas;
             copy.time = DNPTime(diff);
 
-            return this->iterator.Write(copy, index);
+            return iterator.Write(copy, static_cast<typename Index::type_t>(index));
         }
     };
+
+    template<class T, class U>
+    static uint16_t WriteWithCTOValue(const U& cto, HeaderWriter& writer, IEventCollection<T>& items,
+                                      const DNP3Serializer<T>& serializer, bool prefer8Bit)
+    {
+        if (prefer8Bit && items.FirstIndex() <= ser4cpp::UInt8::max_value)
+        {
+            CTOEventWriter<T, U, ser4cpp::UInt8> handler(cto, writer, serializer, QualifierCode::UINT8_CNT_UINT8_INDEX);
+            return items.WriteSome(handler);
+        }
+        CTOEventWriter<T, U, ser4cpp::UInt16> handler(cto, writer, serializer, QualifierCode::UINT16_CNT_UINT16_INDEX);
+        return items.WriteSome(handler);
+    }
 };
 
 } // namespace opendnp3

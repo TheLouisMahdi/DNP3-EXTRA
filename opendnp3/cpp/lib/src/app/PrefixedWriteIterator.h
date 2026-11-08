@@ -60,7 +60,7 @@ public:
 
     bool Write(const WriteType& value, typename PrefixType::type_t index)
     {
-        if (isValid && (pPosition->length() >= sizeOfTypePlusIndex))
+        if (isValid && count < PrefixType::max_value && pPosition->length() >= sizeOfTypePlusIndex)
         {
             PrefixType::write_to(*pPosition, index);
             serializer.write(value, *pPosition);

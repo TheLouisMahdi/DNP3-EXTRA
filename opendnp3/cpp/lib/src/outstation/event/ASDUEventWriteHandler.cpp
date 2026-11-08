@@ -81,13 +81,13 @@ uint16_t ASDUEventWriteHandler::Write(EventBinaryVariation variation,
     switch (variation)
     {
     case (EventBinaryVariation::Group2Var1):
-        return EventWriters::Write(this->writer, items, Group2Var1::Inst());
+        return EventWriters::Write(this->writer, items, Group2Var1::Inst(), prefer8BitQualifiers);
     case (EventBinaryVariation::Group2Var2):
-        return EventWriters::Write(this->writer, items, Group2Var2::Inst());
+        return EventWriters::Write(this->writer, items, Group2Var2::Inst(), prefer8BitQualifiers);
     case (EventBinaryVariation::Group2Var3):
-        return EventWriters::WriteWithCTO(first.time, this->writer, items, Group2Var3::Inst());
+        return EventWriters::WriteWithCTO(first.time, this->writer, items, Group2Var3::Inst(), prefer8BitQualifiers);
     default:
-        return EventWriters::Write(this->writer, items, Group2Var1::Inst());
+        return EventWriters::Write(this->writer, items, Group2Var1::Inst(), prefer8BitQualifiers);
     }
 }
 
@@ -98,13 +98,13 @@ uint16_t ASDUEventWriteHandler::Write(EventDoubleBinaryVariation variation,
     switch (variation)
     {
     case (EventDoubleBinaryVariation::Group4Var1):
-        return EventWriters::Write(this->writer, items, Group4Var1::Inst());
+        return EventWriters::Write(this->writer, items, Group4Var1::Inst(), prefer8BitQualifiers);
     case (EventDoubleBinaryVariation::Group4Var2):
-        return EventWriters::Write(this->writer, items, Group4Var2::Inst());
+        return EventWriters::Write(this->writer, items, Group4Var2::Inst(), prefer8BitQualifiers);
     case (EventDoubleBinaryVariation::Group4Var3):
-        return EventWriters::WriteWithCTO(first.time, this->writer, items, Group4Var3::Inst());
+        return EventWriters::WriteWithCTO(first.time, this->writer, items, Group4Var3::Inst(), prefer8BitQualifiers);
     default:
-        return EventWriters::Write(this->writer, items, Group4Var1::Inst());
+        return EventWriters::Write(this->writer, items, Group4Var1::Inst(), prefer8BitQualifiers);
     }
 }
 
@@ -153,23 +153,23 @@ uint16_t ASDUEventWriteHandler::Write(EventAnalogVariation variation,
     switch (variation)
     {
     case (EventAnalogVariation::Group32Var1):
-        return EventWriters::Write(this->writer, items, Group32Var1::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var1::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var2):
-        return EventWriters::Write(this->writer, items, Group32Var2::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var2::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var3):
-        return EventWriters::Write(this->writer, items, Group32Var3::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var3::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var4):
-        return EventWriters::Write(this->writer, items, Group32Var4::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var4::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var5):
-        return EventWriters::Write(this->writer, items, Group32Var5::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var5::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var6):
-        return EventWriters::Write(this->writer, items, Group32Var6::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var6::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var7):
-        return EventWriters::Write(this->writer, items, Group32Var7::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var7::Inst(), prefer8BitQualifiers);
     case (EventAnalogVariation::Group32Var8):
-        return EventWriters::Write(this->writer, items, Group32Var8::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var8::Inst(), prefer8BitQualifiers);
     default:
-        return EventWriters::Write(this->writer, items, Group32Var1::Inst());
+        return EventWriters::Write(this->writer, items, Group32Var1::Inst(), prefer8BitQualifiers);
     }
 }
 

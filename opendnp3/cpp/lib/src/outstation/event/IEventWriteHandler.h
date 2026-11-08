@@ -48,6 +48,7 @@ public:
 template<class T> class IEventCollection
 {
 public:
+    virtual uint16_t FirstIndex() const = 0;
     virtual uint16_t WriteSome(IEventWriter<T>& handler) = 0;
 };
 

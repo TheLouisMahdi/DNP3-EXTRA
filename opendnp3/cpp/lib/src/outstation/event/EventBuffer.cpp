@@ -24,8 +24,10 @@
 namespace opendnp3
 {
 
-EventBuffer::EventBuffer(const EventBufferConfig& config)
-    : storage(config), securityCapacity(config.maxSecurityStatEvents) {}
+EventBuffer::EventBuffer(const EventBufferConfig& config, bool prefer8BitQualifiers)
+    : storage(config), securityCapacity(config.maxSecurityStatEvents), prefer8BitQualifiers(prefer8BitQualifiers)
+{
+}
 
 void EventBuffer::Update(const Event<BinarySpec>& evt)
 {
@@ -228,7 +230,7 @@ bool EventBuffer::HasAnySelection() const
 
 bool EventBuffer::Load(HeaderWriter& writer)
 {
-    ASDUEventWriteHandler handler(writer);
+    ASDUEventWriteHandler handler(writer, prefer8BitQualifiers);
     this->storage.Write(handler);
     // all selected events were written?
     return this->storage.NumSelected() == 0;

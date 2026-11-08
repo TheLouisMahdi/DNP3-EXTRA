@@ -42,6 +42,11 @@ public:
     {
     }
 
+    uint16_t FirstIndex() const override
+    {
+        return this->iterator.CurrentValue()->index;
+    }
+
     virtual uint16_t WriteSome(IEventWriter<typename T::meas_t>& writer) override;
 
 private:

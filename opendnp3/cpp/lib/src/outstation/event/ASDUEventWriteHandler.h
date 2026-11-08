@@ -33,7 +33,10 @@ class ASDUEventWriteHandler final : public IEventWriteHandler, private Uncopyabl
 {
 
 public:
-    explicit ASDUEventWriteHandler(const HeaderWriter& writer) : writer(writer) {}
+    explicit ASDUEventWriteHandler(const HeaderWriter& writer, bool prefer8BitQualifiers = false)
+        : writer(writer), prefer8BitQualifiers(prefer8BitQualifiers)
+    {
+    }
 
     uint16_t Write(GroupVariation variation, const BinaryCommandEvent& first,
                    IEventCollection<BinaryCommandEvent>& items) override;
@@ -69,6 +72,7 @@ public:
                    IEventCollection<SecurityStat>& items) override;
 private:
     HeaderWriter writer;
+    const bool prefer8BitQualifiers;
 };
 
 } // namespace opendnp3

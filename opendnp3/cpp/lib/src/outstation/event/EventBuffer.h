@@ -45,7 +45,7 @@ class EventBuffer final : public IEventReceiver, public IEventSelector, public I
 {
 
 public:
-    explicit EventBuffer(const EventBufferConfig& config);
+    explicit EventBuffer(const EventBufferConfig& config, bool prefer8BitQualifiers = false);
 
     // ------- IEventReceiver ------
 
@@ -94,6 +94,7 @@ private:
     bool overflow = false;
     EventStorage storage;
     const uint16_t securityCapacity;
+    const bool prefer8BitQualifiers;
 
     IINField SelectMaxCount(GroupVariation gv, uint32_t maximum);
 
