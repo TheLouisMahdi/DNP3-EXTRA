@@ -42,7 +42,7 @@ public:
     virtual PriStateBase& OnTimeout(LinkContext&);
 
     // transmission events to handle
-    virtual PriStateBase& TrySendUnconfirmed(LinkContext&, ITransportSegment& segments);
+    virtual PriStateBase& TrySendData(LinkContext&, ITransportSegment& segments);
     virtual PriStateBase& TrySendRequestLinkStatus(LinkContext&);
 
     // every concrete state implements this for logging purposes
@@ -54,7 +54,7 @@ class PLLS_Idle final : public PriStateBase
 {
     MACRO_STATE_SINGLETON_INSTANCE(PLLS_Idle);
 
-    PriStateBase& TrySendUnconfirmed(LinkContext&, ITransportSegment& segments) override;
+    PriStateBase& TrySendData(LinkContext&, ITransportSegment& segments) override;
     PriStateBase& TrySendRequestLinkStatus(LinkContext&) override;
 };
 
@@ -67,6 +67,21 @@ class PLLS_SendUnconfirmedTransmitWait final : public PriStateBase
     MACRO_STATE_SINGLETON_INSTANCE(PLLS_SendUnconfirmedTransmitWait);
 
     virtual PriStateBase& OnTxReady(LinkContext& ctx) override;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+// Waiting for a confirmed data or reset transaction
+/////////////////////////////////////////////////////////////////////////////
+
+class PLLS_ConfirmedWait final : public PriStateBase
+{
+    MACRO_STATE_SINGLETON_INSTANCE(PLLS_ConfirmedWait);
+
+    PriStateBase& OnAck(LinkContext&, bool receiveBuffFull) override;
+    PriStateBase& OnNack(LinkContext&, bool receiveBuffFull) override;
+    PriStateBase& OnNotSupported(LinkContext&, bool receiveBuffFull) override;
+    PriStateBase& OnTxReady(LinkContext&) override;
+    PriStateBase& OnTimeout(LinkContext&) override;
 };
 
 /////////////////////////////////////////////////////////////////////////////

@@ -112,6 +112,11 @@ void LinkSession::BeginTransmit(const ser4cpp::rseq_t& buffer, ILinkSession& /*s
     this->channel->BeginWrite(buffer);
 }
 
+void LinkSession::OnLinkTransmitFailure()
+{
+    this->channel->executor->post([self = shared_from_this()]() { self->ShutdownImpl(); });
+}
+
 bool LinkSession::OnFrame(const LinkHeaderFields& header, const ser4cpp::rseq_t& userdata)
 {
     if (this->stack)

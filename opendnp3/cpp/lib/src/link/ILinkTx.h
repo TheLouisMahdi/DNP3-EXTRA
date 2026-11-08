@@ -39,6 +39,8 @@ public:
      * Begin transmission of a frame. Callback happens OFF the call stack (via executor)
      */
     virtual void BeginTransmit(const ser4cpp::rseq_t& buffer, ILinkSession& context) = 0;
+    /// Retire the channel so the upper layers observe failure through lower-layer-down.
+    virtual void OnLinkTransmitFailure() {}
 };
 
 } // namespace opendnp3

@@ -36,6 +36,7 @@ public:
     virtual const Addresses& GetAddresses() const = 0;
 
     virtual bool HasValue() const = 0;
+    virtual bool IsMultiFrame() const { return false; }
 
     // Read the current segment with a specified max size
     virtual ser4cpp::rseq_t GetSegment() = 0;

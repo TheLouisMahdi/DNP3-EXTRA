@@ -24,6 +24,8 @@
 #include "link/PriLinkLayerStates.h"
 #include "link/SecLinkLayerStates.h"
 
+#include <stdexcept>
+
 namespace opendnp3
 {
 
@@ -48,6 +50,15 @@ LinkContext::LinkContext(const Logger& logger,
       upper(std::move(upper)),
       pSession(&session)
 {
+    if (config.NumRetries > 5)
+        throw std::invalid_argument("Link retries must be in the range 0..5");
+    if (config.ConfirmMode != LinkConfirmMode::Never)
+    {
+        if (config.respondToAnySource)
+            throw std::invalid_argument("Confirmed link transmission requires a configured peer");
+        if (config.Timeout <= TimeDuration::Zero() || config.Timeout == TimeDuration::Max())
+            throw std::invalid_argument("Confirmed link timeout must be positive and finite");
+    }
 }
 
 std::shared_ptr<LinkContext> LinkContext::Create(const Logger& logger,
@@ -87,6 +98,9 @@ bool LinkContext::OnLowerLayerDown()
     }
 
     isOnline = false;
+    linkFailed = false;
+    remoteReset = false;
+    confirmedFrame = ser4cpp::rseq_t();
     keepAliveTimeout = false;
     pSegments = nullptr;
     txMode = LinkTransmitMode::Idle;
@@ -113,6 +127,9 @@ bool LinkContext::SetTxSegment(ITransportSegment& segments)
         return false;
     }
 
+    if (linkFailed)
+        return false;
+
     if (this->pSegments)
     {
         SIMPLE_LOG_BLOCK(this->logger, flags::ERR, "Already transmitting a segment");
@@ -125,6 +142,9 @@ bool LinkContext::SetTxSegment(ITransportSegment& segments)
 
 bool LinkContext::OnTxReady()
 {
+    if (linkFailed)
+        return false;
+
     if (this->txMode == LinkTransmitMode::Idle)
     {
         SIMPLE_LOG_BLOCK(this->logger, flags::ERR, "Unknown transmission callback");
@@ -158,6 +178,119 @@ ser4cpp::rseq_t LinkContext::FormatPrimaryBufferWithUnconfirmed(const Addresses&
         = LinkFrame::FormatUnconfirmedUserData(buffer, config.IsMaster, addr.destination, addr.source, tpdu, &logger);
     FORMAT_HEX_BLOCK(logger, flags::LINK_TX_HEX, output, 10, 18);
     return output;
+}
+
+bool LinkContext::ShouldConfirm(const ITransportSegment& segments) const
+{
+    const auto& addresses = segments.GetAddresses();
+    return !addresses.IsBroadcast() && addresses.destination != LinkSelfAddress
+        && (config.ConfirmMode == LinkConfirmMode::Always
+            || (config.ConfirmMode == LinkConfirmMode::MultiFrame && segments.IsMultiFrame()));
+}
+
+void LinkContext::BeginConfirmed(const Addresses& addresses)
+{
+    if (confirmedAddresses != addresses)
+    {
+        confirmedAddresses = addresses;
+        remoteReset = false;
+    }
+    QueueConfirmedFrame();
+}
+
+void LinkContext::QueueConfirmedFrame()
+{
+    auto buffer = priTxBuffer.as_wseq();
+    if (remoteReset)
+    {
+        confirmedFrame = LinkFrame::FormatConfirmedUserData(buffer, config.IsMaster, writeFCB,
+            confirmedAddresses.destination, confirmedAddresses.source, pSegments->GetSegment(), &logger);
+    }
+    else
+    {
+        confirmedFrame = LinkFrame::FormatResetLinkStates(buffer, config.IsMaster,
+            confirmedAddresses.destination, confirmedAddresses.source, &logger);
+    }
+    FORMAT_HEX_BLOCK(logger, flags::LINK_TX_HEX, confirmedFrame, 10, 18);
+    confirmedRetries = config.NumRetries;
+    earlyConfirmedResponse = ConfirmedResponse::None;
+    confirmedWriteComplete = false;
+    QueueTransmit(confirmedFrame, true);
+}
+
+bool LinkContext::OnConfirmedResponse(bool accepted)
+{
+    if (confirmedWriteComplete)
+        return FinishConfirmedFrame(accepted);
+
+    if (txMode == LinkTransmitMode::Primary && !pendingPriTx.is_set()
+        && earlyConfirmedResponse == ConfirmedResponse::None)
+        earlyConfirmedResponse = accepted ? ConfirmedResponse::Accepted : ConfirmedResponse::Rejected;
+
+    return true;
+}
+
+bool LinkContext::OnConfirmedWriteComplete()
+{
+    confirmedWriteComplete = true;
+    if (earlyConfirmedResponse != ConfirmedResponse::None)
+        return FinishConfirmedFrame(earlyConfirmedResponse == ConfirmedResponse::Accepted);
+
+    StartResponseTimer();
+    return true;
+}
+
+bool LinkContext::RetryConfirmed()
+{
+    if (confirmedRetries == 0)
+    {
+        FailConfirmed();
+        return false;
+    }
+
+    --confirmedRetries;
+    earlyConfirmedResponse = ConfirmedResponse::None;
+    confirmedWriteComplete = false;
+    FORMAT_HEX_BLOCK(logger, flags::LINK_TX_HEX, confirmedFrame, 10, 18);
+    QueueTransmit(confirmedFrame, true);
+    return true;
+}
+
+bool LinkContext::FinishConfirmedFrame(bool accepted)
+{
+    CancelTimer();
+    if (!accepted)
+    {
+        FailConfirmed();
+        return false;
+    }
+
+    if (!remoteReset)
+    {
+        remoteReset = true;
+        writeFCB = true;
+    }
+    else
+    {
+        writeFCB = !writeFCB;
+        if (!pSegments->Advance())
+        {
+            CompleteSendOperation();
+            return false;
+        }
+    }
+
+    QueueConfirmedFrame();
+    return true;
+}
+
+void LinkContext::FailConfirmed()
+{
+    SIMPLE_LOG_BLOCK(logger, flags::WARN, "Confirmed link transaction failed");
+    linkFailed = true;
+    pSegments = nullptr;
+    keepAliveTimer.cancel();
+    linktx->OnLinkTransmitFailure();
 }
 
 void LinkContext::QueueTransmit(const ser4cpp::rseq_t& buffer, bool primary)
@@ -222,6 +355,9 @@ void LinkContext::CompleteSendOperation()
 
 void LinkContext::TryStartTransmission()
 {
+    if (!isOnline || linkFailed || txMode == LinkTransmitMode::Primary || pendingPriTx.is_set())
+        return;
+
     if (this->keepAliveTimeout)
     {
         this->pPriState = &pPriState->TrySendRequestLinkStatus(*this);
@@ -229,7 +365,7 @@ void LinkContext::TryStartTransmission()
 
     if (this->pSegments)
     {
-        this->pPriState = &pPriState->TrySendUnconfirmed(*this, *pSegments);
+        this->pPriState = &pPriState->TrySendData(*this, *pSegments);
     }
 }
 
@@ -315,6 +451,9 @@ bool LinkContext::OnFrame(const LinkHeaderFields& header, const ser4cpp::rseq_t&
         return false;
     }
 
+    if (linkFailed)
+        return false;
+
     auto addresses = header.addresses;
     const bool selfAddressed = addresses.destination == LinkSelfAddress;
     const bool destinationAllowed = selfAddressed ? config.acceptSelfAddress
@@ -345,6 +484,15 @@ bool LinkContext::OnFrame(const LinkHeaderFields& header, const ser4cpp::rseq_t&
     {
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Received invalid function (%s) with broadcast destination address",
                             LinkFunctionSpec::to_string(header.func));
+        ++statistics.numUnexpectedFrame;
+        return false;
+    }
+
+    if (pPriState == &PLLS_ConfirmedWait::Instance()
+        && (header.func == LinkFunction::SEC_ACK || header.func == LinkFunction::SEC_NACK
+            || header.func == LinkFunction::SEC_LINK_STATUS || header.func == LinkFunction::SEC_NOT_SUPPORTED)
+        && header.addresses != confirmedAddresses.Reverse())
+    {
         ++statistics.numUnexpectedFrame;
         return false;
     }

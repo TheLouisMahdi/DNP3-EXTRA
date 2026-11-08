@@ -109,6 +109,10 @@ SecStateBase& SLLS_Reset::OnConfirmedUserData(
         SIMPLE_LOG_BLOCK(ctx.logger, flags::WARN, "ConfirmedUserData ignored: unexpected frame count bit (FCB)");
     }
 
+    // A broadcast queues no ACK, so there is no secondary write to wait for.
+    if (isBroadcast)
+        return *this;
+
     return SLLS_TransmitWaitReset::Instance();
 }
 

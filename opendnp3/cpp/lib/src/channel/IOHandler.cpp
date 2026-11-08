@@ -50,8 +50,13 @@ void IOHandler::Shutdown()
 
 void IOHandler::CloseForSecurity()
 {
+    if (channel && channel->IsTCP()) CloseForLinkFailure();
+}
+
+void IOHandler::CloseForLinkFailure()
+{
     const auto active = channel;
-    if (!active || !active->IsTCP()) return;
+    if (!active) return;
     active->executor->post([self = shared_from_this(), active]() {
         if (self->isShutdown || self->channel != active) return;
         self->Reset(); // Native shutdown notifies lower-layer-down; buffers follow existing I/O ownership.

@@ -90,6 +90,12 @@ public:
     // --- helpers for formatting user data messages ---
     ser4cpp::rseq_t FormatPrimaryBufferWithUnconfirmed(const Addresses& addr, const ser4cpp::rseq_t& tpdu);
 
+    bool ShouldConfirm(const ITransportSegment& segments) const;
+    void BeginConfirmed(const Addresses& addresses);
+    bool OnConfirmedResponse(bool accepted);
+    bool OnConfirmedWriteComplete();
+    bool RetryConfirmed();
+
     // --- Helpers for queueing frames ---
     void QueueAck(uint16_t destination);
     void QueueLinkStatus(uint16_t destination);
@@ -143,6 +149,22 @@ public:
     const std::shared_ptr<IUpperLayer> upper;
 
     ILinkSession* pSession;
+
+private:
+    enum class ConfirmedResponse : uint8_t { None, Accepted, Rejected };
+
+    void QueueConfirmedFrame();
+    bool FinishConfirmedFrame(bool accepted);
+    void FailConfirmed();
+
+    Addresses confirmedAddresses;
+    ser4cpp::rseq_t confirmedFrame;
+    ConfirmedResponse earlyConfirmedResponse = ConfirmedResponse::None;
+    uint8_t confirmedRetries = 0;
+    bool remoteReset = false;
+    bool writeFCB = true;
+    bool confirmedWriteComplete = false;
+    bool linkFailed = false;
 };
 
 } // namespace opendnp3

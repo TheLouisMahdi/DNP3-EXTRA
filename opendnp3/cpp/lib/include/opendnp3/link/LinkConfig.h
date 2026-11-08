@@ -26,9 +26,15 @@
 namespace opendnp3
 {
 
-/**
-    Configuration for the dnp3 link layer
-*/
+/// Policy for outbound link-layer user data confirmations.
+enum class LinkConfirmMode : uint8_t
+{
+    Never,
+    Always,
+    MultiFrame
+};
+
+/// Configuration for the DNP3 link layer.
 struct LinkConfig
 {
     LinkConfig() = delete;
@@ -85,6 +91,12 @@ struct LinkConfig
     /// the interval for keep-alive messages (link status requests)
     /// if set to TimeDuration::Max(), the keep-alive is disabled
     TimeDuration KeepAliveTimeout;
+
+    /// Applies to outbound unicast user data.
+    LinkConfirmMode ConfirmMode = LinkConfirmMode::Never;
+
+    /// Additional attempts per confirmed link transaction, in the range 0..5.
+    uint8_t NumRetries = 0;
 
     /// Accept the commissioning destination 0xFFFC as the local address.
     /// Enable on only one device on a shared link during commissioning.

@@ -66,9 +66,11 @@ bool TransportLayer::BeginTransmit(const Message& message)
 
     isSending = true;
     transmitter.Configure(message);
-    lower->Send(transmitter);
+    if (lower->Send(transmitter))
+        return true;
 
-    return true;
+    isSending = false;
+    return false;
 }
 
 ///////////////////////////////////////

@@ -103,6 +103,11 @@ public:
         this->iohandler->BeginTransmit(shared_from_this(), buffer);
     }
 
+    void OnLinkTransmitFailure() override
+    {
+        this->iohandler->CloseForLinkFailure();
+    }
+
     // --------- Implement IMasterOperations ---------
 
     void SetLogFilters(const opendnp3::LogLevels& filters) override;

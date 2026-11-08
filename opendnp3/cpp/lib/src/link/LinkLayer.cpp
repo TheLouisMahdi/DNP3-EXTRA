@@ -48,14 +48,10 @@ void LinkLayer::SetRouter(ILinkTx& router)
 
 bool LinkLayer::Send(ITransportSegment& segments)
 {
-    if (!ctx->isOnline)
+    if (!ctx->SetTxSegment(segments))
         return false;
 
-    if (ctx->SetTxSegment(segments))
-    {
-        ctx->TryStartTransmission();
-    }
-
+    ctx->TryStartTransmission();
     return true;
 }
 

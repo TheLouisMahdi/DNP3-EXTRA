@@ -54,6 +54,11 @@ public:
 
     virtual bool HasValue() const override;
 
+    bool IsMultiFrame() const override
+    {
+        return this->message.payload.length() > MAX_TPDU_PAYLOAD;
+    }
+
     virtual ser4cpp::rseq_t GetSegment() override;
 
     virtual bool Advance() override;

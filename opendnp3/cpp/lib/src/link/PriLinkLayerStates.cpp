@@ -71,7 +71,7 @@ PriStateBase& PriStateBase::OnTimeout(LinkContext& ctx)
     return *this;
 }
 
-PriStateBase& PriStateBase::TrySendUnconfirmed(LinkContext& /*ctx*/, ITransportSegment& /*unused*/)
+PriStateBase& PriStateBase::TrySendData(LinkContext& /*ctx*/, ITransportSegment& /*unused*/)
 {
     return *this;
 }
@@ -87,8 +87,14 @@ PriStateBase& PriStateBase::TrySendRequestLinkStatus(LinkContext& /*unused*/)
 
 PLLS_Idle PLLS_Idle::instance;
 
-PriStateBase& PLLS_Idle::TrySendUnconfirmed(LinkContext& ctx, ITransportSegment& segments)
+PriStateBase& PLLS_Idle::TrySendData(LinkContext& ctx, ITransportSegment& segments)
 {
+    if (ctx.ShouldConfirm(segments))
+    {
+        ctx.BeginConfirmed(segments.GetAddresses());
+        return PLLS_ConfirmedWait::Instance();
+    }
+
     auto first = segments.GetSegment();
     auto output = ctx.FormatPrimaryBufferWithUnconfirmed(segments.GetAddresses(), first);
     ctx.QueueTransmit(output, true);
@@ -122,6 +128,52 @@ PriStateBase& PLLS_SendUnconfirmedTransmitWait::OnTxReady(LinkContext& ctx)
     // we're done
 
     ctx.CompleteSendOperation();
+    return PLLS_Idle::Instance();
+}
+
+////////////////////////////////////////////////////////
+// Class PLLS_ConfirmedWait
+////////////////////////////////////////////////////////
+
+PLLS_ConfirmedWait PLLS_ConfirmedWait::instance;
+
+PriStateBase& PLLS_ConfirmedWait::OnAck(LinkContext& ctx, bool receiveBuffFull)
+{
+    if (ctx.OnConfirmedResponse(!receiveBuffFull))
+        return *this;
+
+    return PLLS_Idle::Instance();
+}
+
+PriStateBase& PLLS_ConfirmedWait::OnNack(LinkContext& ctx, bool)
+{
+    if (ctx.OnConfirmedResponse(false))
+        return *this;
+
+    return PLLS_Idle::Instance();
+}
+
+PriStateBase& PLLS_ConfirmedWait::OnNotSupported(LinkContext& ctx, bool)
+{
+    if (ctx.OnConfirmedResponse(false))
+        return *this;
+
+    return PLLS_Idle::Instance();
+}
+
+PriStateBase& PLLS_ConfirmedWait::OnTxReady(LinkContext& ctx)
+{
+    if (ctx.OnConfirmedWriteComplete())
+        return *this;
+
+    return PLLS_Idle::Instance();
+}
+
+PriStateBase& PLLS_ConfirmedWait::OnTimeout(LinkContext& ctx)
+{
+    if (ctx.RetryConfirmed())
+        return *this;
+
     return PLLS_Idle::Instance();
 }
 
