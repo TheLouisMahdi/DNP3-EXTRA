@@ -10,17 +10,13 @@ The native paths cover measurements and events, controls, time synchronization, 
 
 ## Implementation progress
 
-Reviewed source snapshot [`eb45756`](https://github.com/TheLouisMahdi/DNP3-EXTRA/commit/eb45756fb9b7f4e265091280067c8f9285fb1477).
+![DNP3-EXTRA PDF-based requirement progress](DNP3-EXTRA-progress.svg)
 
-![DNP3-EXTRA development progress](DNP3-EXTRA-progress.svg)
+The progress baseline is **all selected requirements from both supplied PDFs**, not a count of recent commits: **69 Device Profile object/function rows** (including the selected group, variation, function and qualifier sets), **36 security addendum parameters**, and **14 Device Profile runtime configuration groups**. Each of the 119 tracked IDs has an individual status tile.
 
-| Core RTU Host milestone | Progress | Basis |
-| --- | --- | --- |
-| Source slices landed | `■■■■` **4/4** | Confirmed link, application timing and CONFIRM, event qualifiers, diagnostic CLI |
-| Slices with matching Windows acceptance evidence recorded | `□□□□` **0/4** | Unified Windows acceptance is deferred for this source snapshot |
-| Overall Host requirements | **Current consolidated audit pending** | 119 tracked IDs, including open and product-dependent subcases |
+[Full per-ID object, function, qualifier and parameter inventory](DNP3_PDF_COVERAGE.md) | [Machine-readable coverage](DNP3_PDF_COVERAGE.csv) | [Execution ledger](EXECUTION_PHASE_STATUS.md)
 
-The bars count only the four Core RTU Host slices. See the [execution ledger](EXECUTION_PHASE_STATUS.md#core-rtu-host-implementation) for commits and remaining gates. [Previous dashboard](https://github.com/TheLouisMahdi/DNP3-EXTRA/blob/5754b7b3e4e2e157771dae2008601a0456adc2f6/DNP3_PDD_PLAN/PROGRESS.md)
+**Evidence warning:** colors represent *recorded source-review assessments from different revisions*, not verified completion on current `develop`. Profile and Security are based on [pinned historical matrices](https://github.com/TheLouisMahdi/DNP3-EXTRA/tree/b94961d4ebd14196be7911d6fc132b6e6c9cc251/DNP3_PDD_PLAN); CFG entries use the [Core RTU Host source review](https://github.com/TheLouisMahdi/DNP3-EXTRA/commit/eb45756fb9b7f4e265091280067c8f9285fb1477). Current full acceptance remains pending a consolidated requirement/subcase audit and matching Windows/target evidence. G70 file transfer is a separate requested expansion outside the 119-ID scope.
 
 ## Build and test
 Use installed compatible CMake, MSVC, Python 3 and OpenSSL 3 dependencies. Reuse the existing toolchain/cache configuration when available. CMake fetches pinned ASIO/executor/serialization dependencies. Commands below build the native library and diagnostic tests from the repository root.

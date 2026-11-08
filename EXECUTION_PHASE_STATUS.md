@@ -1,5 +1,13 @@
 # DNP3-EXTRA execution phase ledger
 
+## Overall progress measured against the two PDF sources
+
+The README graphic now uses **119 tracked PDF-defined requirement IDs**, rather than the four recent Core RTU source slices: 69 selected Device Profile object/function rows, 36 minimum-security addendum parameters and 14 selected Device Profile runtime/configuration groups. Their full Group/Variation, request/response FC, qualifier and security/configuration constraints are captured in [the detailed inventory](DNP3_PDF_COVERAGE.md) and [CSV](DNP3_PDF_COVERAGE.csv).
+
+**Recorded status source:** Profile and Security matrices at historical revision `b94961d4ebd14196be7911d6fc132b6e6c9cc251`; CFG entries from reviewed source `eb45756fb9b7f4e265091280067c8f9285fb1477`. The current `develop` acceptance matrix has **not** been reconciled at the full requirement/subcase level. The graphical segments are historical/static-review categories, **not a current compliance or passing-test percentage**. Every subcase in a grouped ID must be completed before the whole row can be considered complete. Keep G70 outside this 119-ID count.
+
+Future maintenance must update the per-ID inventory/CSV, SVG, README and this ledger consistently after source review and actual matching evidence. Historical VERIFIED results must retain their tested revision. A documentation-only commit does not advance source implementation or test evidence.
+
 ## Core RTU Host implementation
 
 Reviewed source snapshot [`eb45756`](https://github.com/TheLouisMahdi/DNP3-EXTRA/commit/eb45756fb9b7f4e265091280067c8f9285fb1477). All four source slices are on `develop`. The ledger has no matching Windows acceptance record for these slices at this snapshot.
