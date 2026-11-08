@@ -9,7 +9,7 @@ namespace diagnostic
 struct Options
 {
     std::string role, host = "127.0.0.1", auth = "compat", profile, credentials;
-    std::string ca, cert, key, peerName, tlsVersion = "both", ciphers, suites, directory;
+    std::string ca, cert, key, peerName, tlsVersion = "both", ciphers, suites, directory, crl;
     uint16_t port = 20000, local = 0, remote = 0, association = 7, user = 2;
     uint32_t responseMs = 2000, replyMs = 2000, renewalMs = 900000, messageCount = 1000;
     bool aggressive = false, trustedTime = false, testOnly = false, denyControls = false;

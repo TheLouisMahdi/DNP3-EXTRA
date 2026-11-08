@@ -97,6 +97,8 @@ struct TLSConfig
     std::string peerName;
     // TLS 1.3 uses its own cipher-suite namespace (RFC 8446).
     std::string cipherSuites;
+    /// Optional PEM bundle of issuer CRLs. When configured, peer-chain checks fail closed.
+    std::string crlFilePath;
 };
 
 } // namespace opendnp3

@@ -222,3 +222,16 @@ The Windows x64 release archive contains the tested executable, its two OpenSSL
 runtime DLLs, this README, process driver, licenses and `REVISION.txt` (Git SHA,
 binary hashes and exact source file manifest). It contains no credentials or
 certificates. Extract the archive before launching both terminals.
+
+### Optional TLS handshake CRL checks (implementation pending Windows verification)
+
+Supply `--crl <issuer-crls.pem>` to each TLS role together with its CA bundle.
+When configured, OpenSSL checks the peer certificate chain against the issuer
+CRLs. An unreadable CRL prevents channel creation; missing, expired or revoked
+issuer CRLs should cause the TLS handshake to fail closed. The CRL bundle is
+loaded at TLS context creation; changes require a new context. Existing
+connections are not rechecked. Periodic renewal, revocation interval and
+already-open connection handling remain product decisions (SEC-T1-15).
+
+This feature has not yet been built or tested on Windows. See
+`WINDOWS_TEST_TITLES.md` for the deferred test plan.

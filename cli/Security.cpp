@@ -316,6 +316,7 @@ Options ParseOptions(int argc, char** argv)
         else if (option == "--profile") o.profile = value;
         else if (option == "--credentials") o.credentials = value;
         else if (option == "--ca") o.ca = value;
+        else if (option == "--crl") { if (value.empty()) throw std::runtime_error("--crl requires a PEM path"); o.crl = value; }
         else if (option == "--cert") o.cert = value;
         else if (option == "--key") o.key = value;
         else if (option == "--peer-name") o.peerName = value;
@@ -334,6 +335,8 @@ Options ParseOptions(int argc, char** argv)
     // application/task timeout and still cannot be zero.
     if (!o.port || !o.user || !o.responseMs || !o.renewalMs || !o.messageCount) throw std::runtime_error("Zero port/user/timeout/count is unsupported");
     if (!o.profile.empty() && o.host != "127.0.0.1") throw std::runtime_error("TEST credential profiles require localhost 127.0.0.1");
+    if (!o.crl.empty() && (!o.tls || (o.role != "master" && o.role != "outstation")))
+        throw std::runtime_error("--crl requires a TLS master or outstation");
     if (o.tls && !explicitPort) o.port = 19999;
     return o;
 }

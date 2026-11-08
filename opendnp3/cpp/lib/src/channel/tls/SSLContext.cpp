@@ -20,6 +20,7 @@
 
 #include "channel/tls/SSLContext.h"
 #include <openssl/x509v3.h>
+#include <openssl/x509_vfy.h>
 
 #include "logging/LogMacros.h"
 
@@ -116,6 +117,19 @@ std::error_code SSLContext::ApplyConfig(const TLSConfig& config, bool server, st
         FORMAT_LOG_BLOCK(logger, flags::ERR, "Error calling ssl::context::load_verify_file(..): %s",
                          ec.message().c_str());
         return ec;
+    }
+
+    if (!config.crlFilePath.empty())
+    {
+        auto* store = SSL_CTX_get_cert_store(value.native_handle());
+        auto* lookup = store ? X509_STORE_add_lookup(store, X509_LOOKUP_file()) : nullptr;
+        if (!lookup || X509_load_crl_file(lookup, config.crlFilePath.c_str(), X509_FILETYPE_PEM) <= 0
+            || X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) != 1)
+        {
+            ec = std::make_error_code(std::errc::invalid_argument);
+            SIMPLE_LOG_BLOCK(logger, flags::ERR, "Unable to load TLS CRL bundle");
+            return ec;
+        }
     }
 
     // the certificate we present to the server + the private key we use are placed into the same file

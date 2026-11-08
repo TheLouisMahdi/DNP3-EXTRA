@@ -440,6 +440,7 @@ std::shared_ptr<IChannel> MakeChannel(DNP3Manager& manager, const diagnostic::Op
         if (o.tlsVersion != "1.2" && o.tlsVersion != "1.3" && o.tlsVersion != "both") throw std::runtime_error("TLS version must be 1.2/1.3/both");
         TLSConfig config(o.ca, o.cert, o.key, false, false, o.tlsVersion != "1.3", o.tlsVersion != "1.2", o.ciphers);
         config.peerName = o.peerName; config.cipherSuites = o.suites;
+        config.crlFilePath = o.crl;
         if (master) return manager.AddTLSClient("cli-master", logs, ChannelRetry::Default(), {IPEndpoint(o.host, o.port)}, "0.0.0.0", config, observer);
         return manager.AddTLSServer("cli-outstation", logs, ServerAcceptMode::CloseExisting, IPEndpoint(o.host, o.port), config, observer);
 #else
