@@ -12,6 +12,8 @@ The native paths cover measurements and events, controls, time synchronization, 
 
 Reviewed source snapshot [`eb45756`](https://github.com/TheLouisMahdi/DNP3-EXTRA/commit/eb45756fb9b7f4e265091280067c8f9285fb1477).
 
+![DNP3-EXTRA development progress](DNP3-EXTRA-progress.svg)
+
 | Core RTU Host milestone | Progress | Basis |
 | --- | --- | --- |
 | Source slices landed | `■■■■` **4/4** | Confirmed link, application timing and CONFIRM, event qualifiers, diagnostic CLI |

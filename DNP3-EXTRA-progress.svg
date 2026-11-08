@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="545" viewBox="0 0 1280 545" role="img" aria-labelledby="title desc">
+<title id="title">DNP3-EXTRA implementation progress</title>
+<desc id="desc">The upstream OpenDNP3 3.1.2 repository is the zero baseline for custom development. Four of four recent Core RTU Host source slices are landed, but zero of those four have matching Windows acceptance evidence recorded for the current source snapshot. There are 119 tracked requirements; overall completion is pending a consolidated audit. Group 70 is tracked separately.</desc>
+<defs>
+  <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#101b23"/>
+    <stop offset=".56" stop-color="#0a131b"/>
+    <stop offset="1" stop-color="#111922"/>
+  </linearGradient>
+  <linearGradient id="completed" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#55e5aa"/>
+    <stop offset="1" stop-color="#28b9c1"/>
+  </linearGradient>
+  <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#4cd8a9"/>
+    <stop offset="1" stop-color="#42bcd5"/>
+  </linearGradient>
+  <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
+    <path d="M34 0H0V34" stroke="#29404d" stroke-opacity=".20" fill="none" stroke-width="1"/>
+  </pattern>
+  <filter id="glow" x="-20%" y="-100%" width="140%" height="300%">
+    <feGaussianBlur stdDeviation="6"/>
+  </filter>
+</defs>
+<rect x="1" y="1" width="1278" height="543" rx="26" fill="url(#background)" stroke="#29404b" stroke-width="2"/>
+<rect x="2" y="2" width="1276" height="541" rx="25" fill="url(#grid)" opacity=".55"/>
+
+<g font-family="Segoe UI, Inter, Arial, sans-serif">
+  <text x="60" y="53" font-family="Consolas, Menlo, monospace" font-size="15" font-weight="700" letter-spacing="2" fill="#70dabc">DNP3 / ENGINEERING STATUS</text>
+  <rect x="1026" y="25" width="198" height="38" rx="19" fill="#142a30" stroke="#31565a"/>
+  <circle cx="1049" cy="44" r="5" fill="#60dab1"/>
+  <text x="1063" y="49" font-family="Consolas, monospace" font-size="15" fill="#c3e9e3">source / eb45756</text>
+  <text x="60" y="109" font-size="40" font-weight="750" fill="#f1f8f9">From OpenDNP3 to DNP3-EXTRA</text>
+  <text x="60" y="138" font-size="17" fill="#a5bdc7">Selected RTU Device Profile + minimum security addendum / IEEE 1815-2012</text>
+
+  <!-- Baseline history track -->
+  <rect x="60" y="160" width="1164" height="70" rx="16" fill="#131f28" stroke="#28414d"/>
+  <rect x="78" y="173" width="240" height="43" rx="12" fill="#1d2933" stroke="#46535d"/>
+  <text x="94" y="190" font-family="Consolas, monospace" font-size="11" letter-spacing=".9" fill="#a8b8c2">ZERO / CUSTOM DEVELOPMENT</text>
+  <text x="94" y="207" font-size="17" font-weight="700" fill="#f1f8f9">OpenDNP3 3.1.2</text>
+
+  <path d="M333 195 H880" fill="none" stroke="#3f7f81" stroke-width="2" stroke-dasharray="6 9"/>
+  <path d="M865 188L880 195L865 202" fill="none" stroke="#62d7bd" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="507" y="182" font-family="Consolas, monospace" font-size="13" fill="#80bdb5" letter-spacing="1">CUSTOM IMPLEMENTATION</text>
+
+  <rect x="898" y="173" width="308" height="43" rx="12" fill="#14362f" stroke="#397f6c"/>
+  <circle cx="917" cy="194" r="6" fill="#63e2af"/>
+  <text x="932" y="201" font-size="20" font-weight="700" fill="#e1fff3">DNP3-EXTRA</text>
+
+  <!-- source progress -->
+  <text x="60" y="267" font-family="Consolas, monospace" font-size="16" letter-spacing="1.4" fill="#c8dcdf">CORE RTU HOST / SOURCE</text>
+  <text x="1224" y="267" text-anchor="end" font-family="Consolas, monospace" font-size="19" font-weight="700" fill="#63e2af">4 / 4 LANDED</text>
+  <rect x="60" y="280" width="1164" height="26" rx="12" fill="#263541"/>
+  <rect x="60" y="280" width="1164" height="26" rx="12" fill="url(#completed)" opacity=".25" filter="url(#glow)"/>
+
+<rect x="60.00" y="280" width="285.00" height="26" rx="8" fill="url(#completed)"/>
+<rect x="353.00" y="280" width="285.00" height="26" rx="8" fill="url(#completed)"/>
+<rect x="646.00" y="280" width="285.00" height="26" rx="8" fill="url(#completed)"/>
+<rect x="939.00" y="280" width="285.00" height="26" rx="8" fill="url(#completed)"/>
+<text x="202.50" y="330" font-size="15" fill="#badbd9" text-anchor="middle">Link confirm + retry</text>
+<text x="495.50" y="330" font-size="15" fill="#badbd9" text-anchor="middle">APDU timing + CONFIRM</text>
+<text x="788.50" y="330" font-size="15" fill="#badbd9" text-anchor="middle">Event Q17 / Q28</text>
+<text x="1081.50" y="330" font-size="15" fill="#badbd9" text-anchor="middle">Diagnostic CLI</text>
+
+  <!-- Acceptance progress -->
+  <text x="60" y="371" font-family="Consolas, monospace" font-size="16" letter-spacing="1.4" fill="#c8dcdf">MATCHING WINDOWS ACCEPTANCE</text>
+  <text x="1224" y="371" text-anchor="end" font-family="Consolas, monospace" font-size="19" font-weight="700" fill="#f0c887">0 / 4 RECORDED</text>
+  <rect x="60" y="384" width="1164" height="26" rx="12" fill="#17222c" stroke="#425661" stroke-width="1"/>
+
+<rect x="60.00" y="384" width="285.00" height="26" rx="8" fill="#1a2a34" stroke="#62737c" stroke-width="1.2" stroke-dasharray="5 5"/>
+<rect x="353.00" y="384" width="285.00" height="26" rx="8" fill="#1a2a34" stroke="#62737c" stroke-width="1.2" stroke-dasharray="5 5"/>
+<rect x="646.00" y="384" width="285.00" height="26" rx="8" fill="#1a2a34" stroke="#62737c" stroke-width="1.2" stroke-dasharray="5 5"/>
+<rect x="939.00" y="384" width="285.00" height="26" rx="8" fill="#1a2a34" stroke="#62737c" stroke-width="1.2" stroke-dasharray="5 5"/>
+
+  <text x="60" y="438" font-size="15" fill="#9ab5c0">These bars cover only the four recent Core RTU Host slices, not all project requirements.</text>
+
+  <!-- Requirements scope -->
+  <path d="M60 457 H1224" stroke="#31434d" stroke-width="1"/>
+  <text x="60" y="486" font-family="Consolas, monospace" font-size="17" font-weight="700" fill="#e4f0f3">119 TRACKED</text>
+  <text x="250" y="486" font-size="16" fill="#b2c9ce">69 Profile</text>
+  <circle cx="368" cy="481" r="3" fill="#536d78"/>
+  <text x="386" y="486" font-size="16" fill="#b2c9ce">36 Security</text>
+  <circle cx="527" cy="481" r="3" fill="#536d78"/>
+  <text x="545" y="486" font-size="16" fill="#b2c9ce">14 CFG</text>
+  <rect x="770" y="464" width="454" height="38" rx="10" fill="#282e2a" stroke="#5f6347"/>
+  <text x="997" y="488" text-anchor="middle" font-size="15" font-weight="650" fill="#e4d19b">OVERALL COMPLETION: AUDIT PENDING</text>
+
+  <text x="60" y="518" font-size="13" fill="#708e9c">G70 is tracked separately. Source presence is not a compliance or runtime verification claim.</text>
+</g>
+</svg>

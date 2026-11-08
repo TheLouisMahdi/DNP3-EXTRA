@@ -17,7 +17,7 @@ Core RTU Host source slices landed **4/4**. Slices with matching Windows accepta
 
 **Maintenance**
 
-Use the latest reviewed source commit for the snapshot. A documentation-only commit does not advance it. Count a slice as landed when its code is present on `develop`. Count a slice in the evidence row only after recording its executed Windows scenarios, results and tested SHA and verifying that the evidence covers the corresponding slice at the reviewed source snapshot. Record a focused regression when intervening source changes affect that evidence. Update the two README rows and this ledger together. Keep historical evidence with its original revision.
+Use the latest reviewed source commit for the snapshot. A documentation-only commit does not advance it. Count a slice as landed when its code is present on `develop`. Count a slice in the evidence row only after recording its executed Windows scenarios, results and tested SHA and verifying that the evidence covers the corresponding slice at the reviewed source snapshot. Record a focused regression when intervening source changes affect that evidence. Update the two README rows, the graphical progress snapshot (`DNP3-EXTRA-progress.svg`) and this ledger together. Keep historical evidence with its original revision. Never change the four-slice progress bars to represent overall 119-requirement completion.
 
 ## Historical execution phases A–E
 
