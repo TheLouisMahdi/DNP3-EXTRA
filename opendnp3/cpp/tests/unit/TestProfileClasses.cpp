@@ -109,6 +109,24 @@ TEST_CASE("ProfileClasses - ASSIGN_CLASS maps G60V1 to class 0 and rejects count
     REQUIRE(t.application->classAssignments.size() == 1);
 }
 
+TEST_CASE("ProfileClasses - ASSIGN_CLASS G1V0 accepts 8-bit start-stop",
+          "[profile-classes][b09]")
+{
+    OutstationTestObject t(OutstationConfig(),
+                           configure::by_count_of::binary_input(5));
+    t.application->supportsAssignClass = true;
+    t.LowerLayerUp();
+
+    // FC22: G60V3/Q06, then G1V0/Q00, points 1 through 3.
+    REQUIRE(Exchange(t, "C1 16 3C 03 06 01 00 00 01 03")
+            == "C1 81 80 00");
+
+    REQUIRE(t.application->classAssignments.size() == 1);
+    REQUIRE(t.application->classAssignments.front()
+            == std::make_tuple(AssignClassType::BinaryInput,
+                               PointClass::Class2, 1, 3));
+}
+
 TEST_CASE("ProfileClasses - ASSIGN_CLASS reports an incomplete trailing pair", "[profile-classes]")
 {
     OutstationTestObject t(OutstationConfig(), configure::by_count_of::binary_input(2));
