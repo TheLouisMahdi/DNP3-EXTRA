@@ -3,6 +3,7 @@
 #define OPENDNP3_AUTHENTICATIONSTATISTICS_H
 
 #include "opendnp3/auth/SecurityStatistic.h"
+#include "opendnp3/app/DNPTime.h"
 
 #include <memory>
 
@@ -16,6 +17,11 @@ public:
     // Synchronous occurrence notification. Copy into bounded storage only;
     // never transmit or reenter authentication. True means event accepted.
     virtual bool Report(SecurityStatistic statistic, uint32_t value, uint8_t flags) = 0;
+    virtual DNPTime CaptureOccurrenceTime() { return DNPTime(); }
+    virtual bool ReportAt(SecurityStatistic statistic, uint32_t value, uint8_t flags, const DNPTime&)
+    {
+        return Report(statistic, value, flags);
+    }
 };
 // One bounded, serialized runtime per association. No protocol engine, wire
 // publication, remote configuration, counter clearing or freezing.
@@ -60,7 +66,7 @@ public:
 
 private:
     static bool HasMaximum(SecurityStatistic statistic);
-    void Publish(SecurityStatistic statistic);
+    void Publish(SecurityStatistic statistic, const DNPTime* occurrence = nullptr);
     void Persist();
     const uint16_t association;
     const bool master;

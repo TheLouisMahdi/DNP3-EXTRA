@@ -66,8 +66,13 @@ void AuthenticationStatistics::Increment(SecurityStatistic statistic)
     if (values[n] - reported[n] >= reportingThresholds[n]) pendingReports |= uint32_t(1) << n;
     // Capped distance keeps an exceeded Max latched through uint32 rollover.
     if (HasMaximum(statistic) && maximumDistances[n] <= thresholds[n]) ++maximumDistances[n];
-    Publish(statistic); // Capture UTC before a potentially slow retention backend.
+    DNPTime occurrence;
+    if (reporter && ReportPending(statistic))
+    {
+        try { occurrence = reporter->CaptureOccurrenceTime(); } catch (...) {}
+    }
     Persist();
+    Publish(statistic, &occurrence);
     if (logger && (statistic == SecurityStatistic::UNEXPECTED_MESSAGES
                    || statistic == SecurityStatistic::AUTHORIZATION_FAILURES))
     {
@@ -144,14 +149,16 @@ void AuthenticationStatistics::SetReporter(IAuthenticationStatisticsReporter* va
     reportingThresholds = reportingThresholds_;
     // Do not poll old pending conditions or assign a new time to past occurrences.
 }
-void AuthenticationStatistics::Publish(SecurityStatistic statistic)
+void AuthenticationStatistics::Publish(SecurityStatistic statistic, const DNPTime* occurrence)
 {
     if (!reporter || !ReportPending(statistic)) return;
     const auto snapshot = Value(statistic);
     try
     {
-        if (reporter->Report(statistic, snapshot, continuous ? 0x01 : 0x41))
-            ReportGenerated(statistic, snapshot);
+        const uint8_t flags = continuous ? 0x01 : 0x41;
+        const bool accepted = occurrence ? reporter->ReportAt(statistic, snapshot, flags, *occurrence)
+                                         : reporter->Report(statistic, snapshot, flags);
+        if (accepted) ReportGenerated(statistic, snapshot);
     }
     catch (...) {} // Reporting cannot interrupt security accounting or rejection.
 }

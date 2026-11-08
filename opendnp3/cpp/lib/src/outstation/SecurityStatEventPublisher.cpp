@@ -22,10 +22,19 @@ SecurityStatEventPublisher::SecurityStatEventPublisher(const std::array<Security
 
 bool SecurityStatEventPublisher::Report(SecurityStatistic statistic, uint32_t value, uint8_t flags)
 {
+    return ReportAt(statistic, value, flags, CaptureOccurrenceTime());
+}
+
+DNPTime SecurityStatEventPublisher::CaptureOccurrenceTime()
+{
+    try { return clock.Now(); } catch (...) { return DNPTime(); }
+}
+
+bool SecurityStatEventPublisher::ReportAt(SecurityStatistic statistic, uint32_t value, uint8_t flags,
+                                          const DNPTime& time)
+{
     const auto index = static_cast<size_t>(statistic);
     if (index >= config.size()) return false;
-    DNPTime time;
-    try { time = clock.Now(); } catch (...) {} // Clock failure cannot inhibit untimed events (4.5.5).
     const auto& point = config[index];
     const auto clazz = point.clazz == PointClass::Class1 ? EventClass::EC1
                      : point.clazz == PointClass::Class2 ? EventClass::EC2 : EventClass::EC3;

@@ -18,6 +18,8 @@ public:
     SecurityStatEventPublisher(const std::array<SecurityStatConfig, 18>& config, IDnpTimeSource& clock,
                                IEventReceiver& receiver, std::function<void()> accepted);
     bool Report(SecurityStatistic statistic, uint32_t value, uint8_t flags) override;
+    DNPTime CaptureOccurrenceTime() override;
+    bool ReportAt(SecurityStatistic statistic, uint32_t value, uint8_t flags, const DNPTime& time) override;
 
 private:
     const std::array<SecurityStatConfig, 18> config;
