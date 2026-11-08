@@ -865,6 +865,8 @@ IINField OContext::HandleNonReadResponse(const ParsedRequest& request, HeaderWri
     case (FunctionCode::ENABLE_UNSOLICITED):
         return this->params.allowUnsolicited ? this->HandleEnableUnsolicited(objects, &writer)
                                              : IINField(IINBit::FUNC_NOT_SUPPORTED);
+    case (FunctionCode::GET_FILE_INFO):
+        return this->HandleFileInfo(request, writer);
     case (FunctionCode::IMMED_FREEZE):
         return this->HandleFreeze(objects);
     case (FunctionCode::FREEZE_CLEAR):
@@ -872,6 +874,64 @@ IINField OContext::HandleNonReadResponse(const ParsedRequest& request, HeaderWri
     default:
         return IINField(IINBit::FUNC_NOT_SUPPORTED);
     }
+}
+
+IINField OContext::HandleFileInfo(const ParsedRequest& request, HeaderWriter& writer)
+{
+    if (!params.fileInfo || params.authentication.mode != AuthenticationConfig::Mode::REQUIRED)
+        return IINBit::FUNC_NOT_SUPPORTED;
+
+    // The ordinary dispatcher reaches this function only after SA verification
+    // and authorization in REQUIRED mode. Broadcast dispatch has no file case.
+    class DescriptorRequest final : public IAPDUHandler
+    {
+    public:
+        FileDescriptor descriptor;
+        bool valid = false;
+
+        bool IsAllowed(uint32_t headerIndex, GroupVariation gv, QualifierCode qualifier) override
+        {
+            return headerIndex == 0 && gv == GroupVariation::Group70Var7
+                && qualifier == QualifierCode::FREE_FORMAT;
+        }
+
+        IINField ProcessHeader(const FreeFormatHeader&, const ICollection<FileDescriptor>& values) override
+        {
+            if (values.Count() != 1) return IINBit::PARAM_ERROR;
+            values.ForeachItem([this](const FileDescriptor& value) { descriptor = value; });
+            valid = descriptor.name.length() && !descriptor.type && !descriptor.fileSize
+                && !descriptor.creationTime.value && !descriptor.permissions;
+            return valid ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
+        }
+    } parsed;
+
+    const auto result = APDUParser::Parse(request.objects, parsed, nullptr);
+    if (result != ParseResult::OK) return IINFromParseResult(result);
+    if (!parsed.valid) return IINBit::PARAM_ERROR;
+
+    auto& response = parsed.descriptor;
+    FileInfo info;
+    try
+    {
+        if (!params.fileInfo->Lookup(request.addresses, response.name, response.name.length(), info))
+        {
+            FileCommandStatus missing;
+            missing.requestId = response.requestId;
+            missing.status = 3; // IEEE 1815-2012 4.4.18: file not found.
+            return writer.WriteFreeFormat(&missing, 1) ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
+        }
+    }
+    catch (...)
+    {
+        return IINBit::DEVICE_TROUBLE;
+    }
+    if (info.type > 1) return IINBit::DEVICE_TROUBLE;
+    response.type = info.type;
+    response.fileSize = info.size;
+    response.creationTime = info.creationTime;
+    response.permissions = info.permissions;
+    if (!response.IsValid()) return IINBit::DEVICE_TROUBLE;
+    return writer.WriteFreeFormat(&response, 1) ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
 }
 
 ser4cpp::Pair<IINField, AppControlField> OContext::HandleRead(const ser4cpp::rseq_t& objects, HeaderWriter& writer)

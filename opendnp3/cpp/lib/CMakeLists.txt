@@ -152,6 +152,7 @@ set(opendnp3_public_headers
     ./include/opendnp3/outstation/ICommandHandler.h
     ./include/opendnp3/outstation/IDnpTimeSource.h
     ./include/opendnp3/outstation/IOutstation.h
+    ./include/opendnp3/outstation/IFileInfoProvider.h
     ./include/opendnp3/outstation/IOutstationApplication.h
     ./include/opendnp3/outstation/IUpdateHandler.h
     ./include/opendnp3/outstation/MeasurementConfig.h

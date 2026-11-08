@@ -23,9 +23,12 @@
 #include "opendnp3/app/AppConstants.h"
 #include "opendnp3/auth/AuthenticationConfig.h"
 #include "opendnp3/app/ClassField.h"
+#include "opendnp3/outstation/IFileInfoProvider.h"
 #include "opendnp3/outstation/NumRetries.h"
 #include "opendnp3/outstation/StaticTypeBitfield.h"
 #include "opendnp3/util/TimeDuration.h"
+
+#include <memory>
 
 namespace opendnp3
 {
@@ -77,6 +80,9 @@ struct OutstationParams
     /// If true, the outstation processes responds to any request/confirmation as if it came from the expected master
     /// address
     bool respondToAnyMaster = false;
+
+    /// Opt-in metadata lookup for authorized GET_FILE_INFO requests in REQUIRED mode.
+    std::shared_ptr<IFileInfoProvider> fileInfo;
 };
 
 } // namespace opendnp3

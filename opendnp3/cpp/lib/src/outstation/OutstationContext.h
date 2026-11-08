@@ -240,6 +240,7 @@ private:
     /// Handles non-read function codes that require a response. builds the response using the supplied writer.
     /// @return An IIN field indicating the validity of the request, and to be returned in the response.
     IINField HandleNonReadResponse(const ParsedRequest& request, HeaderWriter& writer);
+    IINField HandleFileInfo(const ParsedRequest& request, HeaderWriter& writer);
 
     /// Handles read function codes. May trigger an unsolicited response
     /// @return an IIN field and a partial AppControlField (missing sequence info)
