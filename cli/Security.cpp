@@ -32,6 +32,12 @@ uint32_t Number(const std::string& text, uint32_t max)
     if (n != text.size() || value > max) throw std::runtime_error("Numeric option out of range");
     return static_cast<uint32_t>(value);
 }
+uint32_t PositiveMilliseconds(const std::string& text)
+{
+    const auto value = Number(text, 120000);
+    if (!value) throw std::runtime_error("Timeout must be in the range 1..120000 ms");
+    return value;
+}
 bool SafeName(const std::string& name)
 {
     return !name.empty() && name.size() <= 32 && std::all_of(name.begin(), name.end(), [](unsigned char c) {
@@ -296,6 +302,18 @@ Options ParseOptions(int argc, char** argv)
         if (option == "--deny-controls") { o.denyControls = true; continue; }
         if (option == "--unsolicited") { o.unsolicited = true; continue; }
         if (option == "--command-events") { o.commandEvents = true; continue; }
+        if (option == "--control-q17")
+        {
+            if (o.role != "master") throw std::runtime_error("--control-q17 requires master");
+            o.prefer8BitControlQualifiers = true;
+            continue;
+        }
+        if (option == "--event-q17")
+        {
+            if (o.role != "outstation") throw std::runtime_error("--event-q17 requires outstation");
+            o.prefer8BitEventQualifiers = true;
+            continue;
+        }
         if (option == "--rtu-io-profile") { o.rtuIoProfile = true; continue; }
         if (option == "--trace") { o.trace = true; continue; }
         if (option == "--tls") { o.tls = true; continue; }
@@ -310,6 +328,38 @@ Options ParseOptions(int argc, char** argv)
         else if (option == "--association") o.association = static_cast<uint16_t>(Number(value, 65535));
         else if (option == "--user") o.user = static_cast<uint16_t>(Number(value, 65535));
         else if (option == "--response-ms") o.responseMs = Number(value, 120000);
+        else if (option == "--link-confirm")
+        {
+            if (value == "never") o.linkConfirmMode = LinkConfirmMode::Never;
+            else if (value == "always") o.linkConfirmMode = LinkConfirmMode::Always;
+            else if (value == "multi-frame") o.linkConfirmMode = LinkConfirmMode::MultiFrame;
+            else throw std::runtime_error("--link-confirm requires never, always or multi-frame");
+        }
+        else if (option == "--link-retries") o.linkRetries = static_cast<uint8_t>(Number(value, 5));
+        else if (option == "--link-timeout-ms") o.linkTimeoutMs = PositiveMilliseconds(value);
+        else if (option == "--rx-fragment-timeout-ms") o.rxFragmentTimeoutMs = PositiveMilliseconds(value);
+        else if (option == "--complete-response-ms")
+        {
+            if (o.role != "master") throw std::runtime_error("--complete-response-ms requires master");
+            o.completeResponseMs = PositiveMilliseconds(value);
+        }
+        else if (option == "--sol-confirm-ms" || option == "--unsol-confirm-ms")
+        {
+            if (o.role != "outstation") throw std::runtime_error("Application confirm timeouts require outstation");
+            (option == "--sol-confirm-ms" ? o.solConfirmMs : o.unsolConfirmMs) = PositiveMilliseconds(value);
+        }
+        else if (option == "--unsol-retries")
+        {
+            if (o.role != "outstation") throw std::runtime_error("--unsol-retries requires outstation");
+            o.unsolRetries = static_cast<uint8_t>(Number(value, 5));
+            if (!o.unsolRetries) throw std::runtime_error("--unsol-retries requires 1..5");
+        }
+        else if (option == "--binary-event-time")
+        {
+            if (o.role != "outstation" || (value != "absolute" && value != "relative"))
+                throw std::runtime_error("--binary-event-time requires outstation and absolute or relative");
+            o.relativeBinaryTime = value == "relative";
+        }
         else if (option == "--rx-fragment-bytes") o.rxFragmentBytes = Number(value, 65535);
         else if (option == "--tx-fragment-bytes") o.txFragmentBytes = Number(value, 65535);
         else if (option == "--reply-ms") o.replyMs = Number(value, 120000);
@@ -342,6 +392,10 @@ Options ParseOptions(int argc, char** argv)
         throw std::runtime_error("--crl requires a TLS master or outstation");
     if (o.rtuIoProfile && o.role != "master" && o.role != "outstation")
         throw std::runtime_error("--rtu-io-profile requires master or outstation");
+    if (o.linkRetries && o.linkConfirmMode == LinkConfirmMode::Never)
+        throw std::runtime_error("Nonzero --link-retries requires a confirmed link mode");
+    if (o.unsolRetries && !o.unsolicited)
+        throw std::runtime_error("--unsol-retries requires --unsolicited");
     if (o.rxFragmentBytes < 250 || o.txFragmentBytes < 250)
         throw std::runtime_error("Diagnostic fragment size must be 250..65535 bytes");
     if (o.tls && !explicitPort) o.port = 19999;

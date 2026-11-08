@@ -244,6 +244,31 @@ the native application buffers independently. The diagnostic range is
 These bounds govern Host memory allocation. Approve separate product limits
 before deployment to an RTU.
 
+### Diagnostic link confirmations and response timing
+
+| Option | Role | Behavior |
+| --- | --- | --- |
+| `--link-confirm never\|always\|multi-frame` | Both | Outbound unicast policy. Default: `never`. Multi-frame confirms every transport segment of an APDU larger than 249 bytes. |
+| `--link-retries 0..5` | Both | Additional attempts per confirmed link transaction. Default: 0. The same frame and FCB are reused on timeout. |
+| `--link-timeout-ms` | Both | Link response timer. Default: 1000 ms. |
+| `--rx-fragment-timeout-ms` | Both | Deadline from the first transport segment to the final segment of a received APDU. Omitted: disabled. |
+| `--response-ms` | Master | Existing application response timer. |
+| `--complete-response-ms` | Master | Additional time limit from sending one request to completing its response, including all application fragments. Omitted: disabled. |
+| `--sol-confirm-ms`, `--unsol-confirm-ms` | Outstation | Application confirmation waits after the response transmission completes. Default: 5000 ms each. |
+| `--unsol-retries 1..5` | Outstation | Additional attempts for event unsolicited responses. Requires `--unsolicited`. Omitted: existing unlimited retry policy. |
+| `--binary-event-time absolute\|relative` | Outstation | Default binary event uses G2V2 (absolute) or G2V3 with CTO (relative). Default: absolute. |
+
+The new millisecond options accept 1..120000. These are diagnostic limits.
+Link retries resend the same link transaction and do not resubmit an
+application command. Retry exhaustion, a NACK, or a rejected link exchange
+ends the channel. An application-level FC6 still has no command response.
+
+Pass `--event-q17` on the outstation to prefer 8-bit count and index
+headers for G2, G4 and G32. A header holds at most 255 events. A header
+beginning with an index above 255 uses the 16-bit qualifier. The default
+remains 16-bit headers. Pass `--control-q17` on the master to select
+8-bit count and index headers for controls when representable.
+
 ### RTU I/O profile for the diagnostic peers
 
 Pass --rtu-io-profile to both peers to exercise the selected control and

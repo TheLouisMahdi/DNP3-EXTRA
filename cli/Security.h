@@ -4,6 +4,7 @@
 #include <opendnp3/app/AppConstants.h>
 #include <opendnp3/auth/AuthenticationConfig.h>
 #include <opendnp3/auth/UpdateKeyConfig.h>
+#include <opendnp3/link/LinkConfig.h>
 #include <string>
 namespace diagnostic
 {
@@ -15,6 +16,12 @@ struct Options
     uint32_t responseMs = 2000, replyMs = 2000, renewalMs = 900000, messageCount = 1000;
     uint32_t rxFragmentBytes = opendnp3::DEFAULT_MAX_APDU_SIZE;
     uint32_t txFragmentBytes = opendnp3::DEFAULT_MAX_APDU_SIZE;
+    opendnp3::LinkConfirmMode linkConfirmMode = opendnp3::LinkConfirmMode::Never;
+    uint8_t linkRetries = 0, unsolRetries = 0;
+    uint32_t linkTimeoutMs = 0, rxFragmentTimeoutMs = 0, completeResponseMs = 0;
+    uint32_t solConfirmMs = 0, unsolConfirmMs = 0;
+    bool relativeBinaryTime = false;
+    bool prefer8BitEventQualifiers = false, prefer8BitControlQualifiers = false;
     bool aggressive = false, trustedTime = false, testOnly = false, denyControls = false;
     bool unsolicited = false, trace = false, tls = false;
     bool commandEvents = false;

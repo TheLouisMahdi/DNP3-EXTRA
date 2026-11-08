@@ -492,6 +492,16 @@ uint32_t RequiredNumber(const std::string& value, uint32_t maximum)
     if (!Unsigned(value, maximum, result)) throw std::runtime_error("Invalid unsigned number");
     return result;
 }
+void ConfigureLink(LinkConfig& link, const diagnostic::Options& o)
+{
+    link.LocalAddr = o.local;
+    link.RemoteAddr = o.remote;
+    link.ConfirmMode = o.linkConfirmMode;
+    link.NumRetries = o.linkRetries;
+    if (o.linkTimeoutMs)
+        link.Timeout = TimeDuration::Milliseconds(o.linkTimeoutMs);
+}
+
 int RunMaster(diagnostic::Options o)
 {
     RuntimeInfo(o);
@@ -502,13 +512,19 @@ int RunMaster(diagnostic::Options o)
     MasterStackConfig config;
     config.master.authentication = auth;
     config.master.responseTimeout = TimeDuration::Milliseconds(o.responseMs);
+    if (o.prefer8BitControlQualifiers)
+        config.master.controlQualifierMode = IndexQualifierMode::allow_one_byte;
     config.master.maxRxFragSize = o.rxFragmentBytes;
     config.master.maxTxFragSize = o.txFragmentBytes;
+    if (o.rxFragmentTimeoutMs)
+        config.master.maxRxFragmentTime = TimeDuration::Milliseconds(o.rxFragmentTimeoutMs);
+    if (o.completeResponseMs)
+        config.master.maxResponseTime = TimeDuration::Milliseconds(o.completeResponseMs);
     config.master.disableUnsolOnStartup = true;
     config.master.unsolClassMask = ClassField::None(); // Enable only on the explicit CLI command.
     config.master.startupIntegrityClassMask = ClassField::AllClasses();
     config.master.timeSyncMode = TimeSyncMode::NonLAN;
-    config.link.LocalAddr = o.local; config.link.RemoteAddr = o.remote;
+    ConfigureLink(config.link, o);
     auto soe = std::make_shared<SoePrinter>();
     auto master = channel->AddMaster("cli-master-stack", soe, std::make_shared<MasterObserver>(), config);
     if (!master || !master->Enable()) throw std::runtime_error("Master could not enable");
@@ -692,7 +708,11 @@ int RunOutstation(const diagnostic::Options& o)
         database.counter.clear();
         database.frozen_counter.clear();
     }
-    for (auto& p : database.binary_input) { p.second.clazz = PointClass::Class1; p.second.evariation = EventBinaryVariation::Group2Var2; }
+    for (auto& p : database.binary_input)
+    {
+        p.second.clazz = PointClass::Class1;
+        p.second.evariation = o.relativeBinaryTime ? EventBinaryVariation::Group2Var3 : EventBinaryVariation::Group2Var2;
+    }
     for (auto& p : database.double_binary) { p.second.clazz = PointClass::Class1; p.second.evariation = EventDoubleBinaryVariation::Group4Var2; }
     for (auto& p : database.analog_input) { p.second.clazz = PointClass::Class2; p.second.svariation = StaticAnalogVariation::Group30Var5; p.second.evariation = EventAnalogVariation::Group32Var7; }
     for (auto& p : database.counter) p.second.clazz = PointClass::Class3;
@@ -721,7 +741,17 @@ int RunOutstation(const diagnostic::Options& o)
         config.outstation.eventBufferConfig.maxAnalogCommandEvents = 100;
     }
     config.outstation.params.allowUnsolicited = o.unsolicited;
-    config.link.LocalAddr = o.local; config.link.RemoteAddr = o.remote; config.link.KeepAliveTimeout = TimeDuration::Max();
+    config.outstation.params.prefer8BitEventQualifiers = o.prefer8BitEventQualifiers;
+    if (o.rxFragmentTimeoutMs)
+        config.outstation.params.maxRxFragmentTime = TimeDuration::Milliseconds(o.rxFragmentTimeoutMs);
+    if (o.solConfirmMs)
+        config.outstation.params.solConfirmTimeout = TimeDuration::Milliseconds(o.solConfirmMs);
+    if (o.unsolConfirmMs)
+        config.outstation.params.unsolConfirmTimeout = TimeDuration::Milliseconds(o.unsolConfirmMs);
+    if (o.unsolRetries)
+        config.outstation.params.numUnsolRetries = NumRetries::Fixed(o.unsolRetries);
+    ConfigureLink(config.link, o);
+    config.link.KeepAliveTimeout = TimeDuration::Max();
     auto application = std::make_shared<OutstationApplication>();
     if (o.trustedTime) application->WriteAbsoluteTime(UTCTimestamp(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())));
     auto commands = std::make_shared<SimulatedCommands>(o.rtuIoProfile);
