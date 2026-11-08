@@ -235,3 +235,11 @@ already-open connection handling remain product decisions (SEC-T1-15).
 
 This feature has not yet been built or tested on Windows. See
 `WINDOWS_TEST_TITLES.md` for the deferred test plan.
+
+### Diagnostic application fragment buffers
+
+For either role, pass --rx-fragment-bytes and --tx-fragment-bytes to configure
+the native application buffers independently. The diagnostic range is
+250..65535 bytes, and both defaults are the library default (2048 bytes).
+These bounds govern Host memory allocation. Approve separate product limits
+before deployment to an RTU.

@@ -309,6 +309,8 @@ Options ParseOptions(int argc, char** argv)
         else if (option == "--association") o.association = static_cast<uint16_t>(Number(value, 65535));
         else if (option == "--user") o.user = static_cast<uint16_t>(Number(value, 65535));
         else if (option == "--response-ms") o.responseMs = Number(value, 120000);
+        else if (option == "--rx-fragment-bytes") o.rxFragmentBytes = Number(value, 65535);
+        else if (option == "--tx-fragment-bytes") o.txFragmentBytes = Number(value, 65535);
         else if (option == "--reply-ms") o.replyMs = Number(value, 120000);
         else if (option == "--renewal-ms") o.renewalMs = Number(value, 7200000);
         else if (option == "--message-count") o.messageCount = Number(value, 0xFFFFFFFF);
@@ -337,6 +339,8 @@ Options ParseOptions(int argc, char** argv)
     if (!o.profile.empty() && o.host != "127.0.0.1") throw std::runtime_error("TEST credential profiles require localhost 127.0.0.1");
     if (!o.crl.empty() && (!o.tls || (o.role != "master" && o.role != "outstation")))
         throw std::runtime_error("--crl requires a TLS master or outstation");
+    if (o.rxFragmentBytes < 250 || o.txFragmentBytes < 250)
+        throw std::runtime_error("Diagnostic fragment size must be 250..65535 bytes");
     if (o.tls && !explicitPort) o.port = 19999;
     return o;
 }

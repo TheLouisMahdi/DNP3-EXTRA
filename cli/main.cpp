@@ -486,6 +486,8 @@ int RunMaster(diagnostic::Options o)
     MasterStackConfig config;
     config.master.authentication = auth;
     config.master.responseTimeout = TimeDuration::Milliseconds(o.responseMs);
+    config.master.maxRxFragSize = o.rxFragmentBytes;
+    config.master.maxTxFragSize = o.txFragmentBytes;
     config.master.disableUnsolOnStartup = true;
     config.master.unsolClassMask = ClassField::None(); // Enable only on the explicit CLI command.
     config.master.startupIntegrityClassMask = ClassField::AllClasses();
@@ -679,6 +681,8 @@ int RunOutstation(const diagnostic::Options& o)
     }
     OutstationStackConfig config(database);
     config.outstation.params.authentication = auth;
+    config.outstation.params.maxRxFragSize = o.rxFragmentBytes;
+    config.outstation.params.maxTxFragSize = o.txFragmentBytes;
     config.outstation.eventBufferConfig = EventBufferConfig::AllTypes(100);
     config.outstation.eventBufferConfig.maxSecurityStatEvents = 100;
     if (o.commandEvents)

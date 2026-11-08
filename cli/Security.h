@@ -1,6 +1,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #ifndef DNP3_CLI_SECURITY_H
 #define DNP3_CLI_SECURITY_H
+#include <opendnp3/app/AppConstants.h>
 #include <opendnp3/auth/AuthenticationConfig.h>
 #include <opendnp3/auth/UpdateKeyConfig.h>
 #include <string>
@@ -12,6 +13,8 @@ struct Options
     std::string ca, cert, key, peerName, tlsVersion = "both", ciphers, suites, directory, crl;
     uint16_t port = 20000, local = 0, remote = 0, association = 7, user = 2;
     uint32_t responseMs = 2000, replyMs = 2000, renewalMs = 900000, messageCount = 1000;
+    uint32_t rxFragmentBytes = opendnp3::DEFAULT_MAX_APDU_SIZE;
+    uint32_t txFragmentBytes = opendnp3::DEFAULT_MAX_APDU_SIZE;
     bool aggressive = false, trustedTime = false, testOnly = false, denyControls = false;
     bool unsolicited = false, trace = false, tls = false;
     bool commandEvents = false;
