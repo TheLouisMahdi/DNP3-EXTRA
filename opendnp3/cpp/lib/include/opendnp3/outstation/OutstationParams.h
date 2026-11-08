@@ -68,6 +68,10 @@ struct OutstationParams
     /// The maximum fragment size the outstation will be able to receive
     uint32_t maxRxFragSize = DEFAULT_MAX_APDU_SIZE;
 
+    /// Maximum time from the first to final transport segment of a received APDU.
+    /// Max disables the deadline.
+    TimeDuration maxRxFragmentTime = TimeDuration::Max();
+
     /// Global enabled / disable for unsolicited messages. If false, the NULL unsolicited message is not even sent
     bool allowUnsolicited = false;
 

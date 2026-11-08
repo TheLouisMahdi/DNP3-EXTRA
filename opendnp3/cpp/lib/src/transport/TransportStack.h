@@ -36,7 +36,8 @@ public:
                    const std::shared_ptr<exe4cpp::IExecutor>& executor,
                    const std::shared_ptr<ILinkListener>& listener,
                    uint32_t maxRxFragSize,
-                   const LinkLayerConfig& config);
+                   const LinkLayerConfig& config,
+                   TimeDuration maxRxFragmentTime);
 
     std::shared_ptr<TransportLayer> transport;
     std::shared_ptr<LinkLayer> link;

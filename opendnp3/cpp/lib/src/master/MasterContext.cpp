@@ -66,6 +66,9 @@ MContext::MContext(const Addresses& addresses,
       txBuffer(params.maxTxFragSize),
       tstate(TaskState::IDLE)
 {
+    if (params.maxResponseTime <= TimeDuration::Zero())
+        throw std::invalid_argument("Complete application response timeout must be positive");
+
     if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
     {
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -529,6 +532,14 @@ void MContext::ProcessUnsolicitedResponse(const APDUResponseHeader& header, cons
 
 void MContext::ProcessResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects)
 {
+    if (tstate == TaskState::WAIT_FOR_RESPONSE && !responseDeadline.IsMax()
+        && Timestamp(executor->get_time()) >= responseDeadline)
+    {
+        responseTimer.cancel();
+        OnResponseTimeout();
+        return;
+    }
+
     this->tstate = this->OnResponseEvent(header, objects);
     this->ProcessIIN(header.IIN); // TODO - should we process IIN bits for unexpected responses?
 }
@@ -707,16 +718,19 @@ void MContext::StartResponseTimer()
         if (owner && self->activeTask == owner) self->OnResponseTimeout();
     };
     const auto milliseconds = activeTask ? activeTask->ResponseTimeoutMs() : 0;
+    auto delay = params.responseTimeout.value;
+    if (milliseconds)
+        delay = std::chrono::duration_cast<decltype(delay)>(std::chrono::milliseconds(milliseconds));
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (IsAuthenticatedNoResponseTask())
-    {
-        // Same bound as retained Challenge/Reply state, including zero's immediate expiry.
-        this->responseTimer = executor->start(std::chrono::milliseconds(params.authentication.replyTimeoutMs), timeout);
-        return;
-    }
+        delay = std::chrono::duration_cast<decltype(delay)>(std::chrono::milliseconds(params.authentication.replyTimeoutMs));
 #endif
-    this->responseTimer = this->executor->start(milliseconds ? std::chrono::milliseconds(milliseconds)
-        : this->params.responseTimeout.value, timeout);
+    if (!responseDeadline.IsMax())
+    {
+        const auto remaining = responseDeadline - Timestamp(executor->get_time());
+        delay = std::min(delay, std::max(remaining.value, TimeDuration::Zero().value));
+    }
+    responseTimer = executor->start(delay, timeout);
 }
 
 std::shared_ptr<IMasterTask> MContext::AddScan(TimeDuration period,
@@ -1062,6 +1076,8 @@ MContext::TaskState MContext::ResumeActiveTask()
     }
 #endif
     this->RecordLastRequest(apdu);
+    responseDeadline = params.maxResponseTime == TimeDuration::Max()
+        ? Timestamp::Max() : Timestamp(executor->get_time()) + params.maxResponseTime;
     tstate = nextState;
     this->StartResponseTimer(); // Also bounds waiting for lower-layer transmit completion.
     this->Transmit(apdu);

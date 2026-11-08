@@ -225,6 +225,8 @@ private:
 
     void RestartUnsolConfirmTimer();
 
+    void RestartConfirmTimer(TimeDuration timeout);
+
     bool CanTransmit() const;
 
     IINField GetResponseIIN();
@@ -283,6 +285,9 @@ private:
     bool isTransmitting;
     IINField staticIIN;
     exe4cpp::Timer confirmTimer;
+    TimeDuration pendingConfirmDuration;
+    bool confirmTimerPending = false;
+    uint16_t solConfirmSource = 0;
     RequestHistory history;
     RequestHistory noAckHistory;
     Addresses noAckPeer;

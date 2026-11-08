@@ -108,6 +108,7 @@ public:
     AppSeqNum unsolSeq;
     std::shared_ptr<IMasterTask> activeTask;
     exe4cpp::Timer responseTimer;
+    Timestamp responseDeadline = Timestamp::Max();
 
     MasterTasks tasks;
     std::deque<APDUHeader> confirmQueue;

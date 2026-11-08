@@ -87,6 +87,9 @@ OutstationState& StateSolicitedConfirmWait::OnConfirm(OContext& ctx, const Parse
         return *this;
     }
 
+    if (request.addresses.source != ctx.solConfirmSource)
+        return *this;
+
     if (!ctx.sol.seq.confirmNum.Equals(request.header.control.SEQ))
     {
         FORMAT_LOG_BLOCK(ctx.logger, flags::WARN, "solicited confirm with wrong seq: %u, expected: %u",
@@ -142,8 +145,11 @@ OutstationState& StateSolicitedConfirmWait::OnRepeatNonReadRequest(OContext& ctx
 
 OutstationState& StateSolicitedConfirmWait::OnRepeatReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.RestartSolConfirmTimer();
+    if (request.addresses.source != ctx.solConfirmSource)
+        return *this;
+
     ctx.BeginRetransmitLastResponse(request.addresses.source);
+    ctx.RestartSolConfirmTimer();
     return *this;
 }
 
@@ -166,6 +172,9 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirm(OContext& ctx, const Par
                          request.header.control.SEQ);
         return *this;
     }
+
+    if (request.addresses.source != ctx.addresses.destination)
+        return *this;
 
     if (!ctx.unsol.seq.confirmNum.Equals(request.header.control.SEQ))
     {
@@ -204,13 +213,19 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirmTimeout(OContext& ctx)
 {
     SIMPLE_LOG_BLOCK(ctx.logger, flags::WARN, "unsolicited confirm timeout");
 
+    if (!ctx.CanTransmit())
+    {
+        ctx.RestartUnsolConfirmTimer();
+        return *this;
+    }
+
     if (ctx.unsol.completedNull)
     {
         auto shouldRetry = ctx.unsolRetries.Retry();
         if (shouldRetry && !ctx.deferred.IsSet())
         {
-            ctx.RestartUnsolConfirmTimer();
             ctx.BeginRetransmitLastUnsolicitedResponse();
+            ctx.RestartUnsolConfirmTimer();
             return *this;
         }
         else

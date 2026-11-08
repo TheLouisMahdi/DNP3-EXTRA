@@ -28,13 +28,18 @@
 #include <ser4cpp/util/HexConversions.h>
 
 #include <cstring>
+#include <stdexcept>
 
 namespace opendnp3
 {
 
-TransportRx::TransportRx(const Logger& logger, uint32_t maxRxFragSize)
-    : logger(logger), rxBuffer(maxRxFragSize), numBytesRead(0)
+TransportRx::TransportRx(const Logger& logger, uint32_t maxRxFragSize,
+                         const std::shared_ptr<exe4cpp::IExecutor>& executor, TimeDuration maxFragmentTime)
+    : logger(logger), rxBuffer(maxRxFragSize), numBytesRead(0),
+      executor(executor), maxFragmentTime(maxFragmentTime)
 {
+    if (maxFragmentTime <= TimeDuration::Zero() || (maxFragmentTime < TimeDuration::Max() && !executor))
+        throw std::invalid_argument("Receive fragment deadline requires a positive duration and an executor");
 }
 
 void TransportRx::Reset()
@@ -55,6 +60,15 @@ ser4cpp::wseq_t TransportRx::GetAvailable()
 Message TransportRx::ProcessReceive(const Message& segment)
 {
     ++statistics.numTransportRx;
+
+    const bool timed = maxFragmentTime < TimeDuration::Max();
+    const auto now = timed ? Timestamp(executor->get_time()) : Timestamp::Min();
+    if (timed && numBytesRead > 0 && now >= fragmentDeadline)
+    {
+        ++statistics.numTransportDiscard;
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Receive fragment deadline expired");
+        ClearRxBuffer();
+    }
 
     if (segment.payload.is_empty())
     {
@@ -124,6 +138,9 @@ Message TransportRx::ProcessReceive(const Message& segment)
     this->lastAddresses = segment.addresses;
     this->expectedSeq = header.seq;
     this->expectedSeq.Increment();
+
+    if (timed && header.fir && !header.fin)
+        fragmentDeadline = now + maxFragmentTime;
 
     if (header.fin)
     {

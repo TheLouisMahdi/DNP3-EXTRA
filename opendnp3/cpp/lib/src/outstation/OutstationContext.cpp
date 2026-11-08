@@ -172,6 +172,7 @@ bool OContext::OnLowerLayerDown()
     deferred.Reset();
     eventBuffer.Unselect();
     rspContext.Reset();
+    confirmTimerPending = false;
     confirmTimer.cancel();
 
     return true;
@@ -185,6 +186,8 @@ bool OContext::OnTxReady()
     }
 
     this->isTransmitting = false;
+    if (confirmTimerPending)
+        RestartConfirmTimer(pendingConfirmDuration);
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
     {
@@ -259,6 +262,13 @@ OutstationState& OContext::ProcessNewRequest(const ParsedRequest& request)
 
 bool OContext::ProcessObjects(const ParsedRequest& request)
 {
+    if (request.header.function == FunctionCode::CONFIRM
+        && (request.objects.is_not_empty() || request.addresses.IsBroadcast()))
+    {
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Ignoring malformed application confirmation");
+        return false;
+    }
+
     if (!control.OnRequest(request.header.function, AppSeqNum(request.header.control.SEQ), request.objects))
         return true; // Changed same-sequence SELECT: discard per Table 4-9.
 
@@ -322,6 +332,7 @@ OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& r
 
     if (response.GetControl().CON)
     {
+        this->solConfirmSource = destination;
         this->RestartSolConfirmTimer();
         return StateSolicitedConfirmWait::Inst();
     }
@@ -460,11 +471,11 @@ void OContext::CheckForUnsolicitedNull()
             // send a NULL unsolcited message
             auto response = this->unsol.tx.Start();
             build::NullUnsolicited(response, this->unsol.seq.num, this->GetResponseIIN());
-            this->RestartUnsolConfirmTimer();
             this->state = this->params.noDefferedReadDuringUnsolicitedNullResponse
                 ? &StateNullUnsolicitedConfirmWait::Inst()
                 : &StateUnsolicitedConfirmWait::Inst();
             this->BeginUnsolTx(response);
+            this->RestartUnsolConfirmTimer();
         }
     }
 }
@@ -491,9 +502,9 @@ void OContext::CheckForUnsolicited()
                 this->eventBuffer.Load(writer);
 
                 build::NullUnsolicited(response, this->unsol.seq.num, this->GetResponseIIN());
-                this->RestartUnsolConfirmTimer();
                 this->state = &StateUnsolicitedConfirmWait::Inst();
                 this->BeginUnsolTx(response);
+                this->RestartUnsolConfirmTimer();
             }
         }
     }
@@ -526,24 +537,28 @@ bool OContext::ProcessDeferredRequest(const ParsedRequest& request)
 
 void OContext::RestartSolConfirmTimer()
 {
-    auto timeout = [&]() {
-        this->state = &this->state->OnConfirmTimeout(*this);
-        this->CheckForTaskStart();
-    };
-
-    this->confirmTimer.cancel();
-    this->confirmTimer = this->executor->start(this->params.solConfirmTimeout.value, timeout);
+    RestartConfirmTimer(params.solConfirmTimeout);
 }
 
 void OContext::RestartUnsolConfirmTimer()
 {
-    auto timeout = [&]() {
-        this->state = &this->state->OnConfirmTimeout(*this);
-        this->CheckForTaskStart();
-    };
+    RestartConfirmTimer(params.unsolConfirmTimeout);
+}
 
-    this->confirmTimer.cancel();
-    this->confirmTimer = this->executor->start(this->params.unsolConfirmTimeout.value, timeout);
+void OContext::RestartConfirmTimer(TimeDuration duration)
+{
+    confirmTimer.cancel();
+    confirmTimerPending = isTransmitting;
+    if (confirmTimerPending)
+    {
+        pendingConfirmDuration = duration;
+        return;
+    }
+
+    confirmTimer = executor->start(duration.value, [this]() {
+        state = &state->OnConfirmTimeout(*this);
+        CheckForTaskStart();
+    });
 }
 
 OutstationState& OContext::RespondToNonReadRequest(const ParsedRequest& request)

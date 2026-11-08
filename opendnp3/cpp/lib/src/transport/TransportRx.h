@@ -26,6 +26,11 @@
 
 #include "opendnp3/StackStatistics.h"
 #include "opendnp3/logging/Logger.h"
+#include "opendnp3/util/Timestamp.h"
+
+#include <exe4cpp/IExecutor.h>
+
+#include <memory>
 
 #include <ser4cpp/container/Buffer.h>
 #include <ser4cpp/container/SequenceTypes.h>
@@ -40,7 +45,9 @@ class TransportRx
 {
 
 public:
-    TransportRx(const Logger&, uint32_t maxRxFragSize);
+    TransportRx(const Logger&, uint32_t maxRxFragSize,
+                const std::shared_ptr<exe4cpp::IExecutor>& executor = nullptr,
+                TimeDuration maxFragmentTime = TimeDuration::Max());
 
     Message ProcessReceive(const Message& segment);
 
@@ -64,6 +71,10 @@ private:
     Addresses lastAddresses;
 
     TransportSeqNum expectedSeq;
+
+    const std::shared_ptr<exe4cpp::IExecutor> executor;
+    const TimeDuration maxFragmentTime;
+    Timestamp fragmentDeadline;
 };
 
 } // namespace opendnp3

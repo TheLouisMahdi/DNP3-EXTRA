@@ -81,6 +81,13 @@ struct MasterParams
     /// maximum APDU rx size in bytes
     uint32_t maxRxFragSize = DEFAULT_MAX_APDU_SIZE;
 
+    /// Maximum time from the first to final transport segment of a received APDU.
+    /// Max disables the deadline.
+    TimeDuration maxRxFragmentTime = TimeDuration::Max();
+
+    /// Optional absolute time limit for completing the response to one application request.
+    TimeDuration maxResponseTime = TimeDuration::Max();
+
     /// Control how the master chooses what qualifier to send when making requests
     /// The default behavior is to always use two bytes, but the one byte optimization
     /// can be enabled

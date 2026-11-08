@@ -44,12 +44,13 @@ protected:
               const std::shared_ptr<IOHandler>& iohandler,
               const std::shared_ptr<IResourceManager>& manager,
               uint32_t maxRxFragSize,
-              const LinkLayerConfig& config)
+              const LinkLayerConfig& config,
+              TimeDuration maxRxFragmentTime)
         : logger(logger),
           executor(executor),
           iohandler(iohandler),
           manager(manager),
-          tstack(logger, executor, listener, maxRxFragSize, config)
+          tstack(logger, executor, listener, maxRxFragSize, config, maxRxFragmentTime)
     {
     }
 

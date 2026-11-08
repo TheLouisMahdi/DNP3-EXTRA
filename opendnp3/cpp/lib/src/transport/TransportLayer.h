@@ -40,7 +40,9 @@ class TransportLayer final : public IUpperLayer, public ILowerLayer
 {
 
 public:
-    TransportLayer(const Logger& logger, uint32_t maxRxFragSize);
+    TransportLayer(const Logger& logger, uint32_t maxRxFragSize,
+                   const std::shared_ptr<exe4cpp::IExecutor>& executor = nullptr,
+                   TimeDuration maxFragmentTime = TimeDuration::Max());
 
     // ------ ILowerLayer ------
 

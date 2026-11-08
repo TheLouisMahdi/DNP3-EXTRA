@@ -29,8 +29,9 @@
 namespace opendnp3
 {
 
-TransportLayer::TransportLayer(const Logger& logger, uint32_t maxRxFragSize)
-    : logger(logger), receiver(logger, maxRxFragSize), transmitter(logger)
+TransportLayer::TransportLayer(const Logger& logger, uint32_t maxRxFragSize,
+                               const std::shared_ptr<exe4cpp::IExecutor>& executor, TimeDuration maxFragmentTime)
+    : logger(logger), receiver(logger, maxRxFragSize, executor, maxFragmentTime), transmitter(logger)
 {
 }
 
