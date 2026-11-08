@@ -164,3 +164,16 @@
 - [ ] Run full CTest Release serial, then parallel, and store consolidated logs
 - [ ] Correlate every PASS/FAIL/BLOCKED with requirement ID, case, test name and Git SHA
 - [ ] Record independent-peer and target RTU acceptance separately; do not mark Windows self-tests as external conformance
+
+## Deferred Group 70 and implementation follow-up
+
+- G70V2/3/4/5/6/7/8 exact Q5B bytes, count/length/offset boundaries, invalid qualifier, and atomic writer failure.
+- G70V2 non-overlapping credential fields and credential-free response; no credential content in diagnostics.
+- G70V5/6 block 0, maximum 31-bit block, final-bit boundary, empty file and malformed record.
+- FC28/G70V7 authorized Outstation metadata reply, directory/file distinction, request ID echo and G70V4 file-not-found status.
+- FC28 disabled provider, Compatibility mode, denied SA, foreign association, broadcast, malformed descriptor and capacity failures; provider must not run.
+- G70 runtime expansion acceptance: master task ownership, authenticated open, read/write blocks, close/abort/delete, inactivity status 17, deferred event polling and optional activation.
+- FC22 one G60 class plus multiple supported object headers; class switch, dangling class, invalid qualifier and no stale-class assignment.
+- G122 event timestamp captured before persistence, DC on same event for Save false/throw, and no duplicate report.
+- Diagnostic fragment size independent RX/TX, 249/250/2048/4096/65535/65536 boundaries and real multi-fragment transfer.
+- G120V8 type 1/2 and method 67..71, vendor opaque method, rejected symmetric/obsolete/reserved fields; validated certificate trust and lifecycle remain separate.

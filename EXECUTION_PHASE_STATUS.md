@@ -25,3 +25,17 @@
 All planned cases are titles only in `WINDOWS_TEST_TITLES.md`. The future test campaign must record revision SHA, exact commands, per-suite exit codes and logs, receiver-side effects and remaining failures. A green self-interoperability result must not be presented as third-party certification.
 
 No Git history was rewritten. Other unapproved source areas are unchanged.
+
+## Implementation-only follow-up
+
+The user deferred authoring and running automated acceptance tests until the
+implementation campaign is complete. The following changes require later evidence:
+
+| Scope | Implemented scope | Pending |
+|---|---|---|
+| Group 70 | V2–V8 wire codecs and Q5B dispatch; opt-in REQUIRED-mode Outstation GET_FILE_INFO provider | Master task/API, file transfer session and storage, open/read/write/close/delete/abort, credentials, timeout events, activation policy and independent peer |
+| G70V1 | Superseded by modern file control in IEEE 1815-2012 A.27.1 | Legacy interoperability is a separate product requirement if requested |
+| FC22 | Preserve active class across consecutive data headers and report dangling class sets | Full qualifier/association/process acceptance |
+| G122 | Timestamp before Save; apply the Save result to the same event's discontinuity flag | Permanent retention, real restart and event/CONFIRM acceptance |
+| CFG-03 | Diagnostic RX/TX fragment configuration in both roles | Product bounds, wire and resource evidence |
+| G120V8 | Validate certificate type and method fields on the wire | IEC/TS 62351-8 validation and trusted runtime lifecycle |
