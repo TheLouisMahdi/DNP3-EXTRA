@@ -5,6 +5,7 @@ All children are hidden, owned, bounded, and stopped before credential cleanup.
 """
 import argparse
 from contextlib import ExitStack
+import json
 import os
 from pathlib import Path
 import re
@@ -626,14 +627,68 @@ def asio_fixtures(exe, asio, root):
         owned.rmdir()
 
 
+def acceptance_counter_profile(exe):
+    """Two fresh native TCP pairs, with and without the RTU profile."""
+    def observed(name, actual, expected):
+        print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
+        assert actual == expected, (name, expected, actual)
+
+    def read_counter(peer):
+        cursor = peer.send("read 20 1 5 5")
+        peer.wait(r"\[TASK\] read (?!START)[A-Z_]+", cursor)
+        with peer.cv:
+            return [match for line in peer.lines[cursor:]
+                    if (match := re.search(r"Group20Var1 STATIC Counter\[5\]=([0-9]+)\b", line))]
+
+    master, out = connected(exe, ["--auth", "compat"])
+    try:
+        master.task("scan integrity")
+        cursor = out.send("set counter 5 123 force")
+        out.wait(r"\[UPDATE\].*counter 5 123", cursor)
+        values = read_counter(master)
+        observed("compat_static_count", len(values), 1)
+        observed("compat_counter_value", int(values[0][1]), 123)
+        cursor = master.task("scan class3")
+        line = master.wait(r"Group22Var[0-9]+ EVENT Counter\[5\]=([0-9]+)\b", cursor)
+        observed("compat_event_value", int(re.search(r"Counter\[5\]=([0-9]+)", line)[1]), 123)
+    finally:
+        stop(out, master)
+
+    master, out = connected(exe, ["--auth", "compat", "--rtu-io-profile"])
+    try:
+        master.task("scan integrity")
+        cursor = out.send("set counter 5 123 force")
+        out.wait(r"\[ERROR\] Invalid point type/value", cursor)
+        with out.cv:
+            rejected = sum("[ERROR] Invalid point type/value" in line for line in out.lines[cursor:])
+        observed("rtu_update_rejected", rejected, 1)
+        observed("rtu_static_count", len(read_counter(master)), 0)
+        cursor = master.task("scan class3")
+        with master.cv:
+            count = sum("EVENT Counter[" in line for line in master.lines[cursor:])
+        observed("rtu_event_count", count, 0)
+    finally:
+        stop(out, master)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
     parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "all"), default="all")
+    parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
+    parser.add_argument("--vector", choices=("V1",))
+    parser.add_argument("--seed", type=int, default=1741815)
     args = parser.parse_args()
     assert args.exe.is_file(), args.exe
+    if args.scenario:
+        if args.vector != "V1" or args.only != "all":
+            parser.error("an acceptance scenario requires --vector V1 and no smoke-suite filter")
+        acceptance_counter_profile(args.exe)
+        return
+    if args.vector:
+        parser.error("--vector requires an acceptance scenario")
     if args.only == "asio":
         assert args.asio and args.asio.is_file(), args.asio
         asio_fixtures(args.exe, args.asio, args.work_dir)

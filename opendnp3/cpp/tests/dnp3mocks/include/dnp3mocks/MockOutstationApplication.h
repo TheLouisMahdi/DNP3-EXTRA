@@ -66,6 +66,8 @@ public:
         if (allowTimeWrite)
         {
             timestamps.push_back(timestamp);
+            if (updateClockOnWrite)
+                currentTime = opendnp3::DNPTime(timestamp.msSinceEpoch, opendnp3::TimestampQuality::SYNCHRONIZED);
             return true;
         }
         else
@@ -128,11 +130,13 @@ public:
 
     uint16_t ColdRestart() final
     {
+        ++coldRestartCalls;
         return coldRestartTimeDelay;
     }
 
     uint16_t WarmRestart() final
     {
+        ++warmRestartCalls;
         return warmRestartTimeDelay;
     }
 
@@ -167,6 +171,9 @@ public:
 
     opendnp3::ApplicationIIN appIIN;
 
+    bool updateClockOnWrite = false;
+    uint32_t coldRestartCalls = 0;
+    uint32_t warmRestartCalls = 0;
     std::deque<opendnp3::UTCTimestamp> timestamps;
     std::deque<std::tuple<opendnp3::AssignClassType, opendnp3::PointClass, uint16_t, uint16_t>> classAssignments;
     std::deque<opendnp3::Indexed<opendnp3::TimeAndInterval>> timeAndIntervals;

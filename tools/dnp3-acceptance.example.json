@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "configuration": "Release",
+  "build_timeout_seconds": 1200,
+  "unit_timeout_seconds": 30,
+  "integration_timeout_seconds": 60,
+  "process_timeout_seconds": 240
+}

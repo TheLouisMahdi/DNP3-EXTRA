@@ -23,6 +23,8 @@
 #include <opendnp3/app/Indexed.h>
 #include <opendnp3/outstation/SimpleCommandHandler.h>
 
+#include "opendnp3/outstation/IUpdateHandler.h"
+
 #include <vector>
 
 template<class T> class Operation : public opendnp3::Indexed<T>
@@ -49,6 +51,28 @@ public:
         status = status_;
     }
 
+    bool reflectAnalogOutput = false;
+
+    using opendnp3::SimpleCommandHandler::Operate;
+
+    opendnp3::CommandStatus Operate(const opendnp3::AnalogOutputInt16& command, uint16_t index,
+                                   opendnp3::IUpdateHandler& handler, opendnp3::OperateType mode) override
+    {
+        return OperateAndReflect(command, index, handler, mode);
+    }
+
+    opendnp3::CommandStatus Operate(const opendnp3::AnalogOutputInt32& command, uint16_t index,
+                                   opendnp3::IUpdateHandler& handler, opendnp3::OperateType mode) override
+    {
+        return OperateAndReflect(command, index, handler, mode);
+    }
+
+    opendnp3::CommandStatus Operate(const opendnp3::AnalogOutputFloat32& command, uint16_t index,
+                                   opendnp3::IUpdateHandler& handler, opendnp3::OperateType mode) override
+    {
+        return OperateAndReflect(command, index, handler, mode);
+    }
+
     uint32_t NumInvocations() const
     {
         return numSelect + numOperate;
@@ -62,6 +86,18 @@ public:
     uint32_t NumOperate() const
     {
         return numOperate;
+    }
+
+private:
+    template<class Command>
+    opendnp3::CommandStatus OperateAndReflect(const Command& command, uint16_t index,
+                                            opendnp3::IUpdateHandler& handler, opendnp3::OperateType mode)
+    {
+        const auto result = SimpleCommandHandler::Operate(command, index, handler, mode);
+        if (reflectAnalogOutput && result == opendnp3::CommandStatus::SUCCESS)
+            handler.Update(opendnp3::AnalogOutputStatus(command.value, opendnp3::Flags(1)),
+                           index, opendnp3::EventMode::Suppress);
+        return result;
     }
 
 protected:

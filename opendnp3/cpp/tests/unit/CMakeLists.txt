@@ -1,6 +1,8 @@
 set(unittests_headers    
 
     ./utils/APDUHelpers.h
+    ./TestRtuAcceptanceCases.inc
+    ./utils/AcceptanceObservation.h
     ./utils/APDUHexBuilders.h
     ./utils/BufferHelpers.h
     ./utils/CallbackQueue.h
@@ -46,6 +48,7 @@ set(unittests_src
     ./TestMasterUnsolBehaviors.cpp
     ./TestMeasurementHandler.cpp
     ./TestProfileMeasurements.cpp
+    ./TestRtuAcceptance.cpp
     ./TestProfileControls.cpp
     ./TestProfileTime.cpp
     ./TestProfileClasses.cpp

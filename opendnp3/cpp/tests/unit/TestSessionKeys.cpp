@@ -1,3 +1,5 @@
+#include "utils/AcceptanceObservation.h"
+
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "auth/SessionKeys.h"
 #include "auth/AuthenticationStatistics.h"
@@ -1103,3 +1105,76 @@ TEST_CASE("SessionKeys - status and confirmation V5 cannot bypass Reply Timer ex
         REQUIRE(stats.Value(SecurityStatistic::REPLY_TIMEOUTS) == 1);
     }
 }
+
+namespace
+{
+void AcceptanceInterval(uint32_t interval)
+{
+    using acceptance::Observe;
+    SessionKeys::Config config;
+    config.intervalMs = interval;
+    KeyPair pair(config);
+    pair.ToChange();
+    const auto outInstalled = pair.now;
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            == R::INSTALLED);
+    pair.now += 17;
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+            == R::INSTALLED);
+    const auto outDeadline = outInstalled + interval;
+    const auto masterDeadline = pair.now + interval;
+    Observe("outstation_deadline", pair.outstation.ValidUntil());
+    REQUIRE(pair.outstation.ValidUntil() == outDeadline);
+    Observe("master_deadline", pair.master.ValidUntil());
+    REQUIRE(pair.master.ValidUntil() == masterDeadline);
+    const auto outBefore = pair.outstation.Ready(outDeadline - 1);
+    const auto outAt = pair.outstation.Ready(outDeadline);
+    const auto outAfter = pair.outstation.Ready(outDeadline + 1);
+    Observe("outstation_before", outBefore);
+    Observe("outstation_at", outAt);
+    Observe("outstation_after", outAfter);
+    REQUIRE(outBefore);
+    REQUIRE_FALSE(outAt);
+    REQUIRE_FALSE(outAfter);
+    const auto masterBefore = pair.master.Ready(masterDeadline - 1);
+    const auto masterAt = pair.master.Ready(masterDeadline);
+    const auto masterAfter = pair.master.Ready(masterDeadline + 1);
+    Observe("master_before", masterBefore);
+    Observe("master_at", masterAt);
+    Observe("master_after", masterAfter);
+    REQUIRE(masterBefore);
+    REQUIRE_FALSE(masterAt);
+    REQUIRE_FALSE(masterAfter);
+    const auto oldKeyUsable = pair.master.ControlKey(masterDeadline + 1).is_not_empty()
+        || pair.outstation.MonitoringKey(masterDeadline + 1).is_not_empty();
+    Observe("old_key_usable", oldKeyUsable);
+    REQUIRE_FALSE(oldKeyUsable);
+    const auto renew = pair.master.NeedsExchange(masterDeadline + 1);
+    Observe("needs_renewal", renew);
+    REQUIRE(renew);
+    const auto priorSequence = pair.master.Sequence();
+    pair.now = masterDeadline + 1;
+    pair.ToChange();
+    Observe("renewal_request_fc", pair.request.bytes[1]);
+    REQUIRE(pair.request.bytes[1] == 0x20);
+    Observe("renewal_request_gv", (static_cast<unsigned>(pair.request.bytes[2]) << 8) | pair.request.bytes[3]);
+    REQUIRE(pair.request.bytes[2] == 120);
+    REQUIRE(pair.request.bytes[3] == 4);
+    Observe("renewal_request_q", pair.request.bytes[4]);
+    REQUIRE(pair.request.bytes[4] == 7);
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            == R::INSTALLED);
+    REQUIRE(pair.master.Process(7, pair.confirmation.Read(), pair.now, pair.request.Write(), pair.request.size)
+            == R::INSTALLED);
+    const auto renewed = pair.master.Sequence() != priorSequence
+        && pair.master.Ready(pair.now) && pair.outstation.Ready(pair.now);
+    Observe("both_roles_renewed", renewed);
+    REQUIRE(renewed);
+}
+} // namespace
+
+TEST_CASE("AT-SEC-T1-07-T15", "[rtu-acceptance]") { AcceptanceInterval(900000); }
+TEST_CASE("AT-SEC-T1-07-T16", "[rtu-acceptance]") { AcceptanceInterval(960000); }
+TEST_CASE("AT-SEC-T1-07-T30", "[rtu-acceptance]") { AcceptanceInterval(1800000); }
+TEST_CASE("AT-SEC-T1-07-T60", "[rtu-acceptance]") { AcceptanceInterval(3600000); }
+TEST_CASE("AT-SEC-T1-07-T120", "[rtu-acceptance]") { AcceptanceInterval(7200000); }
