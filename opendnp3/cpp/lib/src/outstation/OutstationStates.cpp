@@ -57,18 +57,17 @@ OutstationState& StateIdle::OnNewNonReadRequest(OContext& ctx, const ParsedReque
 
 OutstationState& StateIdle::OnRepeatNonReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.BeginRetransmitLastResponse(request.addresses.source);
-    return *this;
+    return ctx.RetransmitSolicitedResponse(request);
 }
 
 OutstationState& StateIdle::OnRepeatReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.BeginRetransmitLastResponse(request.addresses.source);
-    return *this;
+    return ctx.RetransmitSolicitedResponse(request);
 }
 
 OutstationState& StateIdle::OnBroadcastMessage(OContext& ctx, const ParsedRequest& request)
 {
+    ctx.AbandonSolicitedRead();
     ctx.ProcessBroadcastRequest(request);
     return *this;
 }
@@ -79,27 +78,9 @@ StateSolicitedConfirmWait StateSolicitedConfirmWait::instance;
 
 OutstationState& StateSolicitedConfirmWait::OnConfirm(OContext& ctx, const ParsedRequest& request)
 {
-    if (request.header.control.UNS)
-    {
-        FORMAT_LOG_BLOCK(ctx.logger, flags::WARN,
-                         "received unsolicited confirm while waiting for solicited confirm (seq: %u)",
-                         request.header.control.SEQ);
-        return *this;
-    }
-
-    if (request.addresses.source != ctx.solConfirmSource)
-        return *this;
-
-    if (!ctx.sol.seq.confirmNum.Equals(request.header.control.SEQ))
-    {
-        FORMAT_LOG_BLOCK(ctx.logger, flags::WARN, "solicited confirm with wrong seq: %u, expected: %u",
-                         request.header.control.SEQ, ctx.sol.seq.confirmNum.Get());
-        return *this;
-    }
-
-    ctx.history.Reset(); // any time we get a confirm we can treat any request as a new request
-    ctx.confirmTimer.cancel();
-    ctx.eventBuffer.ClearWritten();
+    ctx.solConfirm.Cancel();
+    if (ctx.solicitedReadSelection)
+        ctx.eventBuffer.ClearWritten();
     ctx.lastBroadcastMessageReceived.clear();
 
     // information the application about the confirm
@@ -110,11 +91,14 @@ OutstationState& StateSolicitedConfirmWait::OnConfirm(OContext& ctx, const Parse
         ctx.eventBuffer.NumEvents(EventClass::EC3)
     );
 
-    if (ctx.rspContext.HasSelection())
+    if (ctx.solicitedReadSelection && ctx.rspContext.HasSelection())
     {
         return ctx.ContinueMultiFragResponse(request.addresses, AppSeqNum(request.header.control.SEQ).Next());
     }
 
+    if (ctx.solicitedReadSelection)
+        ctx.history.Reset();
+    ctx.solicitedReadSelection = false;
     return StateIdle::Inst();
 }
 
@@ -126,35 +110,30 @@ OutstationState& StateSolicitedConfirmWait::OnConfirmTimeout(OContext& ctx)
 
 OutstationState& StateSolicitedConfirmWait::OnNewReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.confirmTimer.cancel();
+    ctx.solConfirm.Cancel();
     return ctx.RespondToReadRequest(request);
 }
 
 OutstationState& StateSolicitedConfirmWait::OnNewNonReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.confirmTimer.cancel();
+    ctx.solConfirm.Cancel();
     return ctx.RespondToNonReadRequest(request);
 }
 
 OutstationState& StateSolicitedConfirmWait::OnRepeatNonReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.confirmTimer.cancel();
-    ctx.BeginRetransmitLastResponse(request.addresses.source);
-    return *this;
+    return ctx.RetransmitSolicitedResponse(request);
 }
 
 OutstationState& StateSolicitedConfirmWait::OnRepeatReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    if (request.addresses.source != ctx.solConfirmSource)
-        return *this;
-
-    ctx.BeginRetransmitLastResponse(request.addresses.source);
-    ctx.RestartSolConfirmTimer();
-    return *this;
+    return ctx.RetransmitSolicitedResponse(request);
 }
 
 OutstationState& StateSolicitedConfirmWait::OnBroadcastMessage(OContext& ctx, const ParsedRequest& request)
 {
+    ctx.solConfirm.Cancel();
+    ctx.AbandonSolicitedRead();
     ctx.ProcessBroadcastRequest(request);
     return StateIdle::Inst();
 }
@@ -167,25 +146,11 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirm(OContext& ctx, const Par
 {
     if (!request.header.control.UNS)
     {
-        FORMAT_LOG_BLOCK(ctx.logger, flags::WARN,
-                         "received solicited confirm while waiting for unsolicited confirm (seq: %u)",
-                         request.header.control.SEQ);
+        StateSolicitedConfirmWait::Inst().OnConfirm(ctx, request);
         return *this;
     }
 
-    if (request.addresses.source != ctx.addresses.destination)
-        return *this;
-
-    if (!ctx.unsol.seq.confirmNum.Equals(request.header.control.SEQ))
-    {
-        FORMAT_LOG_BLOCK(ctx.logger, flags::WARN, "unsolicited confirm with wrong seq: %u, expected: %u",
-                         request.header.control.SEQ, ctx.unsol.seq.confirmNum.Get());
-        return *this;
-    }
-
-    ctx.history.Reset(); // any time we get a confirm we can treat any request as a new request
-    ctx.confirmTimer.cancel();
-    ctx.confirmTimerPending = false;
+    ctx.unsolConfirm.Cancel();
     ctx.lastBroadcastMessageReceived.clear();
 
     // information the application about the confirm
@@ -207,7 +172,8 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirm(OContext& ctx, const Par
 
     ctx.shouldCheckForUnsolicited = true;
 
-    return StateIdle::Inst();
+    return ctx.solConfirm.active ? static_cast<OutstationState&>(StateSolicitedConfirmWait::Inst())
+                                 : StateIdle::Inst();
 }
 
 OutstationState& StateUnsolicitedConfirmWait::OnConfirmTimeout(OContext& ctx)
@@ -216,7 +182,8 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirmTimeout(OContext& ctx)
 
     if (!ctx.CanTransmit())
     {
-        ctx.RestartUnsolConfirmTimer();
+        // Process the expired wait after the other transmission relinquishes its buffer.
+        ctx.unsolConfirm.timeoutPending = true;
         return *this;
     }
 
@@ -235,11 +202,14 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirmTimeout(OContext& ctx)
         }
     }
 
-    return StateIdle::Inst();
+    ctx.unsolConfirm.Cancel();
+    return ctx.solConfirm.active ? static_cast<OutstationState&>(StateSolicitedConfirmWait::Inst())
+                                 : StateIdle::Inst();
 }
 
 OutstationState& StateUnsolicitedConfirmWait::OnNewReadRequest(OContext& ctx, const ParsedRequest& request)
 {
+    ctx.solConfirm.Cancel();
     ctx.deferred.Set(request);
     return *this;
 }
@@ -253,8 +223,8 @@ OutstationState& StateUnsolicitedConfirmWait::OnNewNonReadRequest(OContext& ctx,
 
 OutstationState& StateUnsolicitedConfirmWait::OnRepeatNonReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.BeginRetransmitLastResponse(request.addresses.source);
-    return *this;
+    ctx.deferred.Reset();
+    return ctx.RetransmitSolicitedResponse(request);
 }
 
 OutstationState& StateUnsolicitedConfirmWait::OnRepeatReadRequest(OContext& ctx, const ParsedRequest& request)
@@ -265,8 +235,10 @@ OutstationState& StateUnsolicitedConfirmWait::OnRepeatReadRequest(OContext& ctx,
 
 OutstationState& StateUnsolicitedConfirmWait::OnBroadcastMessage(OContext& ctx, const ParsedRequest& request)
 {
+    ctx.solConfirm.Cancel();
+    ctx.deferred.Reset();
     ctx.ProcessBroadcastRequest(request);
-    return StateIdle::Inst();
+    return *this;
 }
 
 // ------------- StateUnsolicitedConfirmWait ----------------
@@ -275,7 +247,7 @@ StateNullUnsolicitedConfirmWait StateNullUnsolicitedConfirmWait::instance;
 
 OutstationState& StateNullUnsolicitedConfirmWait::OnNewReadRequest(OContext& ctx, const ParsedRequest& request)
 {
-    ctx.confirmTimer.cancel();
+    ctx.unsolConfirm.Cancel();
     return ctx.RespondToReadRequest(request);
 }
 

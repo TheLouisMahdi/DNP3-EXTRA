@@ -201,9 +201,11 @@ private:
 
     // ---- common helper methods ----
 
-    OutstationState& BeginResponseTx(uint16_t destination, APDUResponse& response);
+    OutstationState& BeginResponseTx(uint16_t destination, APDUResponse& response, bool readResponse);
 
-    void BeginRetransmitLastResponse(uint16_t destination);
+    OutstationState& RetransmitSolicitedResponse(const ParsedRequest& request);
+
+    void AbandonSolicitedRead();
 
     void BeginRetransmitLastUnsolicitedResponse();
 
@@ -225,7 +227,24 @@ private:
 
     void RestartUnsolConfirmTimer();
 
-    void RestartConfirmTimer(TimeDuration timeout);
+    struct ConfirmWait
+    {
+        exe4cpp::Timer timer;
+        bool active = false;
+        bool startOnTxReady = false;
+        bool timeoutPending = false;
+        bool queued = false;
+
+        void Cancel()
+        {
+            timer.cancel();
+            active = startOnTxReady = timeoutPending = queued = false;
+        }
+    };
+
+    void RestartConfirmTimer(bool unsolicited);
+
+    void CheckForDeferredConfirms();
 
     bool CanTransmit() const;
 
@@ -285,10 +304,10 @@ private:
     bool isOnline;
     bool isTransmitting;
     IINField staticIIN;
-    exe4cpp::Timer confirmTimer;
-    TimeDuration pendingConfirmDuration;
-    bool confirmTimerPending = false;
-    uint16_t solConfirmSource = 0;
+    ConfirmWait solConfirm;
+    ConfirmWait unsolConfirm;
+    bool solicitedReadSelection = false;
+    uint16_t solResponseSource = 0;
     RequestHistory history;
     RequestHistory noAckHistory;
     Addresses noAckPeer;

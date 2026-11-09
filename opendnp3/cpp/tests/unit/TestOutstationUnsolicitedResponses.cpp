@@ -182,10 +182,11 @@ TEST_CASE(SUITE("UnsolConfirmTimeout"))
 
 TEST_CASE(SUITE("UnsolNumRetries"))
 {
+    const auto retries = GENERATE(1u, 3u, 5u);
     OutstationConfig cfg;
     cfg.params.allowUnsolicited = true;
     cfg.params.unsolConfirmTimeout = TimeDuration::Seconds(5);
-    cfg.params.numUnsolRetries = NumRetries::Fixed(3);
+    cfg.params.numUnsolRetries = NumRetries::Fixed(retries);
     cfg.params.unsolClassMask = ClassField::AllEventClasses();
     cfg.eventBufferConfig = EventBufferConfig::AllTypes(5);
     auto database = configure::by_count_of::binary_input(1);
@@ -206,8 +207,8 @@ TEST_CASE(SUITE("UnsolNumRetries"))
     REQUIRE(t.NumPendingTimers() == 0);
     t.OnTxReady();
 
-    // Check the 3 retries after the original unsolicited response.
-    for (unsigned int i = 0; i < 3; ++i)
+    // Check the configured retries after the original unsolicited response.
+    for (unsigned int i = 0; i < retries; ++i)
     {
         REQUIRE(t.NumPendingTimers() == 1); // confirm timer
         REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
@@ -230,8 +231,8 @@ TEST_CASE(SUITE("UnsolNumRetries"))
     REQUIRE(t.NumPendingTimers() == 0);
     t.OnTxReady();
 
-    // Check seq number increment and 3 retries
-    for (unsigned int i = 0; i < 3; ++i)
+    // Check seq number increment and the configured retries
+    for (unsigned int i = 0; i < retries; ++i)
     {
         REQUIRE(t.NumPendingTimers() == 1); // confirm timer
         REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
@@ -321,6 +322,152 @@ TEST_CASE(SUITE("Confirm received while unsolicited transmission is pending"))
     t.OnTxReady();
     REQUIRE(t.NumPendingTimers() == 0);
     REQUIRE(t.lower->PopWriteAsHex().empty());
+}
+
+TEST_CASE(SUITE("SolicitedAndUnsolicitedConfirmDeadlinesAreIndependent"))
+{
+    const bool solicitedFirst = GENERATE(false, true);
+    const auto arrival = GENERATE(9, 10, 11);
+    OutstationConfig config;
+    config.params.allowUnsolicited = true;
+    config.params.unsolClassMask = ClassField::AllEventClasses();
+    config.params.solConfirmTimeout = TimeDuration::Milliseconds(solicitedFirst ? 10 : 20);
+    config.params.unsolConfirmTimeout = TimeDuration::Milliseconds(solicitedFirst ? 20 : 10);
+    config.params.numUnsolRetries = NumRetries::Fixed(0);
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(1));
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0));
+    t.OnTxReady();
+    t.SendToOutstation(hex::UnsolConfirm(0));
+
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
+    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+    t.OnTxReady();
+    t.BroadcastToOutstation(LinkBroadcastAddress::ShallConfirm, hex::ClearRestartIIN(0));
+    t.SendToOutstation(hex::RecordCurrentTime(2));
+    REQUIRE(t.lower->PopWriteAsHex() == "E2 81 01 00");
+    t.OnTxReady();
+    REQUIRE(t.NumPendingTimers() == 2);
+
+    t.AdvanceTime(TimeDuration::Milliseconds(arrival));
+    t.SendToOutstation(solicitedFirst ? hex::SolicitedConfirm(2) : hex::UnsolConfirm(1));
+    REQUIRE(t.NumPendingTimers() == 1);
+    REQUIRE(t.application->confirms.size() == (arrival < 10 ? 2 : 1));
+
+    t.SendToOutstation(solicitedFirst ? hex::UnsolConfirm(1) : hex::SolicitedConfirm(2));
+    REQUIRE(t.NumPendingTimers() == 0);
+    REQUIRE(t.application->confirms.size() == (arrival < 10 ? 3 : 2));
+    const bool eventConfirmed = solicitedFirst || arrival < 10;
+    t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == (eventConfirmed ? "C3 81 00 00"
+                                                       : "E3 81 00 00 02 01 28 01 00 00 00 81"));
+}
+
+TEST_CASE(SUITE("BusyTransmitterQueuesConfirmsForBothOwnersWithoutReleasingWrongEvents"))
+{
+    OutstationConfig config;
+    config.params.allowUnsolicited = true;
+    config.params.unsolClassMask = ClassField::AllEventClasses();
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(1));
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0));
+    t.OnTxReady();
+    t.SendToOutstation(hex::UnsolConfirm(0));
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
+    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+    t.OnTxReady();
+
+    t.BroadcastToOutstation(LinkBroadcastAddress::ShallConfirm, hex::ClearRestartIIN(0));
+    t.SendToOutstation(hex::RecordCurrentTime(2));
+    REQUIRE(t.lower->PopWriteAsHex() == "E2 81 01 00");
+    t.SendToOutstation(hex::SolicitedConfirm(2));
+    t.SendToOutstation(hex::UnsolConfirm(1));
+    t.SendToOutstation(hex::UnsolConfirm(2));
+    REQUIRE(t.application->confirms.size() == 1); // Only startup NULL.
+    t.OnTxReady();
+    REQUIRE(t.application->confirms.size() == 3);
+    REQUIRE_FALSE(t.application->confirms[1].is_unsolicited);
+    REQUIRE(t.application->confirms[1].num_class1 == 0);
+    REQUIRE(t.application->confirms[2].is_unsolicited);
+    REQUIRE(t.application->confirms[2].num_class1 == 0);
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C3 81 00 00");
+}
+
+TEST_CASE(SUITE("UnsolicitedDeadlineDoesNotMoveWhileSolicitedTransmissionIsBusy"))
+{
+    const bool early = GENERATE(false, true);
+    OutstationConfig config;
+    config.params.allowUnsolicited = true;
+    config.params.unsolClassMask = ClassField::AllEventClasses();
+    config.params.unsolConfirmTimeout = TimeDuration::Milliseconds(10);
+    config.params.numUnsolRetries = NumRetries::Fixed(0);
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(1));
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0));
+    t.OnTxReady();
+    t.SendToOutstation(hex::UnsolConfirm(0));
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
+    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+    t.OnTxReady();
+
+    t.SendToOutstation(hex::RecordCurrentTime(2));
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 80 00");
+    t.AdvanceTime(TimeDuration::Milliseconds(9));
+    if (early)
+        t.SendToOutstation(hex::UnsolConfirm(1));
+    t.AdvanceTime(TimeDuration::Milliseconds(2));
+    if (!early)
+        t.SendToOutstation(hex::UnsolConfirm(1));
+    REQUIRE(t.application->confirms.size() == 1);
+    t.OnTxReady();
+    REQUIRE(t.application->confirms.size() == (early ? 2 : 1));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == (early ? "C3 81 80 00"
+                                                : "E3 81 80 00 02 01 28 01 00 00 00 81"));
+}
+
+TEST_CASE(SUITE("UnsolicitedSelectionInvalidatesAnExpiredReadCache"))
+{
+    OutstationConfig config;
+    config.params.allowUnsolicited = true;
+    config.params.unsolClassMask = ClassField(PointClass::Class2);
+    config.params.solConfirmTimeout = TimeDuration::Milliseconds(10);
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    auto database = configure::by_count_of::binary_input(3);
+    database.binary_input[2].clazz = PointClass::Class2;
+    OutstationTestObject t(config, database);
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0));
+    t.OnTxReady();
+    t.SendToOutstation(hex::UnsolConfirm(0));
+
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
+    const auto read = hex::ClassPoll(0, PointClass::Class1);
+    t.SendToOutstation(read);
+    REQUIRE(t.lower->PopWriteAsHex() == "E0 81 80 00 02 01 28 01 00 00 00 81");
+    t.OnTxReady();
+    t.AdvanceTime(TimeDuration::Milliseconds(10));
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(Binary(false), 1);
+        db.Update(Binary(true), 2);
+    });
+    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 82 00 02 01 28 01 00 02 00 81");
+    t.OnTxReady();
+    t.SendToOutstation(read);
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->NumWrites() == 0);
+    t.SendToOutstation(hex::UnsolConfirm(1));
+    REQUIRE(t.lower->PopWriteAsHex() == "E0 81 80 00 02 01 28 02 00 00 00 81 01 00 01");
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 00");
 }
 
 TEST_CASE(SUITE("UnsolData"))

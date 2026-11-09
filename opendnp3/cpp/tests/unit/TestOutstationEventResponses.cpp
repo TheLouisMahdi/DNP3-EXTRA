@@ -27,6 +27,8 @@
 
 #include <functional>
 
+#include <stdexcept>
+
 using namespace opendnp3;
 
 #define SUITE(name) "OutstationEventResponsesTestSuite - " name
@@ -212,6 +214,100 @@ TEST_CASE(SUITE("SolicitedConfirmTimeoutRetainsEventsAndStopsOldFragmentSequence
 
     t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
     REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00");
+}
+
+TEST_CASE(SUITE("SparseMixedSelectedVariationsFragmentWithBothEventQualifiers"))
+{
+    const bool narrow = GENERATE(false, true);
+    OutstationConfig config;
+    config.params.maxTxFragSize = 20;
+    config.params.prefer8BitEventQualifiers = narrow;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    DatabaseConfig database;
+    database.double_binary[7].clazz = PointClass::Class1;
+    database.analog_input[9].clazz = PointClass::Class1;
+    database.analog_output_status[4].svariation = StaticAnalogOutputStatusVariation::Group40Var3;
+    database.analog_output_status[300].svariation = StaticAnalogOutputStatusVariation::Group40Var3;
+    OutstationTestObject t(config, database);
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(DoubleBitBinary(DoubleBit::DETERMINED_ON, Flags(0x01), DNPTime(0x010203040506)), 7);
+        db.Update(Analog(12.5, Flags(0x01)), 9);
+        db.Update(AnalogOutputStatus(1.25, Flags(0x01)), 4, EventMode::Suppress);
+        db.Update(AnalogOutputStatus(-2.5, Flags(0x01)), 300, EventMode::Suppress);
+    });
+
+    t.SendToOutstation("C0 01 04 02 06 20 05 06 28 03 06");
+    REQUIRE(t.lower->PopWriteAsHex() == (narrow ? "A0 81 82 00 04 02 17 01 07 81 06 05 04 03 02 01"
+                                               : "A0 81 82 00 04 02 28 01 00 07 00 81 06 05 04 03 02 01"));
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->PopWriteAsHex() == (narrow ? "21 81 80 00 20 05 17 01 09 01 00 00 48 41"
+                                               : "21 81 80 00 20 05 28 01 00 09 00 01 00 00 48 41"));
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.lower->PopWriteAsHex() == "22 81 80 00 28 03 01 04 00 04 00 01 00 00 A0 3F");
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(2));
+    REQUIRE(t.lower->PopWriteAsHex() == "43 81 80 00 28 03 01 2C 01 2C 01 01 00 00 20 C0");
+    t.OnTxReady();
+    t.SendToOutstation(hex::ClassPoll(4, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C4 81 80 00");
+}
+
+TEST_CASE(SUITE("RepeatedReadReopensExpiredConfirmationForTheSameFragment"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 12;
+    config.params.solConfirmTimeout = TimeDuration::Milliseconds(10);
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(2));
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(Binary(true), 0);
+        db.Update(Binary(false), 1);
+    });
+
+    const auto request = hex::ClassPoll(0, PointClass::Class1);
+    const auto first = "A0 81 82 00 02 01 28 01 00 00 00 81";
+    const auto second = "61 81 80 00 02 01 28 01 00 01 00 01";
+    t.SendToOutstation(request);
+    REQUIRE(t.lower->PopWriteAsHex() == first);
+    t.OnTxReady();
+    t.AdvanceTime(TimeDuration::Milliseconds(10));
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.empty());
+
+    t.SendToOutstation(request);
+    REQUIRE(t.lower->PopWriteAsHex() == first);
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->PopWriteAsHex() == second);
+    t.OnTxReady();
+    t.AdvanceTime(TimeDuration::Milliseconds(10));
+
+    t.SendToOutstation(request);
+    REQUIRE(t.lower->PopWriteAsHex() == second);
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.application->confirms.size() == 2);
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.SendToOutstation(request);
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 81 80 00");
+}
+
+TEST_CASE(SUITE("TooSmallResponseHeaderCapacityIsRejected"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 3;
+    REQUIRE_THROWS_AS(OutstationTestObject(config, DatabaseConfig()), std::invalid_argument);
+
+    config.params.maxTxFragSize = 4;
+    OutstationTestObject t(config, DatabaseConfig());
+    t.LowerLayerUp();
+    t.SendToOutstation(hex::ClassPoll(0, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 81 80 00");
 }
 
 TEST_CASE(SUITE("OversizedSolicitedEventCannotStartConfirmLoopAndSurvivesReconnect"))

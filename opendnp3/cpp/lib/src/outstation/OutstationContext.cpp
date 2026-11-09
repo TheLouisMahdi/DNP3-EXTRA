@@ -83,6 +83,9 @@ OContext::OContext(const Addresses& addresses,
       unsolRetries(config.params.numUnsolRetries),
       shouldCheckForUnsolicited(false)
 {
+    if (params.maxTxFragSize < APDUHeader::RESPONSE_SIZE)
+        throw std::invalid_argument("Transmit fragment capacity must fit the application response header");
+
     if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
     {
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -170,10 +173,10 @@ bool OContext::OnLowerLayerDown()
     noAckHistory.Reset();
     control.Unselect();
     deferred.Reset();
+    AbandonSolicitedRead();
     eventBuffer.Unselect();
-    rspContext.Reset();
-    confirmTimerPending = false;
-    confirmTimer.cancel();
+    solConfirm.Cancel();
+    unsolConfirm.Cancel();
 
     return true;
 }
@@ -186,8 +189,10 @@ bool OContext::OnTxReady()
     }
 
     this->isTransmitting = false;
-    if (confirmTimerPending)
-        RestartConfirmTimer(pendingConfirmDuration);
+    if (solConfirm.startOnTxReady)
+        RestartSolConfirmTimer();
+    if (unsolConfirm.startOnTxReady)
+        RestartUnsolConfirmTimer();
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
     {
@@ -221,7 +226,8 @@ OutstationState& OContext::OnReceiveSolRequest(const ParsedRequest& request)
     // analyze this request to see how it compares to the last request
     if (this->history.HasLastRequest())
     {
-        if (this->sol.seq.num.Equals(request.header.control.SEQ))
+        if (this->sol.seq.num.Equals(request.header.control.SEQ)
+            && request.addresses.source == this->solResponseSource)
         {
             if (this->history.FullyEqualsLastRequest(request.header, request.objects))
             {
@@ -288,21 +294,26 @@ bool OContext::ProcessObjects(const ParsedRequest& request)
         return this->ProcessRequestNoAck(request);
     }
 
-    if (this->isTransmitting)
-    {
-        if (request.header.function == FunctionCode::CONFIRM && this->state == &StateSolicitedConfirmWait::Inst()
-            && (request.header.control.UNS || request.addresses.source != this->solConfirmSource
-                || !this->sol.seq.confirmNum.Equals(request.header.control.SEQ)))
-        {
-            return false; // A mismatched CONFIRM must not displace a deferred one.
-        }
-        this->deferred.Set(request);
-        return true;
-    }
-
     if (request.header.function == FunctionCode::CONFIRM)
     {
+        auto& wait = request.header.control.UNS ? unsolConfirm : solConfirm;
+        const auto source = request.header.control.UNS ? addresses.destination : solResponseSource;
+        const auto& seq = request.header.control.UNS ? unsol.seq.confirmNum : sol.seq.confirmNum;
+        if (!wait.active || wait.timeoutPending || request.addresses.source != source
+            || !seq.Equals(request.header.control.SEQ))
+            return false;
+        if (this->isTransmitting)
+        {
+            wait.queued = true;
+            return true;
+        }
         return this->ProcessConfirm(request);
+    }
+
+    if (this->isTransmitting)
+    {
+        this->deferred.Set(request);
+        return true;
     }
 
     return this->ProcessRequest(request);
@@ -327,18 +338,20 @@ bool OContext::ProcessConfirm(const ParsedRequest& request)
     return true;
 }
 
-OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& response)
+OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& response, bool readResponse)
 {
+    solConfirm.Cancel();
     CheckForBroadcastConfirmation(response);
 
     const auto data = response.ToRSeq();
     this->sol.tx.Record(response.GetControl(), data);
     this->sol.seq.confirmNum = response.GetControl().SEQ;
+    this->solResponseSource = destination;
+    this->solicitedReadSelection = readResponse && response.GetControl().CON;
     this->BeginTx(destination, data);
 
     if (response.GetControl().CON)
     {
-        this->solConfirmSource = destination;
         this->RestartSolConfirmTimer();
         return StateSolicitedConfirmWait::Inst();
     }
@@ -346,9 +359,28 @@ OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& r
     return StateIdle::Inst();
 }
 
-void OContext::BeginRetransmitLastResponse(uint16_t destination)
+OutstationState& OContext::RetransmitSolicitedResponse(const ParsedRequest& request)
 {
-    this->BeginTx(destination, this->sol.tx.GetLastResponse());
+    this->BeginTx(request.addresses.source, this->sol.tx.GetLastResponse());
+    if (this->sol.tx.GetLastControl().CON)
+        this->RestartSolConfirmTimer();
+
+    if (this->unsolConfirm.active)
+        return *this->state;
+    return this->solConfirm.active ? static_cast<OutstationState&>(StateSolicitedConfirmWait::Inst())
+                                   : StateIdle::Inst();
+}
+
+void OContext::AbandonSolicitedRead()
+{
+    if (!this->solicitedReadSelection)
+        return;
+
+    this->solicitedReadSelection = false;
+    this->history.Reset();
+    this->rspContext.Reset();
+    this->database.Unselect();
+    this->eventBuffer.Unselect();
 }
 
 void OContext::BeginRetransmitLastUnsolicitedResponse()
@@ -450,12 +482,34 @@ void OContext::CheckForTaskStart()
         && (authentication->monitoringPending || authentication->pendingWireSize))
         return;
 #endif
-    // do these checks in order of priority
+    // Confirmations are per owner and do not replace a deferred request.
+    this->CheckForDeferredConfirms();
+    if (this->CanTransmit() && this->unsolConfirm.timeoutPending)
+    {
+        this->unsolConfirm.timeoutPending = false;
+        this->state = &this->state->OnConfirmTimeout(*this);
+    }
     this->CheckForDeferredRequest();
     this->CheckForUnsolicitedNull();
     if (this->shouldCheckForUnsolicited)
     {
         this->CheckForUnsolicited();
+    }
+}
+
+void OContext::CheckForDeferredConfirms()
+{
+    if (this->CanTransmit() && this->solConfirm.queued)
+    {
+        this->solConfirm.queued = false;
+        this->ProcessConfirm(ParsedRequest(Addresses(this->solResponseSource, this->addresses.source),
+                                           APDUHeader::SolicitedConfirm(this->sol.seq.confirmNum.Get()), {}));
+    }
+    if (this->CanTransmit() && this->unsolConfirm.queued)
+    {
+        this->unsolConfirm.queued = false;
+        this->ProcessConfirm(ParsedRequest(this->addresses.Reverse(),
+                                           APDUHeader::UnsolicitedConfirm(this->unsol.seq.confirmNum.Get()), {}));
     }
 }
 
@@ -503,6 +557,7 @@ void OContext::CheckForUnsolicited()
                 auto writer = response.GetWriter();
 
                 this->unsolRetries.Reset();
+                this->AbandonSolicitedRead();
                 this->eventBuffer.Unselect();
                 this->eventBuffer.SelectAllByClass(this->params.unsolClassMask);
                 this->eventBuffer.Load(writer);
@@ -518,15 +573,9 @@ void OContext::CheckForUnsolicited()
 
 bool OContext::ProcessDeferredRequest(const ParsedRequest& request)
 {
-    if (request.header.function == FunctionCode::CONFIRM)
-    {
-        this->ProcessConfirm(request);
-        return true;
-    }
-
     if (request.header.function == FunctionCode::READ)
     {
-        if (this->state->IsIdle())
+        if (!this->unsolConfirm.active)
         {
             this->ProcessRequest(request);
             return true;
@@ -543,32 +592,46 @@ bool OContext::ProcessDeferredRequest(const ParsedRequest& request)
 
 void OContext::RestartSolConfirmTimer()
 {
-    RestartConfirmTimer(params.solConfirmTimeout);
+    RestartConfirmTimer(false);
 }
 
 void OContext::RestartUnsolConfirmTimer()
 {
-    RestartConfirmTimer(params.unsolConfirmTimeout);
+    RestartConfirmTimer(true);
 }
 
-void OContext::RestartConfirmTimer(TimeDuration duration)
+void OContext::RestartConfirmTimer(bool unsolicited)
 {
-    confirmTimer.cancel();
-    confirmTimerPending = isTransmitting;
-    if (confirmTimerPending)
-    {
-        pendingConfirmDuration = duration;
+    auto& wait = unsolicited ? this->unsolConfirm : this->solConfirm;
+    wait.timer.cancel();
+    wait.active = true;
+    wait.startOnTxReady = this->isTransmitting;
+    if (wait.startOnTxReady)
         return;
-    }
 
-    confirmTimer = executor->start(duration.value, [this]() {
-        state = &state->OnConfirmTimeout(*this);
+    const auto duration = unsolicited ? params.unsolConfirmTimeout : params.solConfirmTimeout;
+    wait.timer = executor->start(duration.value, [this, unsolicited]() {
+        // An on-time FC0 already owns the response. TX readiness only gates processing.
+        if ((unsolicited ? unsolConfirm : solConfirm).queued)
+            return;
+        if (unsolicited)
+        {
+            state = &state->OnConfirmTimeout(*this);
+        }
+        else
+        {
+            solConfirm.Cancel();
+            auto& next = StateSolicitedConfirmWait::Inst().OnConfirmTimeout(*this);
+            if (!unsolConfirm.active)
+                state = &next;
+        }
         CheckForTaskStart();
     });
 }
 
 OutstationState& OContext::RespondToNonReadRequest(const ParsedRequest& request)
 {
+    this->AbandonSolicitedRead();
     this->history.RecordLastProcessedRequest(request.header, request.objects);
 
     auto response = this->sol.tx.Start();
@@ -577,7 +640,7 @@ OutstationState& OContext::RespondToNonReadRequest(const ParsedRequest& request)
     response.SetControl(AppControlField(true, true, false, false, request.header.control.SEQ));
     auto iin = this->HandleNonReadResponse(request, writer);
     response.SetIIN(iin | this->GetResponseIIN());
-    return this->BeginResponseTx(request.addresses.source, response);
+    return this->BeginResponseTx(request.addresses.source, response, false);
 }
 
 OutstationState& OContext::RespondToReadRequest(const ParsedRequest& request)
@@ -592,7 +655,7 @@ OutstationState& OContext::RespondToReadRequest(const ParsedRequest& request)
     response.SetControl(result.second);
     response.SetIIN(result.first | this->GetResponseIIN());
 
-    return this->BeginResponseTx(request.addresses.source, response);
+    return this->BeginResponseTx(request.addresses.source, response, true);
 }
 
 OutstationState& OContext::ContinueMultiFragResponse(const Addresses& addresses, const AppSeqNum& seq)
@@ -606,7 +669,10 @@ OutstationState& OContext::ContinueMultiFragResponse(const Addresses& addresses,
     response.SetControl(control);
     response.SetIIN(iin | this->GetResponseIIN());
 
-    return this->BeginResponseTx(addresses.source, response);
+    auto& next = this->BeginResponseTx(addresses.source, response, true);
+    if (!this->solicitedReadSelection)
+        this->history.Reset();
+    return next;
 }
 
 bool OContext::CanTransmit() const
