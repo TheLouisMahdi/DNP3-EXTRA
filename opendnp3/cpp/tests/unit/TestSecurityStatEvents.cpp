@@ -220,7 +220,7 @@ TEST_CASE("SecurityStatEvents - failed save marks later G122 events discontinuou
     REQUIRE(f.Write()
             == "E0 81 00 00 7A 01 28 04 00 "
                "00 00 01 00 00 01 00 00 00 "
-               "00 00 01 00 00 02 00 00 00 "
+               "00 00 41 00 00 02 00 00 00 "
                "00 00 41 00 00 03 00 00 00 "
                "00 00 41 00 00 04 00 00 00");
 }
