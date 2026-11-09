@@ -100,6 +100,7 @@ bool LinkContext::OnLowerLayerDown()
     isOnline = false;
     linkFailed = false;
     remoteReset = false;
+    confirmedRecoveryUsed = false;
     confirmedFrame = ser4cpp::rseq_t();
     keepAliveTimeout = false;
     pSegments = nullptr;
@@ -190,6 +191,7 @@ bool LinkContext::ShouldConfirm(const ITransportSegment& segments) const
 
 void LinkContext::BeginConfirmed(const Addresses& addresses)
 {
+    confirmedRecoveryUsed = false;
     if (confirmedAddresses != addresses)
     {
         confirmedAddresses = addresses;
@@ -220,12 +222,23 @@ void LinkContext::QueueConfirmedFrame()
 
 bool LinkContext::OnConfirmedResponse(bool accepted)
 {
+    return HandleConfirmedResponse(accepted ? ConfirmedResponse::Accepted : ConfirmedResponse::Rejected);
+}
+
+bool LinkContext::OnConfirmedNack(bool receiveBuffFull)
+{
+    return HandleConfirmedResponse(receiveBuffFull ? ConfirmedResponse::Rejected
+                                                   : ConfirmedResponse::RecoverableNack);
+}
+
+bool LinkContext::HandleConfirmedResponse(ConfirmedResponse response)
+{
     if (confirmedWriteComplete)
-        return FinishConfirmedFrame(accepted);
+        return FinishConfirmedFrame(response);
 
     if (txMode == LinkTransmitMode::Primary && !pendingPriTx.is_set()
         && earlyConfirmedResponse == ConfirmedResponse::None)
-        earlyConfirmedResponse = accepted ? ConfirmedResponse::Accepted : ConfirmedResponse::Rejected;
+        earlyConfirmedResponse = response;
 
     return true;
 }
@@ -234,7 +247,7 @@ bool LinkContext::OnConfirmedWriteComplete()
 {
     confirmedWriteComplete = true;
     if (earlyConfirmedResponse != ConfirmedResponse::None)
-        return FinishConfirmedFrame(earlyConfirmedResponse == ConfirmedResponse::Accepted);
+        return FinishConfirmedFrame(earlyConfirmedResponse);
 
     StartResponseTimer();
     return true;
@@ -256,10 +269,18 @@ bool LinkContext::RetryConfirmed()
     return true;
 }
 
-bool LinkContext::FinishConfirmedFrame(bool accepted)
+bool LinkContext::FinishConfirmedFrame(ConfirmedResponse response)
 {
     CancelTimer();
-    if (!accepted)
+    if (response == ConfirmedResponse::RecoverableNack && remoteReset && !confirmedRecoveryUsed)
+    {
+        confirmedRecoveryUsed = true;
+        remoteReset = false;
+        QueueConfirmedFrame();
+        return true;
+    }
+
+    if (response != ConfirmedResponse::Accepted)
     {
         FailConfirmed();
         return false;

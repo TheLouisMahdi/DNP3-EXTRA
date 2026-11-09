@@ -50,6 +50,7 @@ public:
 
     // ILinkTx interface
     void BeginTransmit(const ser4cpp::rseq_t& buffer, opendnp3::ILinkSession& context) final;
+    void OnLinkTransmitFailure() final;
 
     static opendnp3::LinkLayerConfig DefaultConfig();
 
@@ -62,9 +63,11 @@ public:
 
     std::string PopLastWriteAsHex();
     uint32_t NumTotalWrites();
+    uint32_t NumTransmitFailures() const;
 
 private:
     uint32_t numTotalWrites;
+    uint32_t numTransmitFailures = 0;
 
     std::deque<std::string> writeQueue;
 };

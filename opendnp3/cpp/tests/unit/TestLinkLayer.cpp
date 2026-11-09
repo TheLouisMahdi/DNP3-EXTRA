@@ -504,6 +504,269 @@ TEST_CASE(SUITE("Confirmed retries are bounded and start after transmit completi
     }
 }
 
+TEST_CASE(SUITE("Confirmed NACK DFC zero recovers once per logical send"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 0;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment first(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(first));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    const auto firstData = LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA");
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == firstData);
+    REQUIRE(t.link.OnTxReady());
+
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.NumTotalWrites() == 3);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == firstData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 1);
+    REQUIRE(t.NumTransmitFailures() == 0);
+
+    // A completed send gets a new recovery allowance and continues with the synchronized FCB.
+    MockTransportSegment second(1, "BB", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(second));
+    const auto secondData = LinkHex::ConfirmedUserData(true, false, config.RemoteAddr, config.LocalAddr, "BB");
+    REQUIRE(t.PopLastWriteAsHex() == secondData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "BB"));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 2);
+    REQUIRE(t.NumTransmitFailures() == 0);
+}
+
+TEST_CASE(SUITE("Confirmed DFC one and reset NACK fail without recovery"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+
+    SECTION("ACK DFC one fails the user-data transaction")
+    {
+        LinkLayerTest t(config);
+        REQUIRE(t.link.OnLowerLayerUp());
+        MockTransportSegment segments(1, "AA BB", config.GetAddresses());
+        REQUIRE(t.upper->SendDown(segments));
+        REQUIRE(t.PopLastWriteAsHex() == reset);
+        REQUIRE(t.link.OnTxReady());
+        REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.PopLastWriteAsHex()
+                == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+        REQUIRE(t.link.OnTxReady());
+
+        REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, true, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.NumTotalWrites() == 2);
+        REQUIRE(t.NumTransmitFailures() == 1);
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+        REQUIRE_FALSE(t.upper->SendDown(segments));
+    }
+
+    SECTION("NACK DFC one fails without a busy retry")
+    {
+        LinkLayerTest t(config);
+        REQUIRE(t.link.OnLowerLayerUp());
+        MockTransportSegment segments(1, "AA", config.GetAddresses());
+        REQUIRE(t.upper->SendDown(segments));
+        REQUIRE(t.PopLastWriteAsHex() == reset);
+        REQUIRE(t.link.OnTxReady());
+        REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.PopLastWriteAsHex()
+                == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+        REQUIRE(t.link.OnTxReady());
+
+        REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, true, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.NumTotalWrites() == 2);
+        REQUIRE(t.NumTransmitFailures() == 1);
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+    }
+
+    SECTION("NACK during reset synchronization does not recursively reset")
+    {
+        LinkLayerTest t(config);
+        REQUIRE(t.link.OnLowerLayerUp());
+        MockTransportSegment segments(1, "AA", config.GetAddresses());
+        REQUIRE(t.upper->SendDown(segments));
+        REQUIRE(t.PopLastWriteAsHex() == reset);
+        REQUIRE(t.link.OnTxReady());
+
+        REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.NumTotalWrites() == 1);
+        REQUIRE(t.NumTransmitFailures() == 1);
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+    }
+
+    SECTION("NACK during recovery reset does not start another reset")
+    {
+        LinkLayerTest t(config);
+        REQUIRE(t.link.OnLowerLayerUp());
+        MockTransportSegment segments(1, "AA", config.GetAddresses());
+        REQUIRE(t.upper->SendDown(segments));
+        REQUIRE(t.PopLastWriteAsHex() == reset);
+        REQUIRE(t.link.OnTxReady());
+        REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.PopLastWriteAsHex()
+                == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+        REQUIRE(t.link.OnTxReady());
+
+        REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.PopLastWriteAsHex() == reset);
+        REQUIRE(t.link.OnTxReady());
+        REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.NumTotalWrites() == 3);
+        REQUIRE(t.NumTransmitFailures() == 1);
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+    }
+}
+
+TEST_CASE(SUITE("Confirmed recovery allowance is shared across segments"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment segments(1, "AA BB", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(segments));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+
+    const auto firstData = LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA");
+    REQUIRE(t.PopLastWriteAsHex() == firstData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == firstData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+
+    const auto secondData = LinkHex::ConfirmedUserData(true, false, config.RemoteAddr, config.LocalAddr, "BB");
+    REQUIRE(t.PopLastWriteAsHex() == secondData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.NumTotalWrites() == 5);
+    REQUIRE(t.NumTransmitFailures() == 1);
+    REQUIRE(t.upper->GetCounters().numTxReady == 0);
+}
+
+TEST_CASE(SUITE("Confirmed reset recovery timeout remains bounded"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment segments(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(segments));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.NumTotalWrites() == 4);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.NumTotalWrites() == 4);
+    REQUIRE(t.NumTransmitFailures() == 1);
+    REQUIRE(t.upper->GetCounters().numTxReady == 0);
+}
+
+TEST_CASE(SUITE("Confirmed early NACK waits for TX completion and reconnect resets recovery"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 0;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment first(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(first));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) == 0);
+    REQUIRE(t.link.OnTxReady());
+
+    const auto firstData = LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA");
+    REQUIRE(t.PopLastWriteAsHex() == firstData);
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) == 0);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == firstData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 1);
+
+    REQUIRE(t.link.OnLowerLayerDown());
+    REQUIRE(t.link.OnLowerLayerUp());
+    MockTransportSegment second(1, "BB", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(second));
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    const auto secondData = LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "BB");
+    REQUIRE(t.PopLastWriteAsHex() == secondData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex() == secondData);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 2);
+    REQUIRE(t.NumTransmitFailures() == 0);
+}
+
 TEST_CASE(SUITE("Confirmed link rejects retry limits above five"))
 {
     LinkConfig config(true);
@@ -573,11 +836,19 @@ TEST_CASE(SUITE("Confirmed response ownership rejects wrong peer and stale statu
     REQUIRE(t.PopLastWriteAsHex()
             == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
     REQUIRE(t.link.OnTxReady());
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::SEC_NACK, false, false, false, config.LocalAddr, 999));
+    REQUIRE(t.OnFrame(LinkFunction::SEC_LINK_STATUS, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.NumTotalWrites() == 3);
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+    REQUIRE(t.link.OnTxReady());
     REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
     REQUIRE(t.exe->run_many() > 0);
     REQUIRE(t.upper->GetCounters().numTxReady == 1);
     REQUIRE(t.exe->advance_time(std::chrono::milliseconds(20)) == 0);
-    REQUIRE(t.NumTotalWrites() == 3);
+    REQUIRE(t.NumTotalWrites() == 4);
 }
 
 TEST_CASE(SUITE("Confirmed ACK received before TX callback completes the reset exchange"))

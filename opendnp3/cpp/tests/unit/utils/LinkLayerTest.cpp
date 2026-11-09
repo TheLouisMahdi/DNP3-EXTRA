@@ -77,6 +77,16 @@ void LinkLayerTest::BeginTransmit(const ser4cpp::rseq_t& buffer, ILinkSession& /
     this->writeQueue.push_back(HexConversions::to_hex(buffer));
 }
 
+void LinkLayerTest::OnLinkTransmitFailure()
+{
+    ++numTransmitFailures;
+}
+
+uint32_t LinkLayerTest::NumTransmitFailures() const
+{
+    return numTransmitFailures;
+}
+
 LinkLayerConfig LinkLayerTest::DefaultConfig()
 {
     return LinkLayerConfig(LinkConfig(true, false), false);

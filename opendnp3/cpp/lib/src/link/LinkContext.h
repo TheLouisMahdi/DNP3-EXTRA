@@ -93,6 +93,7 @@ public:
     bool ShouldConfirm(const ITransportSegment& segments) const;
     void BeginConfirmed(const Addresses& addresses);
     bool OnConfirmedResponse(bool accepted);
+    bool OnConfirmedNack(bool receiveBuffFull);
     bool OnConfirmedWriteComplete();
     bool RetryConfirmed();
 
@@ -151,10 +152,11 @@ public:
     ILinkSession* pSession;
 
 private:
-    enum class ConfirmedResponse : uint8_t { None, Accepted, Rejected };
+    enum class ConfirmedResponse : uint8_t { None, Accepted, Rejected, RecoverableNack };
 
     void QueueConfirmedFrame();
-    bool FinishConfirmedFrame(bool accepted);
+    bool HandleConfirmedResponse(ConfirmedResponse response);
+    bool FinishConfirmedFrame(ConfirmedResponse response);
     void FailConfirmed();
 
     Addresses confirmedAddresses;
@@ -162,6 +164,7 @@ private:
     ConfirmedResponse earlyConfirmedResponse = ConfirmedResponse::None;
     uint8_t confirmedRetries = 0;
     bool remoteReset = false;
+    bool confirmedRecoveryUsed = false;
     bool writeFCB = true;
     bool confirmedWriteComplete = false;
     bool linkFailed = false;

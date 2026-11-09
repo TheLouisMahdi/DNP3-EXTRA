@@ -145,9 +145,9 @@ PriStateBase& PLLS_ConfirmedWait::OnAck(LinkContext& ctx, bool receiveBuffFull)
     return PLLS_Idle::Instance();
 }
 
-PriStateBase& PLLS_ConfirmedWait::OnNack(LinkContext& ctx, bool)
+PriStateBase& PLLS_ConfirmedWait::OnNack(LinkContext& ctx, bool receiveBuffFull)
 {
-    if (ctx.OnConfirmedResponse(false))
+    if (ctx.OnConfirmedNack(receiveBuffFull))
         return *this;
 
     return PLLS_Idle::Instance();
