@@ -26,6 +26,11 @@
 
 #include <catch.hpp>
 #include <transport/TransportConstants.h>
+#include <transport/TransportHeader.h>
+#include <ser4cpp/util/HexConversions.h>
+
+#include <array>
+#include <chrono>
 
 using namespace opendnp3;
 using namespace ser4cpp;
@@ -241,4 +246,244 @@ TEST_CASE(SUITE("SendFullAPDU"))
     }
 
     test.transport.OnTxReady();
+}
+
+TEST_CASE(SUITE("SendOneTPDU249ByteAPDU"))
+{
+    TransportTestObject test(true);
+    const auto apdu = test.GetData("", 0, MAX_TPDU_PAYLOAD);
+
+    REQUIRE(test.upper.SendDown(apdu));
+    REQUIRE(test.link.sends.size() == 1);
+    REQUIRE(test.link.PopWriteAsHex() == test.GetData("C0", 0, MAX_TPDU_PAYLOAD));
+
+    REQUIRE(test.transport.OnTxReady());
+    REQUIRE(test.upper.GetCounters().numTxReady == 1);
+}
+
+TEST_CASE(SUITE("Send250ByteAPDUInTwoTPDUs"))
+{
+    TransportTestObject test(true);
+    const auto apdu = test.GetData("", 0, MAX_TPDU_PAYLOAD + 1);
+
+    REQUIRE(test.upper.SendDown(apdu));
+    REQUIRE(test.link.sends.size() == 2);
+    REQUIRE(test.link.PopWriteAsHex() == test.GetData("40", 0, MAX_TPDU_PAYLOAD));
+    REQUIRE(test.link.PopWriteAsHex() == test.GetData("81", MAX_TPDU_PAYLOAD, 1));
+
+    REQUIRE(test.transport.OnTxReady());
+    REQUIRE(test.upper.GetCounters().numTxReady == 1);
+}
+
+TEST_CASE(SUITE("ConfiguredReceiveCapacityExactFitAndOneByteOver"))
+{
+    TransportTestObject test(true, 10);
+
+    test.link.SendUp("40 00 01 02 03 04 05 06 07 08");
+    test.link.SendUp("81 09");
+    REQUIRE(test.upper.received.AsHex() == "00 01 02 03 04 05 06 07 08 09");
+    REQUIRE(test.transport.GetStatistics().rx.numTransportBufferOverflow == 0);
+
+    test.upper.received.Clear();
+    test.link.SendUp("40 00 01 02 03 04 05 06 07 08");
+    test.link.SendUp("81 09 0A");
+    REQUIRE(test.upper.received.IsEmpty());
+    REQUIRE(test.transport.GetStatistics().rx.numTransportBufferOverflow == 1);
+}
+
+TEST_CASE(SUITE("ReceiveAtConfiguredCapacity2048AndAbove"))
+{
+    {
+        TransportTestObject test(true, 2048);
+        const uint32_t apduSize = 2048;
+        const uint32_t numPackets = (apduSize + MAX_TPDU_PAYLOAD - 1) / MAX_TPDU_PAYLOAD;
+        const uint32_t lastPacketLength = apduSize - (numPackets - 1) * MAX_TPDU_PAYLOAD;
+        std::vector<std::string> packets;
+        const auto apdu = test.GeneratePacketSequence(packets, numPackets, lastPacketLength);
+
+        for (const auto& packet : packets)
+            test.link.SendUp(packet);
+
+        REQUIRE(test.upper.received.AsHex() == apdu);
+        REQUIRE(test.upper.received.Size() == apduSize);
+        REQUIRE(test.transport.GetStatistics().rx.numTransportBufferOverflow == 0);
+    }
+
+    {
+        const uint32_t apduSize = 2501;
+        TransportTestObject test(true, apduSize);
+        const uint32_t numPackets = (apduSize + MAX_TPDU_PAYLOAD - 1) / MAX_TPDU_PAYLOAD;
+        const uint32_t lastPacketLength = apduSize - (numPackets - 1) * MAX_TPDU_PAYLOAD;
+        std::vector<std::string> packets;
+        const auto apdu = test.GeneratePacketSequence(packets, numPackets, lastPacketLength);
+
+        for (const auto& packet : packets)
+            test.link.SendUp(packet);
+
+        REQUIRE(test.upper.received.AsHex() == apdu);
+        REQUIRE(test.upper.received.Size() == apduSize);
+        REQUIRE(test.transport.GetStatistics().rx.numTransportBufferOverflow == 0);
+    }
+}
+
+TEST_CASE(SUITE("DuplicateAndOutOfOrderSequenceHandling"))
+{
+    {
+        TransportTestObject test(true);
+        test.link.SendUp("40 11");
+        test.link.SendUp("01 22");
+        test.link.SendUp("01 FF"); // duplicate sequence 1
+        test.link.SendUp("82 33");
+
+        REQUIRE(test.upper.received.AsHex() == "11 22 33");
+        REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+    }
+
+    {
+        TransportTestObject test(true);
+        test.link.SendUp("40 11");
+        test.link.SendUp("02 FF"); // sequence 2 arrived before sequence 1
+        test.link.SendUp("01 22");
+        test.link.SendUp("82 33");
+
+        REQUIRE(test.upper.received.AsHex() == "11 22 33");
+        REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+    }
+}
+
+TEST_CASE(SUITE("MissingTransportSequenceIsIgnored"))
+{
+    TransportTestObject test(true);
+    test.link.SendUp("40 11");
+    test.link.SendUp("82 22"); // expected sequence 1, received 2
+
+    REQUIRE(test.upper.received.IsEmpty());
+    REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+}
+
+TEST_CASE(SUITE("TransportSequenceWrapsFrom63To0"))
+{
+    TransportTestObject test(true, 100);
+    test.link.SendUp("40 00");
+
+    for (uint8_t seq = 1; seq <= 64; ++seq)
+    {
+        const auto wireSeq = static_cast<uint8_t>(seq % 64);
+        const bool fin = seq == 64;
+        const auto header = TransportHeader::ToByte(false, fin, wireSeq);
+        const auto headerHex = HexConversions::to_hex(&header, 1, true);
+        test.link.SendUp(headerHex + " " + test.GetData("", seq, 1));
+    }
+
+    REQUIRE(test.upper.received.Size() == 65);
+    REQUIRE(test.upper.received.AsHex() == test.GetData("", 0, 65));
+    REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 0);
+}
+
+TEST_CASE(SUITE("ContinuationFromDifferentPeerIsIgnored"))
+{
+    TransportTestObject test(true);
+    const Addresses firstPeer(1, 2);
+    const Addresses otherPeer(3, 4);
+
+    test.link.SendUp("40 11", firstPeer);
+    test.link.SendUp("81 22", otherPeer);
+    REQUIRE(test.upper.received.IsEmpty());
+    REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+
+    test.link.SendUp("81 33", firstPeer);
+    REQUIRE(test.upper.received.AsHex() == "11 33");
+}
+
+TEST_CASE(SUITE("FragmentDeadlineAtTMinusOneTAndTPlusOne"))
+{
+    const std::array<std::chrono::milliseconds, 3> elapsed = {
+        std::chrono::milliseconds(9), std::chrono::milliseconds(10), std::chrono::milliseconds(11)};
+
+    for (const auto duration : elapsed)
+    {
+        TransportTestObject test(true, DEFAULT_MAX_APDU_SIZE, TimeDuration::Milliseconds(10));
+        test.link.SendUp("40 11");
+        REQUIRE(test.exe->advance_time(duration) == 0);
+        REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 0);
+        test.link.SendUp("81 22");
+
+        if (duration < std::chrono::milliseconds(10))
+        {
+            REQUIRE(test.upper.received.AsHex() == "11 22");
+            REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 0);
+        }
+        else
+        {
+            REQUIRE(test.upper.received.IsEmpty());
+            REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 1);
+            REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+        }
+    }
+}
+
+TEST_CASE(SUITE("IntermediateSegmentDoesNotExtendAbsoluteFragmentDeadline"))
+{
+    TransportTestObject test(true, DEFAULT_MAX_APDU_SIZE, TimeDuration::Milliseconds(10));
+    test.link.SendUp("40 11");
+    REQUIRE(test.exe->advance_time(std::chrono::milliseconds(9)) == 0);
+    test.link.SendUp("01 22");
+    REQUIRE(test.exe->advance_time(std::chrono::milliseconds(2)) == 0);
+    test.link.SendUp("82 33");
+
+    REQUIRE(test.upper.received.IsEmpty());
+    REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 1);
+    REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+}
+
+TEST_CASE(SUITE("ExpiredFragmentCannotCompleteButNewFIRFINCan"))
+{
+    TransportTestObject test(true, DEFAULT_MAX_APDU_SIZE, TimeDuration::Milliseconds(10));
+    test.link.SendUp("40 11");
+    REQUIRE(test.exe->advance_time(std::chrono::milliseconds(10)) == 0);
+    test.link.SendUp("81 22");
+    REQUIRE(test.upper.received.IsEmpty());
+    REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 1);
+    REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+
+    test.link.SendUp("DF 33"); // new FIR/FIN with an independent sequence number
+    REQUIRE(test.upper.received.AsHex() == "33");
+}
+
+TEST_CASE(SUITE("OverflowRecoveryAndDisconnectClearIncompleteReceive"))
+{
+    {
+        TransportTestObject test(true, 4);
+        test.link.SendUp("40 11 22 33");
+        test.link.SendUp("81 44 55"); // overflow by one byte
+        REQUIRE(test.upper.received.IsEmpty());
+        REQUIRE(test.transport.GetStatistics().rx.numTransportBufferOverflow == 1);
+
+        test.link.SendUp("C0 AA BB");
+        REQUIRE(test.upper.received.AsHex() == "AA BB");
+    }
+
+    {
+        TransportTestObject test(true);
+        test.link.SendUp("40 11");
+        REQUIRE(test.transport.OnLowerLayerDown());
+        REQUIRE(test.transport.OnLowerLayerUp());
+        test.link.SendUp("81 22"); // no buffered FIR remains across reconnect
+        REQUIRE(test.upper.received.IsEmpty());
+        REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
+
+        test.link.SendUp("DF 33");
+        REQUIRE(test.upper.received.AsHex() == "33");
+    }
+}
+
+TEST_CASE(SUITE("MaxFragmentTimePreservesLegacyNoDeadlineBehavior"))
+{
+    TransportTestObject test(true);
+    test.link.SendUp("40 11");
+    REQUIRE(test.exe->advance_time(std::chrono::seconds(10)) == 0);
+    test.link.SendUp("81 22");
+
+    REQUIRE(test.upper.received.AsHex() == "11 22");
+    REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 0);
 }

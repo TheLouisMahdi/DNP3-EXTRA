@@ -32,8 +32,11 @@
 using namespace opendnp3;
 using namespace ser4cpp;
 
-TransportTestObject::TransportTestObject(bool openOnStart, uint32_t maxRxFragmentSize)
-    : transport(log.logger, maxRxFragmentSize)
+TransportTestObject::TransportTestObject(bool openOnStart,
+                                         uint32_t maxRxFragmentSize,
+                                         TimeDuration maxRxFragmentTime)
+    : exe(std::make_shared<exe4cpp::MockExecutor>()),
+      transport(log.logger, maxRxFragmentSize, exe, maxRxFragmentTime)
 {
     link.SetUpperLayer(transport);
     transport.SetLinkLayer(link);

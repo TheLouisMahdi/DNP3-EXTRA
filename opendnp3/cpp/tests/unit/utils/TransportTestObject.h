@@ -31,13 +31,16 @@
 
 #include <transport/TransportLayer.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 class TransportTestObject
 {
 public:
-    TransportTestObject(bool openOnStart = false, uint32_t maxRxFragmentSize = opendnp3::DEFAULT_MAX_APDU_SIZE);
+    TransportTestObject(bool openOnStart = false,
+                        uint32_t maxRxFragmentSize = opendnp3::DEFAULT_MAX_APDU_SIZE,
+                        opendnp3::TimeDuration maxRxFragmentTime = opendnp3::TimeDuration::Max());
 
     // Generate a complete packet sequence inside the vector and
     // return the corresponding reassembled APDU
@@ -47,7 +50,7 @@ public:
     std::string GetData(const std::string& arHdr, uint8_t aSeed = 0, uint32_t aLength = opendnp3::MAX_TPDU_PAYLOAD);
 
     MockLogHandler log;
-    exe4cpp::MockExecutor exe;
+    std::shared_ptr<exe4cpp::MockExecutor> exe;
     opendnp3::TransportLayer transport;
     MockLinkLayer link;
     MockUpperLayer upper;
