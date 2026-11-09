@@ -12,6 +12,24 @@ The native paths cover measurements and events, controls, time synchronization, 
 
 ![DNP3-EXTRA PDF-based requirement progress](DNP3-EXTRA-progress.svg)
 
+### Historical coverage percentages
+
+| Requirement set | Tracked IDs | Prior verified | Some code evidence (including partial) |
+|---|---:|---:|---:|
+| Device Profile | 69 | 17.4% | 97.1% |
+| Security Addendum | 36 | 38.9% | 75.0% |
+| Runtime Configuration | 14 | 0.0% | 92.9% |
+| All tracked IDs | 119 | 21.8% | 89.9% |
+
+| Requirement set | Prior verified | Code present, not verified | Partial | Blocked | Missing | Not audited |
+|---|---:|---:|---:|---:|---:|---:|
+| Device Profile | 12 (17.4%) | 46 (66.7%) | 9 (13.0%) | 1 (1.4%) | 1 (1.4%) | 0 (0.0%) |
+| Security Addendum | 14 (38.9%) | 2 (5.6%) | 11 (30.6%) | 1 (2.8%) | 3 (8.3%) | 5 (13.9%) |
+| Runtime Configuration | 0 (0.0%) | 6 (42.9%) | 7 (50.0%) | 1 (7.1%) | 0 (0.0%) | 0 (0.0%) |
+| All tracked IDs | 26 (21.8%) | 54 (45.4%) | 27 (22.7%) | 3 (2.5%) | 4 (3.4%) | 5 (4.2%) |
+
+Percentages are calculated within each requirement set from [the per-ID coverage CSV](DNP3_PDF_COVERAGE.csv). "Some code evidence" is the sum of historically verified, code-present and partial statuses; it is **not** a completion, test-pass or compliance percentage. The categories are mutually exclusive, but the two summary percentages are not additive. Individual tiles carry categorical assessments, not measurable per-ID completion percentages. All statuses are **mixed-revision historical assessments**, and current `develop` acceptance remains unverified at the consolidated 119-ID level.
+
 The progress baseline is **all selected requirements from both supplied PDFs**, not a count of recent commits: **69 Device Profile object/function rows** (including the selected group, variation, function and qualifier sets), **36 security addendum parameters**, and **14 Device Profile runtime configuration groups**. Each of the 119 tracked IDs has an individual status tile.
 
 [Full per-ID object, function, qualifier and parameter inventory](DNP3_PDF_COVERAGE.md) | [Machine-readable coverage](DNP3_PDF_COVERAGE.csv) | [Execution ledger](EXECUTION_PHASE_STATUS.md)
