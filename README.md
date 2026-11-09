@@ -61,6 +61,8 @@ These diagnostic defaults use explicit unprotected Compatibility mode on localho
 
 ## Requirements and evidence
 
+- [F0 source-fixed constraints and open product decisions](F0_PRODUCT_DECISIONS.md) separates authoritative PDF/IEEE values from unresolved approvals; it does not claim implemented or tested compliance.
+
 - [Current execution ledger](EXECUTION_PHASE_STATUS.md) records code changes, outstanding decisions and deferred verification. [Windows acceptance case index](WINDOWS_TEST_TITLES.md) lists planned coverage.
 - [Historical profile matrix](https://github.com/TheLouisMahdi/DNP3-EXTRA/blob/b94961d4ebd14196be7911d6fc132b6e6c9cc251/DNP3_PDD_PLAN/PROFILE_MATRIX.csv) and [historical security matrix](https://github.com/TheLouisMahdi/DNP3-EXTRA/blob/b94961d4ebd14196be7911d6fc132b6e6c9cc251/DNP3_PDD_PLAN/SECURITY_MATRIX.csv) preserve requirement IDs and prior assessments.
 - [Historical engineering evidence](https://github.com/TheLouisMahdi/DNP3-EXTRA/blob/b94961d4ebd14196be7911d6fc132b6e6c9cc251/DNP3_PDD_PLAN/ENGINEERING_EVIDENCE.md) records results for specific revisions, including the November 7, 2026 Windows Host tests for selected authenticated FC6 scenarios. These results apply to their recorded test scope and revision.
