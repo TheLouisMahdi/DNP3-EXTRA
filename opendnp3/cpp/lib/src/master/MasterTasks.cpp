@@ -127,7 +127,7 @@ std::shared_ptr<IMasterTask> MasterTasks::GetDisableUnsolTask(const std::shared_
     return params.disableUnsolOnStartup
         ? std::make_shared<DisableUnsolicitedTask>(
               context, application,
-              TaskBehavior::SingleImmediateExecutionWithRetry(params.taskRetryPeriod, params.maxTaskRetryPeriod),
+              RetryBehavior(params),
               logger)
         : nullptr;
 }

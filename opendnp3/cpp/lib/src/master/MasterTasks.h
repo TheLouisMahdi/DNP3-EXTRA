@@ -68,7 +68,8 @@ private:
 
     inline static TaskBehavior RetryBehavior(const MasterParams& params)
     {
-        return TaskBehavior::SingleImmediateExecutionWithRetry(params.taskRetryPeriod, params.maxTaskRetryPeriod);
+        return TaskBehavior::SingleImmediateExecutionWithRetry(params.taskRetryPeriod, params.maxTaskRetryPeriod,
+                                                               params.maxApplicationRetries);
     }
 
     const std::shared_ptr<IMasterTask> clearRestart;

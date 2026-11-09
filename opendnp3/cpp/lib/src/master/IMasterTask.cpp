@@ -91,9 +91,15 @@ void IMasterTask::CompleteTask(TaskCompletion result, Timestamp now)
     // back-off exponentially using the task retry
     case (TaskCompletion::FAILURE_RESPONSE_TIMEOUT):
     {
-        this->behavior.OnResponseTimeout(now);
-        if (this->BlocksLowerPriority())
-            this->context->AddBlock(*this);
+        if (this->behavior.OnResponseTimeout(now))
+        {
+            if (this->BlocksLowerPriority())
+                this->context->AddBlock(*this);
+        }
+        else
+        {
+            this->context->RemoveBlock(*this);
+        }
         break;
     }
 

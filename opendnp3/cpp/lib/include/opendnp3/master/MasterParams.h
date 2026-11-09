@@ -72,6 +72,9 @@ struct MasterParams
     /// Maximum time delay before retrying a failed task. Backs off exponentially from taskRetryPeriod
     TimeDuration maxTaskRetryPeriod = TimeDuration::Minutes(1);
 
+    /// Maximum additional retries for retry-enabled tasks (1..5); 0 preserves unlimited legacy retries
+    uint32_t maxApplicationRetries = 0;
+
     /// Time delay before failing a non-recurring task (e.g. commands) that cannot start
     TimeDuration taskStartTimeout = TimeDuration::Seconds(10);
 

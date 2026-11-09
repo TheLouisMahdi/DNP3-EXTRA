@@ -389,18 +389,28 @@ TEST_CASE("ProfileControls - Master returns failed SELECT statuses and never sen
 
 TEST_CASE("ProfileControls - Master command timeout does not retry control execution", "[profile-controls]")
 {
-    for (bool direct : {false, true})
+    for (unsigned stage = 0; stage < 3; ++stage)
     {
         auto params = MasterConfig(false);
+        params.maxApplicationRetries = 5;
         params.responseTimeout = TimeDuration::Milliseconds(10);
         MasterTestFixture t(params);
         CommandCallbackQueue callbacks;
         t.context->OnLowerLayerUp();
-        if (direct) t.context->DirectOperate(Commands(2, 3), callbacks.Callback(), TaskConfig::Default());
+        if (stage == 0) t.context->DirectOperate(Commands(2, 3), callbacks.Callback(), TaskConfig::Default());
         else t.context->SelectAndOperate(Commands(2, 3), callbacks.Callback(), TaskConfig::Default());
         t.exe->run_many();
-        REQUIRE(t.lower->PopWriteAsHex() == std::string(direct ? "C0 05 " : "C0 03 ") + Body(2));
+        REQUIRE(t.lower->PopWriteAsHex() == std::string(stage == 0 ? "C0 05 " : "C0 03 ") + Body(2));
         REQUIRE(t.context->OnTxReady());
+
+        if (stage == 2)
+        {
+            REQUIRE(t.SendToMaster("C0 81 00 00 " + Body(2)));
+            t.exe->run_many();
+            REQUIRE(t.lower->PopWriteAsHex() == "C1 04 " + Body(2));
+            REQUIRE(t.context->OnTxReady());
+        }
+
         t.exe->advance_time(params.responseTimeout.value);
         t.exe->run_many();
         REQUIRE(callbacks.values.size() == 1);
@@ -419,7 +429,9 @@ TEST_CASE("ProfileControls - Master FC6 sends typed commands once and completes 
     for (unsigned type = 0; type < 4; ++type)
         for (bool wide : {false, true})
         {
-            MasterTestFixture t(MasterConfig(wide));
+            auto params = MasterConfig(wide);
+            params.maxApplicationRetries = 5;
+            MasterTestFixture t(params);
             CommandCallbackQueue callbacks;
             REQUIRE(t.context->OnLowerLayerUp());
             REQUIRE(t.context->DirectOperateNoAck(Commands(type, wide ? 0x1234 : 3), callbacks.Callback(),

@@ -39,21 +39,23 @@ TaskBehavior TaskBehavior::SingleExecutionNoRetry(const Timestamp& startExpirati
 
 TaskBehavior TaskBehavior::ImmediatePeriodic(const TimeDuration& period,
                                              const TimeDuration& minRetryDelay,
-                                             const TimeDuration& maxRetryDelay)
+                                             const TimeDuration& maxRetryDelay,
+                                             uint32_t maxAdditionalRetries)
 {
     return TaskBehavior(period,
                         Timestamp::Min(), // run immediately
                         minRetryDelay, maxRetryDelay,
-                        Timestamp::Max() // no start expiraion
-    );
+                        Timestamp::Max(), // no start expiraion
+                        maxAdditionalRetries);
 }
 
 TaskBehavior TaskBehavior::SingleImmediateExecutionWithRetry(const TimeDuration& minRetryDelay,
-                                                             const TimeDuration& maxRetryDelay)
+                                                             const TimeDuration& maxRetryDelay,
+                                                             uint32_t maxAdditionalRetries)
 {
     return TaskBehavior(TimeDuration::Min(), // not periodic
                         Timestamp::Min(),    // run immediatey
-                        minRetryDelay, maxRetryDelay, Timestamp::Max());
+                        minRetryDelay, maxRetryDelay, Timestamp::Max(), maxAdditionalRetries);
 }
 
 TaskBehavior TaskBehavior::ReactsToIINOnly()
@@ -68,11 +70,13 @@ TaskBehavior::TaskBehavior(const TimeDuration& period,
                            const Timestamp& expiration,
                            const TimeDuration& minRetryDelay,
                            const TimeDuration& maxRetryDelay,
-                           const Timestamp& startExpiration)
+                           const Timestamp& startExpiration,
+                           uint32_t maxAdditionalRetries)
     : period(period),
       minRetryDelay(minRetryDelay),
       maxRetryDelay(maxRetryDelay),
       startExpiration(startExpiration),
+      maxAdditionalRetries(maxAdditionalRetries),
       expiration(expiration),
       currentRetryDelay(minRetryDelay)
 {
@@ -81,13 +85,33 @@ TaskBehavior::TaskBehavior(const TimeDuration& period,
 void TaskBehavior::OnSuccess(const Timestamp& now)
 {
     this->currentRetryDelay = this->minRetryDelay;
+    this->retries = 0;
     this->expiration = this->period.IsNegative() ? Timestamp::Max() : now + this->period;
 }
 
-void TaskBehavior::OnResponseTimeout(const Timestamp& now)
+bool TaskBehavior::OnResponseTimeout(const Timestamp& now)
 {
+    if (this->maxAdditionalRetries && this->retries >= this->maxAdditionalRetries)
+    {
+        if (this->period.IsNegative())
+        {
+            this->Disable();
+        }
+        else
+        {
+            this->expiration = now + this->period;
+            this->retries = 0;
+            this->currentRetryDelay = this->minRetryDelay;
+        }
+        return false;
+    }
+
+    if (this->maxAdditionalRetries)
+        ++this->retries;
+
     this->expiration = now + this->currentRetryDelay;
     this->currentRetryDelay = this->CalcNextRetryTimeout();
+    return true;
 }
 
 void TaskBehavior::Reset()
@@ -95,6 +119,7 @@ void TaskBehavior::Reset()
     this->disabled = false;
     this->expiration = Timestamp::Min();
     this->currentRetryDelay = this->minRetryDelay;
+    this->retries = 0;
 }
 
 void TaskBehavior::Disable()

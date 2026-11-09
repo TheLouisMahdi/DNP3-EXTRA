@@ -24,6 +24,8 @@
 #include "opendnp3/util/TimeDuration.h"
 #include "opendnp3/util/Timestamp.h"
 
+#include <cstdint>
+
 namespace opendnp3
 {
 
@@ -40,10 +42,12 @@ public:
 
     static TaskBehavior ImmediatePeriodic(const TimeDuration& period,
                                           const TimeDuration& minRetryDelay,
-                                          const TimeDuration& maxRetryDelay);
+                                          const TimeDuration& maxRetryDelay,
+                                          uint32_t maxAdditionalRetries = 0);
 
     static TaskBehavior SingleImmediateExecutionWithRetry(const TimeDuration& minRetryDelay,
-                                                          const TimeDuration& maxRetryDelay);
+                                                          const TimeDuration& maxRetryDelay,
+                                                          uint32_t maxAdditionalRetries = 0);
 
     static TaskBehavior ReactsToIINOnly();
 
@@ -55,7 +59,7 @@ public:
     /**
      * Called when the task fails due to a response timeout
      */
-    void OnResponseTimeout(const Timestamp& now);
+    bool OnResponseTimeout(const Timestamp& now);
 
     /**
      * return the current expiration time
@@ -92,12 +96,14 @@ private:
                  const Timestamp& expiration,
                  const TimeDuration& minRetryDelay,
                  const TimeDuration& maxRetryDelay,
-                 const Timestamp& startExpiration);
+                 const Timestamp& startExpiration,
+                 uint32_t maxAdditionalRetries = 0);
 
     const TimeDuration period;
     const TimeDuration minRetryDelay;
     const TimeDuration maxRetryDelay;
     const Timestamp startExpiration;
+    const uint32_t maxAdditionalRetries;
 
     // permanently disable the task
     bool disabled = false;
@@ -107,6 +113,7 @@ private:
 
     // The current retry delay
     TimeDuration currentRetryDelay;
+    uint32_t retries = 0;
 };
 
 } // namespace opendnp3

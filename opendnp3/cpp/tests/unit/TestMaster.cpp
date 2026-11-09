@@ -30,6 +30,8 @@
 #include <app/APDUResponse.h>
 #include <catch.hpp>
 
+#include <stdexcept>
+
 using namespace opendnp3;
 using namespace ser4cpp;
 
@@ -162,6 +164,9 @@ TEST_CASE(SUITE("UnsolDisableEnableOnStartup"))
 TEST_CASE(SUITE("TimeoutDuringStartup"))
 {
     MasterParams params;
+    params.maxApplicationRetries = 1;
+    params.startupIntegrityClassMask = ClassField::None();
+    params.unsolClassMask = ClassField::None();
     MasterTestFixture t(params);
     t.context->OnLowerLayerUp();
 
@@ -181,6 +186,12 @@ TEST_CASE(SUITE("TimeoutDuringStartup"))
     // repeat the disable unsol
     REQUIRE(t.lower->PopWriteAsHex()
             == hex::ClassTask(FunctionCode::DISABLE_UNSOLICITED, 1, ClassField::AllEventClasses()));
+    t.context->OnTxReady();
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    t.exe->advance_time(std::chrono::seconds(10));
+    t.exe->run_many();
+    REQUIRE(t.lower->HasNoData());
 }
 
 TEST_CASE(SUITE("SolicitedResponseTimeout"))
@@ -208,6 +219,7 @@ TEST_CASE(SUITE("Retries use exponential backoff"))
 {
     MasterParams params;
     params.disableUnsolOnStartup = false;
+    REQUIRE(params.maxApplicationRetries == 0);
     MasterTestFixture t(params);
     const auto startTime = t.exe->get_time();
     t.context->OnLowerLayerUp();
@@ -243,6 +255,188 @@ TEST_CASE(SUITE("Retries use exponential backoff"))
     REQUIRE(t.exe->run_many() > 0);
     REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(2));
     t.context->OnTxReady();
+
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(3));
+}
+
+TEST_CASE(SUITE("Configured application retries are additional and bounded"))
+{
+    for (const uint32_t retryLimit : {1u, 5u})
+    {
+        MasterParams params;
+        params.disableUnsolOnStartup = false;
+        params.unsolClassMask = ClassField::None();
+        params.maxApplicationRetries = retryLimit;
+        params.responseTimeout = TimeDuration::Milliseconds(2);
+        params.taskRetryPeriod = TimeDuration::Milliseconds(1);
+        params.maxTaskRetryPeriod = TimeDuration::Milliseconds(1);
+        MasterTestFixture t(params);
+        t.context->OnLowerLayerUp();
+        t.exe->run_many();
+
+        for (uint32_t attempt = 0; attempt <= retryLimit; ++attempt)
+        {
+            REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(static_cast<uint8_t>(attempt)));
+            REQUIRE(t.context->OnTxReady());
+            REQUIRE(t.exe->advance_to_next_timer());
+            REQUIRE(t.exe->run_many() > 0);
+            REQUIRE(t.lower->HasNoData());
+
+            if (attempt < retryLimit)
+            {
+                REQUIRE(t.exe->advance_to_next_timer());
+                REQUIRE(t.exe->run_many() > 0);
+            }
+        }
+
+        t.exe->advance_time(std::chrono::seconds(10));
+        t.exe->run_many();
+        REQUIRE(t.lower->HasNoData());
+    }
+}
+
+TEST_CASE(SUITE("Periodic poll retry exhaustion waits for next period and resets budget"))
+{
+    auto params = NoStartupTasks();
+    params.maxApplicationRetries = 1;
+    params.responseTimeout = TimeDuration::Milliseconds(2);
+    params.taskRetryPeriod = TimeDuration::Milliseconds(1);
+    params.maxTaskRetryPeriod = TimeDuration::Milliseconds(1);
+    constexpr auto period = std::chrono::milliseconds(10);
+    MasterTestFixture t(params);
+    t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Milliseconds(10), t.meas);
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+    t.exe->advance_time(std::chrono::milliseconds(2));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(1)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(1));
+
+    REQUIRE(t.context->OnTxReady());
+    t.exe->advance_time(std::chrono::milliseconds(2));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->HasNoData());
+
+    t.exe->advance_time(period - std::chrono::milliseconds(1));
+    t.exe->run_many();
+    REQUIRE(t.lower->HasNoData());
+
+    t.exe->advance_time(std::chrono::milliseconds(1));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(2));
+
+    REQUIRE(t.context->OnTxReady());
+    t.exe->advance_time(std::chrono::milliseconds(2));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(1)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(3));
+}
+
+TEST_CASE(SUITE("Retry budget resets after success for the next poll operation"))
+{
+    auto params = NoStartupTasks();
+    params.maxApplicationRetries = 1;
+    params.responseTimeout = TimeDuration::Milliseconds(2);
+    params.taskRetryPeriod = TimeDuration::Milliseconds(1);
+    params.maxTaskRetryPeriod = TimeDuration::Milliseconds(1);
+    MasterTestFixture t(params);
+    t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(1), t.meas);
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(1));
+
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster(hex::EmptyResponse(1)));
+    t.exe->run_many();
+
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(2));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(3));
+}
+
+TEST_CASE(SUITE("Bounded retry deadline survives reconnect"))
+{
+    auto params = NoStartupTasks();
+    params.maxApplicationRetries = 1;
+    params.responseTimeout = TimeDuration::Milliseconds(2);
+    params.taskRetryPeriod = TimeDuration::Milliseconds(3);
+    params.maxTaskRetryPeriod = TimeDuration::Milliseconds(3);
+    MasterTestFixture t(params);
+    t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(60), t.meas);
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->HasNoData());
+
+    REQUIRE(t.context->OnLowerLayerDown());
+    REQUIRE(t.context->OnLowerLayerUp());
+    t.exe->run_many();
+    REQUIRE(t.lower->HasNoData());
+
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+}
+
+TEST_CASE(SUITE("Retry exhaustion releases lower priority tasks"))
+{
+    MasterParams params;
+    params.disableUnsolOnStartup = false;
+    params.unsolClassMask = ClassField::None();
+    params.maxApplicationRetries = 1;
+    params.responseTimeout = TimeDuration::Milliseconds(2);
+    params.taskRetryPeriod = TimeDuration::Milliseconds(1);
+    params.maxTaskRetryPeriod = TimeDuration::Milliseconds(1);
+    MasterTestFixture t(params);
+    t.context->AddAllObjectsScan(GroupVariationID(110, 0), TimeDuration::Seconds(60), t.meas);
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(1));
+
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.exe->advance_to_next_timer());
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 01 6E 00 06");
+}
+
+TEST_CASE(SUITE("Rejects application retry limits above five"))
+{
+    auto params = NoStartupTasks();
+    params.maxApplicationRetries = 6;
+    REQUIRE_THROWS_AS(MasterTestFixture(params), std::invalid_argument);
 }
 
 TEST_CASE(SUITE("AllObjectsScan"))

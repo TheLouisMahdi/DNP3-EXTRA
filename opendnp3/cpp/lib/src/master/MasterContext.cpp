@@ -69,6 +69,9 @@ MContext::MContext(const Addresses& addresses,
     if (params.maxResponseTime <= TimeDuration::Zero())
         throw std::invalid_argument("Complete application response timeout must be positive");
 
+    if (params.maxApplicationRetries > 5)
+        throw std::invalid_argument("Maximum application retries must be between 0 and 5");
+
     if (params.authentication.mode == AuthenticationConfig::Mode::REQUIRED)
     {
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -740,8 +743,9 @@ std::shared_ptr<IMasterTask> MContext::AddScan(TimeDuration period,
 {
     auto task = std::make_shared<UserPollTask>(
         this->tasks.context, builder,
-        TaskBehavior::ImmediatePeriodic(period, params.taskRetryPeriod, params.maxTaskRetryPeriod), true, *application,
-        soe_handler, logger, config);
+        TaskBehavior::ImmediatePeriodic(period, params.taskRetryPeriod, params.maxTaskRetryPeriod,
+                                        params.maxApplicationRetries),
+        true, *application, soe_handler, logger, config);
     this->ScheduleRecurringPollTask(task);
     return task;
 }
