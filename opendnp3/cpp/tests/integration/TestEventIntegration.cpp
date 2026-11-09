@@ -25,6 +25,7 @@
 #include <opendnp3/master/DefaultMasterApplication.h>
 #include <opendnp3/outstation/DefaultOutstationApplication.h>
 #include <opendnp3/outstation/SimpleCommandHandler.h>
+#include <opendnp3/outstation/UpdateBuilder.h>
 
 #include <catch.hpp>
 
@@ -94,6 +95,62 @@ TEST_CASE(SUITE("TestEventIntegration"))
 
     std::cout << total_events_transferred << " in " << milliseconds.count() << " ms == " << rate << " events per/sec"
               << std::endl;
+}
+
+TEST_CASE(SUITE("One solicited APDU above 2048 octets survives TCP transport segmentation"), "[f01-tcp]")
+{
+    constexpr uint16_t points = 2200;
+    const auto timeout = std::chrono::seconds(5);
+    DNP3Manager manager(2);
+    auto serverListener = std::make_shared<QueuedChannelListener>();
+    auto clientListener = std::make_shared<QueuedChannelListener>();
+    auto server = manager.AddTCPServer("f01 server", levels::NORMAL, ServerAcceptMode::CloseExisting,
+                                       IPEndpoint::Localhost(0), serverListener);
+    auto client = manager.AddTCPClient("f01 client", levels::NORMAL, ChannelRetry::Default(),
+                                       {IPEndpoint::Localhost(server->GetBoundPort())}, "127.0.0.1", clientListener);
+
+    DatabaseConfig database;
+    UpdateBuilder update;
+    for (uint16_t index = 0; index < points; ++index)
+    {
+        database.binary_input[index].svariation = StaticBinaryVariation::Group1Var2;
+        update.Update(Binary(index % 2 == 0, Flags(0x01)), index, EventMode::Suppress);
+    }
+    OutstationStackConfig outConfig(database);
+    outConfig.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    outConfig.outstation.params.maxTxFragSize = 4000;
+    auto outstation = server->AddOutstation("f01 outstation", SuccessCommandHandler::Create(),
+                                            DefaultOutstationApplication::Create(), outConfig);
+    REQUIRE(outstation);
+    outstation->Apply(update.Build());
+    outstation->GetStackStatistics(); // Execute the updates before the peer polls.
+
+    MasterStackConfig masterConfig;
+    masterConfig.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    masterConfig.master.maxRxFragSize = 4000;
+    masterConfig.master.disableUnsolOnStartup = false;
+    masterConfig.master.unsolClassMask = ClassField::None();
+    masterConfig.master.startupIntegrityClassMask = ClassField::None();
+    masterConfig.master.ignoreRestartIIN = true;
+    auto soe = std::make_shared<QueuingSOEHandler>();
+    auto master = client->AddMaster("f01 master", soe, DefaultMasterApplication::Create(), masterConfig);
+    REQUIRE(master);
+    REQUIRE(outstation->Enable());
+    REQUIRE(master->Enable());
+
+    REQUIRE(serverListener->WaitForState(ChannelState::OPEN, timeout));
+    REQUIRE(clientListener->WaitForState(ChannelState::OPEN, timeout));
+
+    master->Scan({Header::AllObjects(1, 2)}, soe);
+    std::vector<ExpectedValue> received;
+    REQUIRE(soe->values.DrainTo(received, timeout) == points);
+    for (uint16_t index = 0; index < points; ++index)
+        REQUIRE(received[index].Equals(ExpectedValue(Binary(index % 2 == 0), index)));
+
+    const auto stats = master->GetStackStatistics();
+    REQUIRE(stats.transport.rx.numTransportRx == 9); // ceil(2211 / 249)
+    REQUIRE(stats.transport.rx.numTransportBufferOverflow == 0);
+    REQUIRE(stats.transport.tx.numTransportTx == 1); // READ only; no application CONFIRM needed.
 }
 
 TEST_CASE(SUITE("Master reads attributes and G80 and G34 writes affect G32 delivery over TCP"),

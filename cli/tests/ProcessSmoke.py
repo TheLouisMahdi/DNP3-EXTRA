@@ -1,6 +1,5 @@
-"""Process orchestration only; protocol/crypto checks use the production CLI.
+"""Bounded CLI process checks with native outcomes and a small F01 wire oracle.
 
-No external Python modules, protocol parser or synthetic success responses.
 All children are hidden, owned, bounded, and stopped before credential cleanup.
 """
 import argparse
@@ -10,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -127,6 +127,129 @@ def connected(exe, options, master_options=(), out_options=()):
     except BaseException:
         stop(out, master)
         raise
+
+
+def ft3_crc(data):
+    crc = 0
+    for value in data:
+        crc ^= value
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0xA6BC if crc & 1 else 0)
+    return struct.pack("<H", crc ^ 0xFFFF)
+
+
+def f01_link_frame(apdu, transport_seq):
+    user_data = bytes([0xC0 | transport_seq]) + apdu
+    header = struct.pack("<2sBBHH", b"\x05\x64", len(user_data) + 5, 0xC4, 10, 1)
+    blocks = [user_data[i:i + 16] for i in range(0, len(user_data), 16)]
+    return header + ft3_crc(header) + b"".join(block + ft3_crc(block) for block in blocks)
+
+
+def f01_receive_apdu(peer):
+    # One absolute deadline also bounds a peer sending one byte at a time.
+    deadline = time.monotonic() + 5
+
+    def exact(size):
+        data = bytearray()
+        while len(data) < size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("incomplete F01 FT3 frame")
+            peer.settimeout(remaining)
+            chunk = peer.recv(size - len(data))
+            assert chunk, "unexpected EOF in F01 FT3 frame"
+            data.extend(chunk)
+        return bytes(data)
+
+    header = exact(10)
+    assert header[:2] == b"\x05\x64" and header[8:] == ft3_crc(header[:8]), header.hex()
+    assert header[3:8] == bytes.fromhex("44 01 00 0A 00"), header.hex()
+    remaining = header[2] - 5
+    assert 1 < remaining <= 250, header.hex()
+    data = bytearray()
+    while remaining:
+        size = min(remaining, 16)
+        block = exact(size + 2)
+        assert block[-2:] == ft3_crc(block[:-2]), block.hex()
+        data.extend(block[:-2])
+        remaining -= size
+    assert data[0] & 0xC0 == 0xC0, data.hex()  # This fixture's application fragments fit one TPDU.
+    return data[0] & 0x3F, bytes(data[1:])
+
+
+def f01_solicited_fragments(exe):
+    options = ["--auth", "compat", *loopback_port()]
+    out = Peer(exe, "outstation", [*options, "--tx-fragment-bytes", "250", "--sol-confirm-ms", "1000"])
+    master = None
+    try:
+        out.wait(r"\[HELP\]")
+        port = int(options[-1])
+
+        def publish(count, offset):
+            for n in range(offset, offset + count):
+                value = "on" if n % 2 == 0 else "off"
+                index = n % 10
+                cursor = out.send(f"set double {index} {value} force")
+                out.wait(rf"\[UPDATE\].*double {index} {value} force", cursor)
+            cursor = out.send("show")
+            out.wait(r"Input values are this application", cursor)  # Executor barrier.
+
+        def check_events(apdu, control, start, count):
+            assert apdu[:2] == bytes([control, 0x81]), apdu.hex()
+            assert apdu[2] & 0x02 == (0x02 if count == 26 else 0), apdu.hex()
+            assert apdu[3:9] == bytes([0, 4, 2, 0x28, count, 0]), apdu.hex()
+            assert len(apdu) == 9 + 9 * count, apdu.hex()
+            for offset in range(count):
+                index, flags = struct.unpack_from("<HB", apdu, 9 + offset * 9)
+                n = start + offset
+                assert index == n % 10 and flags == (0x81 if n % 2 == 0 else 0x41), apdu.hex()
+
+        publish(28, 0)
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+            out.wait(r"\[LINK\] OPEN$")
+            # 249 APDU + TPDU byte makes a full 292-octet FT3 frame. Its
+            # final, incomplete object header must give PARAMETER_ERROR.
+            malformed = bytes.fromhex("C0 01") + bytes.fromhex("3C 02 06") * 82 + b"\x01"
+            full = f01_link_frame(malformed, 0)
+            assert len(full) == 292
+            corrupt = full[:-1] + bytes([full[-1] ^ 0x80])
+            raw.sendall(bytes.fromhex("05 64 01") + corrupt + full[:70])
+            raw.sendall(full[70:])
+            tp_seq, apdu = f01_receive_apdu(raw)
+            assert apdu[:2] == bytes.fromhex("C0 81") and apdu[3:] == b"\x04", apdu.hex()
+
+            raw.sendall(f01_link_frame(bytes.fromhex("CF 01 3C 02 06"), 1))
+            first_seq, first = f01_receive_apdu(raw)
+            assert first_seq == (tp_seq + 1) % 64
+            check_events(first, 0xAF, 0, 26)
+
+            time.sleep(1.2)  # Lose the first CONFIRM, then send it after the configured timer.
+            raw.sendall(f01_link_frame(bytes.fromhex("CF 00"), 2)
+                        + f01_link_frame(bytes.fromhex("CE 01 3C 02 06"), 3))
+            retry_seq, retry = f01_receive_apdu(raw)
+            assert retry_seq == (first_seq + 1) % 64
+            assert retry[1:] == first[1:], retry.hex()
+            check_events(retry, 0xAE, 0, 26)
+
+            raw.sendall(f01_link_frame(bytes.fromhex("CE 00"), 4))
+            final_seq, final = f01_receive_apdu(raw)
+            assert final_seq == (retry_seq + 1) % 64
+            check_events(final, 0x6F, 26, 2)
+            # Disconnect without confirming the final two events.
+
+        publish(28, 28)
+        master = Peer(exe, "master", options)
+        master.wait(r"\[LINK\] OPEN$")
+        cursor = master.task("scan class1", timeout=20)  # Runs after startup integrity and its queued CONFIRMs.
+        with master.cv:
+            events = [re.search(r"EVENT DoubleBit\[(\d+)\]=(DETERMINED_ON|DETERMINED_OFF)", line)
+                      for line in master.lines]
+            actual = [(int(event[1]), event[2]) for event in events if event]
+            assert actual == [(n % 10, "DETERMINED_ON" if n % 2 == 0 else "DETERMINED_OFF")
+                              for n in range(26, 56)], actual
+            assert not any("EVENT DoubleBit[" in line for line in master.lines[cursor:]), master.lines[cursor:]
+    finally:
+        stop(out, master)
 
 
 def compatibility(exe):
@@ -676,7 +799,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -693,6 +816,7 @@ def main():
         assert args.asio and args.asio.is_file(), args.asio
         asio_fixtures(args.exe, args.asio, args.work_dir)
         return
+    if args.only in ("f01-fragments", "all"): f01_solicited_fragments(args.exe)
     if args.only in ("compat", "all"): compatibility(args.exe)
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")

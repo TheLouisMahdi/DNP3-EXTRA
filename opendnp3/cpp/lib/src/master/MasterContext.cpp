@@ -64,7 +64,8 @@ MContext::MContext(const Addresses& addresses,
       scheduler(std::move(scheduler)),
       tasks(params, logger, *application, SOEHandler),
       txBuffer(params.maxTxFragSize),
-      tstate(TaskState::IDLE)
+      tstate(TaskState::IDLE),
+      previousResponseObjects(params.maxRxFragSize)
 {
     if (params.maxResponseTime <= TimeDuration::Zero())
         throw std::invalid_argument("Complete application response timeout must be positive");
@@ -148,6 +149,7 @@ bool MContext::OnLowerLayerDown()
 #endif
     this->ResetAuthentication();
     this->confirmQueue.clear();
+    previousResponseHeader = {};
     activeTask.reset();
 
     this->scheduler->SetRunnerOffline(*this);
@@ -371,6 +373,7 @@ void MContext::OnResponseTimeout()
 
 void MContext::CompleteActiveTask()
 {
+    previousResponseHeader = {};
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
     {
@@ -535,6 +538,12 @@ void MContext::ProcessUnsolicitedResponse(const APDUResponseHeader& header, cons
 
 void MContext::ProcessResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects)
 {
+    if (header.control.UNS)
+    {
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Ignoring solicited response with UNS bit set");
+        return;
+    }
+
     if (tstate == TaskState::WAIT_FOR_RESPONSE && !responseDeadline.IsMax()
         && Timestamp(executor->get_time()) >= responseDeadline)
     {
@@ -1079,6 +1088,7 @@ MContext::TaskState MContext::ResumeActiveTask()
         }
     }
 #endif
+    previousResponseHeader = {};
     this->RecordLastRequest(apdu);
     responseDeadline = params.maxResponseTime == TimeDuration::Max()
         ? Timestamp::Max() : Timestamp(executor->get_time()) + params.maxResponseTime;
@@ -1152,8 +1162,33 @@ MContext::TaskState MContext::StartTask_TaskReady()
 MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeader& header,
                                                          const ser4cpp::rseq_t& objects)
 {
+    if (!header.control.FIR && previousResponseHeader.function == FunctionCode::UNKNOWN)
+    {
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Ignoring continuation before the first solicited response fragment");
+        return TaskState::WAIT_FOR_RESPONSE;
+    }
+
     if (header.control.SEQ != this->solSeq)
     {
+        if (previousResponseHeader.function == FunctionCode::RESPONSE
+            && header.control.SEQ == previousResponseHeader.control.SEQ)
+        {
+            // IEEE 1815-2012 Table 6-2: compare the entire previous fragment.
+            if (header.Equals(previousResponseHeader) && header.IIN == previousResponseHeader.IIN
+                && previousResponseView.equals(objects))
+            {
+                if (header.control.CON)
+                    this->QueueConfirm(APDUHeader::SolicitedConfirm(header.control.SEQ));
+                responseTimer.cancel();
+                this->StartResponseTimer(); // The complete-response deadline still caps this timer.
+                return TaskState::WAIT_FOR_RESPONSE;
+            }
+
+            responseTimer.cancel();
+            this->activeTask->OnBadResponse(Timestamp(executor->get_time()));
+            this->CompleteActiveTask();
+            return TaskState::IDLE;
+        }
         FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Response with bad sequence: %u", header.control.SEQ);
 #ifdef OPENDNP3_USE_SA_CRYPTO
         if (authentication && authentication->sessions) authentication->sessions->statistics.Unexpected();
@@ -1181,6 +1216,12 @@ MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeade
     switch (result)
     {
     case (IMasterTask::ResponseResult::OK_CONTINUE):
+        previousResponseHeader = {};
+        if (objects.length() <= previousResponseObjects.as_wslice().length())
+        {
+            previousResponseHeader = header;
+            previousResponseView = previousResponseObjects.as_wslice().copy_from(objects);
+        }
         this->StartResponseTimer();
         return TaskState::WAIT_FOR_RESPONSE;
     case (IMasterTask::ResponseResult::OK_REPEAT):

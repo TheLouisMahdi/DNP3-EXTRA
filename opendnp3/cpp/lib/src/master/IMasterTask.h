@@ -126,6 +126,8 @@ public:
      */
     void OnResponseTimeout(Timestamp now);
 
+    void OnBadResponse(Timestamp now);
+
     /**
      * Called when the layer closes while the task is executing.
      */

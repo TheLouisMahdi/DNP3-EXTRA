@@ -290,6 +290,12 @@ bool OContext::ProcessObjects(const ParsedRequest& request)
 
     if (this->isTransmitting)
     {
+        if (request.header.function == FunctionCode::CONFIRM && this->state == &StateSolicitedConfirmWait::Inst()
+            && (request.header.control.UNS || request.addresses.source != this->solConfirmSource
+                || !this->sol.seq.confirmNum.Equals(request.header.control.SEQ)))
+        {
+            return false; // A mismatched CONFIRM must not displace a deferred one.
+        }
         this->deferred.Set(request);
         return true;
     }

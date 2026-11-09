@@ -66,7 +66,7 @@ IMasterTask::ResponseResult IMasterTask::OnResponse(const APDUResponseHeader& re
     switch (result)
     {
     case (ResponseResult::ERROR_BAD_RESPONSE):
-        this->CompleteTask(TaskCompletion::FAILURE_BAD_RESPONSE, now);
+        this->OnBadResponse(now);
         break;
     case (ResponseResult::OK_FINAL):
         this->CompleteTask(TaskCompletion::SUCCESS, now);
@@ -146,6 +146,11 @@ void IMasterTask::OnLowerLayerClose(Timestamp now)
 void IMasterTask::OnStartTimeout(Timestamp now)
 {
     this->CompleteTask(TaskCompletion::FAILURE_START_TIMEOUT, now);
+}
+
+void IMasterTask::OnBadResponse(Timestamp now)
+{
+    this->CompleteTask(TaskCompletion::FAILURE_BAD_RESPONSE, now);
 }
 
 void IMasterTask::OnMessageFormatError(Timestamp now)

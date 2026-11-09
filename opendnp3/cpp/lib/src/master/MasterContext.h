@@ -219,6 +219,11 @@ public:
     void Transmit(const ser4cpp::rseq_t& data);
 
 private:
+    // Owned copy of the most recent non-final fragment of the active response.
+    ser4cpp::Buffer previousResponseObjects;
+    APDUResponseHeader previousResponseHeader;
+    ser4cpp::rseq_t previousResponseView;
+
     // Manual session-key injection friend exists only in unit tests. Production
     // uses configured credential retrieval and the authenticated session exchange.
     friend class AuthenticationRuntimeTestAccess;

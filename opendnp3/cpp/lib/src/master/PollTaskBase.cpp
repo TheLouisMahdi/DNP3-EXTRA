@@ -45,6 +45,12 @@ void PollTaskBase::Initialize()
 IMasterTask::ResponseResult PollTaskBase::ProcessResponse(const APDUResponseHeader& header,
                                                           const ser4cpp::rseq_t& objects)
 {
+    if (!header.control.FIN && !header.control.CON)
+    {
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Non-final poll response did not request confirmation");
+        return ResponseResult::ERROR_BAD_RESPONSE;
+    }
+
     if (header.control.FIR)
     {
         if (this->rxCount > 0)

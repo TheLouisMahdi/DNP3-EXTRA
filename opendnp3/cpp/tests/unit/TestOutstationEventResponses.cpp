@@ -62,6 +62,7 @@ TEST_CASE(SUITE("SolicitedMixedStaticAndEventFragmentsRequireCorrelatedConfirms"
 {
     OutstationConfig config;
     config.params.maxTxFragSize = 12;
+    config.params.respondToAnyMaster = true;
     config.eventBufferConfig = EventBufferConfig::AllTypes(10);
     OutstationTestObject t(config, configure::by_count_of::binary_input(5));
     t.LowerLayerUp();
@@ -72,6 +73,10 @@ TEST_CASE(SUITE("SolicitedMixedStaticAndEventFragmentsRequireCorrelatedConfirms"
     REQUIRE(t.lower->PopWriteAsHex() == first);
 
     t.SendToOutstation("C0 00"); // Early CONFIRM is deferred until the response TX completes.
+    t.SendToOutstation("C1 00");
+    t.SendToOutstation("D0 00");
+    const HexSequence foreignConfirm("C0 00");
+    t.context.OnReceive(Message(Addresses(1, 0), foreignConfirm.ToRSeq()));
     REQUIRE(t.lower->NumWrites() == 0);
     REQUIRE(t.application->confirms.empty());
     t.OnTxReady();
@@ -115,6 +120,11 @@ TEST_CASE(SUITE("SolicitedConfirmValidationRepeatReadAndStaleConfirm"))
     t.SendToOutstation("C1 00"); // Wrong sequence.
     t.SendToOutstation("D0 00"); // Wrong UNS.
     t.SendToOutstation("C0 00 01"); // CONFIRM must not contain object data.
+    t.SendToOutstation("80 00"); // Missing FIN.
+    t.SendToOutstation("40 00"); // Missing FIR.
+    t.SendToOutstation("E0 00"); // CON on a CONFIRM.
+    t.SendToOutstation("C0"); // Truncated application header.
+    t.BroadcastToOutstation(LinkBroadcastAddress::DontConfirm, "C0 00");
 
     HexSequence wrongPeerConfirm(hex::SolicitedConfirm(0));
     t.context.OnReceive(Message(Addresses(1, 0), wrongPeerConfirm.ToRSeq()));
