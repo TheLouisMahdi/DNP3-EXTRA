@@ -38,6 +38,8 @@ public:
 
     bool HasValue() const override;
 
+    bool IsMultiFrame() const override;
+
     ser4cpp::rseq_t GetSegment() override;
 
     bool Advance() override;

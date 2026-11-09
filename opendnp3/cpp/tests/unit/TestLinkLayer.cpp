@@ -25,7 +25,9 @@
 
 #include <catch.hpp>
 
+#include <chrono>
 #include <iostream>
+#include <stdexcept>
 
 using namespace opendnp3;
 using namespace ser4cpp;
@@ -225,12 +227,14 @@ TEST_CASE(SUITE("SecondaryResetConfirmedUserData"))
     t.link.OnTxReady();
 
     REQUIRE(t.upper->receivedQueue.front() == bytes.ToHex());
+    REQUIRE(t.PopLastWriteAsHex() == LinkHex::Ack(true, false, 1024, 1));
     t.upper->receivedQueue.clear();
 
     t.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, false, 1, 1024,
               bytes.ToRSeq());               // send with wrong FCB
     REQUIRE(t.NumTotalWrites() == 3);        // should still get an ACK
     REQUIRE(t.upper->receivedQueue.empty()); // but no data
+    REQUIRE(t.PopLastWriteAsHex() == LinkHex::Ack(true, false, 1024, 1));
 }
 
 TEST_CASE(SUITE("RequestStatusOfLink"))
@@ -303,6 +307,248 @@ TEST_CASE(SUITE("SendUnconfirmed"))
 
     REQUIRE(t.upper->GetCounters().numTxReady == 1);
     REQUIRE(t.NumTotalWrites() == 1);
+}
+
+TEST_CASE(SUITE("Outbound confirmation modes select eligible single and multi-frame sends"))
+{
+    const LinkConfirmMode modes[] = {
+        LinkConfirmMode::Never, LinkConfirmMode::Always, LinkConfirmMode::MultiFrame};
+    const bool frameCounts[] = {false, true};
+
+    for (const auto mode : modes)
+    {
+        for (const auto multiFrame : frameCounts)
+        {
+            LinkConfig config(true);
+            config.ConfirmMode = mode;
+            config.Timeout = TimeDuration::Milliseconds(10);
+            LinkLayerTest t(config);
+            REQUIRE(t.link.OnLowerLayerUp());
+
+            MockTransportSegment segments(multiFrame ? 1 : 2, "AA BB", config.GetAddresses());
+            REQUIRE(t.upper->SendDown(segments));
+
+            const bool confirmed = mode == LinkConfirmMode::Always
+                || (mode == LinkConfirmMode::MultiFrame && multiFrame);
+            if (confirmed)
+            {
+                REQUIRE(t.PopLastWriteAsHex()
+                        == LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr));
+                REQUIRE(t.link.OnTxReady());
+                REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+            }
+
+            const auto numFrames = multiFrame ? 2 : 1;
+            for (size_t i = 0; i < numFrames; ++i)
+            {
+                const auto payload = multiFrame ? (i == 0 ? "AA" : "BB") : "AA BB";
+                const auto expected = confirmed
+                    ? LinkHex::ConfirmedUserData(true, i == 0, config.RemoteAddr, config.LocalAddr, payload)
+                    : LinkHex::UnconfirmedUserData(true, config.RemoteAddr, config.LocalAddr, payload);
+                REQUIRE(t.PopLastWriteAsHex() == expected);
+                REQUIRE(t.link.OnTxReady());
+                if (confirmed)
+                {
+                    REQUIRE(
+                        t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+                }
+            }
+
+            REQUIRE(t.exe->run_many() > 0);
+            REQUIRE(t.upper->GetCounters().numTxReady == 1);
+            const auto writes = t.NumTotalWrites();
+            REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) == 0);
+            REQUIRE(t.NumTotalWrites() == writes);
+        }
+    }
+}
+
+TEST_CASE(SUITE("Confirmed retries are bounded and start after transmit completion"))
+{
+    const uint8_t retryLimits[] = {0, 1, 5};
+    const auto timeout = std::chrono::milliseconds(10);
+
+    for (const auto retries : retryLimits)
+    {
+        LinkConfig config(true);
+        config.ConfirmMode = LinkConfirmMode::Always;
+        config.NumRetries = retries;
+        config.Timeout = TimeDuration::Milliseconds(10);
+        config.KeepAliveTimeout = TimeDuration::Seconds(60);
+        LinkLayerTest t(config);
+        REQUIRE(t.link.OnLowerLayerUp());
+
+        MockTransportSegment segments(1, "AA", config.GetAddresses());
+        REQUIRE(t.upper->SendDown(segments));
+        const auto initial = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+        REQUIRE(t.PopLastWriteAsHex() == initial);
+
+        REQUIRE(t.exe->advance_time(timeout) == 0);
+        REQUIRE(t.NumTotalWrites() == 1);
+
+        for (uint8_t attempt = 0; attempt <= retries; ++attempt)
+        {
+            REQUIRE(t.link.OnTxReady());
+            REQUIRE(t.exe->advance_time(timeout) > 0);
+            REQUIRE(t.exe->run_many() > 0);
+            if (attempt < retries)
+            {
+                REQUIRE(t.PopLastWriteAsHex() == initial);
+                REQUIRE(t.NumTotalWrites() == static_cast<uint32_t>(attempt + 2));
+            }
+            else
+            {
+                REQUIRE(t.NumTotalWrites() == static_cast<uint32_t>(retries + 1));
+                REQUIRE(t.exe->advance_time(timeout) == 0);
+                REQUIRE(t.NumTotalWrites() == static_cast<uint32_t>(retries + 1));
+                MockTransportSegment additional(1, "BB", config.GetAddresses());
+                REQUIRE_FALSE(t.upper->SendDown(additional));
+            }
+        }
+
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+    }
+}
+
+TEST_CASE(SUITE("Confirmed link rejects retry limits above five"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 6;
+    REQUIRE_THROWS_AS(LinkLayerTest(config), std::invalid_argument);
+}
+
+TEST_CASE(SUITE("Confirmed frames retain bytes and FCB until ACK"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment segments(1, "AA BB", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(segments));
+    REQUIRE(t.PopLastWriteAsHex() == LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+
+    const auto first = LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA");
+    REQUIRE(t.PopLastWriteAsHex() == first);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.PopLastWriteAsHex() == first);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, false, config.RemoteAddr, config.LocalAddr, "BB"));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 1);
+}
+
+TEST_CASE(SUITE("Confirmed response ownership rejects wrong peer and stale status"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment segments(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(segments));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, 999));
+    REQUIRE(t.OnFrame(LinkFunction::SEC_LINK_STATUS, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.NumTotalWrites() == 1);
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 1);
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(20)) == 0);
+    REQUIRE(t.NumTotalWrites() == 3);
+}
+
+TEST_CASE(SUITE("Confirmed ACK received before TX callback completes the reset exchange"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment segments(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(segments));
+    REQUIRE(t.PopLastWriteAsHex() == LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr));
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.NumTotalWrites() == 1);
+
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 1);
+}
+
+TEST_CASE(SUITE("Confirmed reconnect starts with reset handshake and fresh retry budget"))
+{
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment first(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(first));
+    REQUIRE(t.PopLastWriteAsHex() == LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+    REQUIRE(t.link.OnTxReady());
+
+    REQUIRE(t.link.OnLowerLayerDown());
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(20)) == 0);
+    REQUIRE(t.NumTotalWrites() == 2);
+    REQUIRE(t.upper->GetCounters().numTxReady == 0);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment second(1, "BB", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(second));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.PopLastWriteAsHex()
+            == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "BB"));
+    REQUIRE(t.link.OnTxReady());
+    REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE(t.exe->run_many() > 0);
+    REQUIRE(t.upper->GetCounters().numTxReady == 1);
 }
 
 TEST_CASE(SUITE("CloseBehavior"))

@@ -47,6 +47,11 @@ bool MockTransportSegment::HasValue() const
     return remainder.length() > 0;
 }
 
+bool MockTransportSegment::IsMultiFrame() const
+{
+    return hs.ToRSeq().length() > segmentSize;
+}
+
 ser4cpp::rseq_t MockTransportSegment::GetSegment()
 {
     auto size = std::min(segmentSize, remainder.length());
