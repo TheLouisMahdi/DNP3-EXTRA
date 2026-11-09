@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "utils/APDUHexBuilders.h"
+#include "utils/BufferHelpers.h"
 #include "utils/OutstationTestObject.h"
 
 #include <ser4cpp/util/HexConversions.h>
@@ -383,6 +384,49 @@ TEST_CASE(SUITE("ReadClass0MultiFragAnalog"))
     t.SendToOutstation("C3 00");
 
     REQUIRE(t.lower->PopWriteAsHex().empty());
+}
+
+TEST_CASE(SUITE("ReadClass0MultiFragApplicationSequenceWrap"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 20;
+    OutstationTestObject t(config, configure::by_count_of::analog_input(8));
+    t.LowerLayerUp();
+
+    t.Transaction([](IUpdateHandler& db) {
+        for (uint16_t i = 0; i < 8; ++i)
+            db.Update(Analog(0, Flags(0x01)), i);
+    });
+
+    t.SendToOutstation("CF 01 3C 01 06"); // Class 0 READ with application sequence 15.
+    REQUIRE(t.lower->PopWriteAsHex() == "AF 81 80 00 1E 01 00 00 01 01 00 00 00 00 01 00 00 00 00");
+    t.OnTxReady();
+    t.SendToOutstation("CF 00"); // CONFIRM sequence 15; next fragment wraps to 0.
+    REQUIRE(t.lower->PopWriteAsHex() == "20 81 80 00 1E 01 00 02 03 01 00 00 00 00 01 00 00 00 00");
+    t.OnTxReady();
+    t.SendToOutstation("C0 00");
+    REQUIRE(t.lower->PopWriteAsHex() == "21 81 80 00 1E 01 00 04 05 01 00 00 00 00 01 00 00 00 00");
+    t.OnTxReady();
+    t.SendToOutstation("C1 00");
+    REQUIRE(t.lower->PopWriteAsHex() == "42 81 80 00 1E 01 00 06 07 01 00 00 00 00 01 00 00 00 00");
+    t.OnTxReady();
+    t.SendToOutstation("C2 00");
+    REQUIRE(t.lower->NumWrites() == 0);
+}
+
+TEST_CASE(SUITE("ConfiguredSingleApplicationFragmentCanExceed2048Bytes"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 4000;
+    OutstationTestObject t(config, configure::by_count_of::binary_input(2200));
+    t.LowerLayerUp();
+
+    t.SendToOutstation("C0 01 3C 01 06"); // Class 0 READ.
+    const auto response = t.lower->PopWriteAsHex();
+    HexSequence bytes(response);
+    REQUIRE(bytes.Size() == 2211); // APDU header, wide G1V2 range header and 2200 flags.
+    REQUIRE(response.substr(0, 32) == "C0 81 80 00 01 02 01 00 00 97 08");
+    REQUIRE(response.substr(response.size() - 5) == "02 02");
 }
 
 TEST_CASE(SUITE("ReadFuncNotSupported"))

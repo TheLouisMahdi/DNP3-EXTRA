@@ -1173,7 +1173,7 @@ MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeade
         authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
 #endif
 
-    if (header.control.CON)
+    if (header.control.CON && result != IMasterTask::ResponseResult::ERROR_BAD_RESPONSE)
     {
         this->QueueConfirm(APDUHeader::SolicitedConfirm(header.control.SEQ));
     }

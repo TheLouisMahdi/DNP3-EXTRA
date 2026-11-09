@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "utils/APDUHexBuilders.h"
+#include "utils/BufferHelpers.h"
 #include "utils/OutstationTestObject.h"
 
 #include <dnp3mocks/DatabaseHelpers.h>
@@ -55,6 +56,152 @@ TEST_CASE(SUITE("ReceiveNewRequestSolConfirmWait"))
 
     t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
     REQUIRE(t.lower->PopWriteAsHex() == "E1 81 80 00 02 01 28 01 00 00 00 81");
+}
+
+TEST_CASE(SUITE("SolicitedMixedStaticAndEventFragmentsRequireCorrelatedConfirms"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 12;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(5));
+    t.LowerLayerUp();
+
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01)), 4); });
+    t.SendToOutstation("C0 01 3C 02 06 3C 01 06"); // Class 1 events followed by Class 0 static points.
+    const auto first = "A0 81 80 00 02 01 28 01 00 04 00 81";
+    REQUIRE(t.lower->PopWriteAsHex() == first);
+
+    t.SendToOutstation("C0 00"); // Early CONFIRM is deferred until the response TX completes.
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.empty());
+    t.OnTxReady();
+    const auto second = "21 81 80 00 01 02 00 00 02 02 02 02";
+    REQUIRE(t.lower->PopWriteAsHex() == second);
+    t.OnTxReady();
+    REQUIRE(t.application->confirms.size() == 1);
+    REQUIRE(t.application->confirms[0].num_class1 == 0);
+
+    t.SendToOutstation("C1 00");
+    REQUIRE(t.lower->PopWriteAsHex() == "42 81 80 00 01 02 00 03 04 02 81");
+    t.OnTxReady();
+    REQUIRE(t.application->confirms.size() == 2);
+
+    t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 00");
+    REQUIRE(t.lower->NumWrites() == 0);
+}
+
+TEST_CASE(SUITE("SolicitedConfirmValidationRepeatReadAndStaleConfirm"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 15;
+    config.params.respondToAnyMaster = true;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(5));
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(Binary(true, Flags(0x01)), 0);
+        db.Update(Binary(false, Flags(0x01)), 1);
+        db.Update(Binary(true, Flags(0x01)), 2);
+        db.Update(Binary(false, Flags(0x01)), 3);
+        db.Update(Binary(true, Flags(0x01)), 4);
+    });
+
+    const auto first = "A0 81 82 00 02 01 28 02 00 00 00 81 01 00 01";
+    t.SendToOutstation(hex::ClassPoll(0, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == first);
+    t.OnTxReady();
+
+    t.SendToOutstation("C1 00"); // Wrong sequence.
+    t.SendToOutstation("D0 00"); // Wrong UNS.
+    t.SendToOutstation("C0 00 01"); // CONFIRM must not contain object data.
+
+    HexSequence wrongPeerConfirm(hex::SolicitedConfirm(0));
+    t.context.OnReceive(Message(Addresses(1, 0), wrongPeerConfirm.ToRSeq()));
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.empty());
+
+    t.SendToOutstation(hex::ClassPoll(0, PointClass::Class1)); // Retransmit, do not release events.
+    REQUIRE(t.lower->PopWriteAsHex() == first);
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->PopWriteAsHex() == "21 81 82 00 02 01 28 02 00 02 00 81 03 00 01");
+    t.OnTxReady();
+
+    t.SendToOutstation(hex::SolicitedConfirm(0)); // Stale confirm cannot advance fragment 3.
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.size() == 1);
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.lower->PopWriteAsHex() == "62 81 80 00 02 01 28 01 00 04 00 81");
+    t.OnTxReady();
+    REQUIRE(t.application->confirms.size() == 2);
+
+    t.SendToOutstation(hex::SolicitedConfirm(2));
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.size() == 3);
+
+    t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 00");
+}
+
+TEST_CASE(SUITE("DisconnectWhileSolicitedConfirmWaitDoesNotContinueOldResponse"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 15;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(3));
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(Binary(true, Flags(0x01)), 0);
+        db.Update(Binary(false, Flags(0x01)), 1);
+        db.Update(Binary(true, Flags(0x01)), 2);
+    });
+
+    t.SendToOutstation(hex::ClassPoll(0, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "A0 81 82 00 02 01 28 02 00 00 00 81 01 00 01");
+    t.OnTxReady();
+    t.LowerLayerDown();
+    t.LowerLayerUp();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->NumWrites() == 0);
+
+    t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "A1 81 82 00 02 01 28 02 00 00 00 81 01 00 01");
+}
+
+TEST_CASE(SUITE("SolicitedConfirmTimeoutRetainsEventsAndStopsOldFragmentSequence"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 15;
+    config.params.solConfirmTimeout = TimeDuration::Milliseconds(10);
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(3));
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(Binary(true, Flags(0x01)), 0);
+        db.Update(Binary(false, Flags(0x01)), 1);
+        db.Update(Binary(true, Flags(0x01)), 2);
+    });
+
+    t.SendToOutstation(hex::ClassPoll(0, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "A0 81 82 00 02 01 28 02 00 00 00 81 01 00 01");
+    t.OnTxReady();
+    t.AdvanceTime(TimeDuration::Milliseconds(10));
+    t.SendToOutstation(hex::SolicitedConfirm(0)); // Late confirm cannot continue the old response.
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.empty());
+
+    t.SendToOutstation(hex::ClassPoll(1, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "A1 81 82 00 02 01 28 02 00 00 00 81 01 00 01");
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.lower->PopWriteAsHex() == "62 81 80 00 02 01 28 01 00 02 00 81");
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(2));
+    REQUIRE(t.application->confirms.size() == 2);
+
+    t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00");
 }
 
 TEST_CASE(SUITE("ReadClass1WithSOE"))

@@ -520,6 +520,110 @@ TEST_CASE(SUITE("SolicitedMultiFragResponse"))
     REQUIRE((Binary(false, Flags(0x02)) == t.meas->binarySOE[3].meas));
 }
 
+TEST_CASE(SUITE("SolicitedMultiFragResponseConfirmsAreCorrelatedAndQueued"))
+{
+    auto config = NoStartupTasks();
+    MasterTestFixture t(config);
+    t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(60), t.meas);
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02 02 81"));
+    REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, false));
+    REQUIRE(t.context->confirmQueue.empty());
+    REQUIRE(t.meas->TotalReceived() == 1);
+
+    REQUIRE(t.SendToMaster("21 81 00 00 01 02 00 03 03 01"));
+    REQUIRE(t.context->confirmQueue.size() == 1);
+    REQUIRE(t.context->confirmQueue.front().control.SEQ == 1);
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(t.meas->TotalReceived() == 2);
+
+    REQUIRE(t.SendToMaster("62 81 00 00 01 02 00 04 04 81"));
+    REQUIRE(t.context->confirmQueue.size() == 2);
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(1, false));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(2, false));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(t.meas->TotalReceived() == 3);
+    REQUIRE((Binary(true, Flags(0x01)) == t.meas->binarySOE[2].meas));
+    REQUIRE((Binary(false, Flags(0x01)) == t.meas->binarySOE[3].meas));
+    REQUIRE((Binary(true, Flags(0x01)) == t.meas->binarySOE[4].meas));
+}
+
+TEST_CASE(SUITE("MalformedConfirmedSolicitedResponseIsNotAcknowledged"))
+{
+    auto config = NoStartupTasks();
+    MasterTestFixture t(config);
+    auto callback = std::make_shared<MockTaskCallback>();
+    t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(60), t.meas, TaskConfig::With(callback));
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02")); // Truncated G1V2 object.
+
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(t.meas->TotalReceived() == 0);
+    REQUIRE(callback->results.size() == 1);
+    REQUIRE(callback->results.front() == TaskCompletion::FAILURE_BAD_RESPONSE);
+}
+
+TEST_CASE(SUITE("SolicitedWrongSequenceTimesOutAndUnexpectedFIRIsNotConfirmed"))
+{
+    auto params = NoStartupTasks();
+    params.maxApplicationRetries = 0;
+    params.responseTimeout = TimeDuration::Milliseconds(10);
+
+    {
+        MasterTestFixture t(params);
+        auto callback = std::make_shared<MockTaskCallback>();
+        t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(60), t.meas, TaskConfig::With(callback));
+        t.context->OnLowerLayerUp();
+        t.exe->run_many();
+        REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+        REQUIRE(t.context->OnTxReady());
+
+        REQUIRE(t.SendToMaster("A1 81 00 00 01 02 00 02 02 81")); // Wrong response sequence.
+        REQUIRE(t.lower->HasNoData());
+        REQUIRE(t.meas->TotalReceived() == 0);
+        REQUIRE(t.SendToMaster("80 81 00 00 01 02 00 02 02 81")); // Correct sequence, but no final fragment.
+        REQUIRE(t.meas->TotalReceived() == 1);
+        REQUIRE(t.lower->HasNoData());
+        t.exe->advance_time(std::chrono::milliseconds(10));
+        REQUIRE(t.exe->run_many() > 0);
+        REQUIRE(callback->results.size() == 1);
+        REQUIRE(callback->results.front() == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+        REQUIRE(t.lower->HasNoData());
+    }
+
+    {
+        MasterTestFixture t(params);
+        auto callback = std::make_shared<MockTaskCallback>();
+        t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(60), t.meas, TaskConfig::With(callback));
+        t.context->OnLowerLayerUp();
+        t.exe->run_many();
+        REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+        REQUIRE(t.context->OnTxReady());
+
+        REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02 02 81"));
+        REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, false));
+        REQUIRE(t.meas->TotalReceived() == 1);
+        REQUIRE(t.context->OnTxReady());
+
+        REQUIRE(t.SendToMaster("A1 81 00 00 01 02 00 03 03 01")); // Unexpected FIR, sequence 1.
+        REQUIRE(t.lower->HasNoData());
+        REQUIRE(t.meas->TotalReceived() == 1);
+        REQUIRE(callback->results.size() == 1);
+        REQUIRE(callback->results.front() == TaskCompletion::FAILURE_BAD_RESPONSE);
+    }
+}
+
 TEST_CASE(SUITE("EventPoll"))
 {
     MasterTestFixture t(NoStartupTasks());
