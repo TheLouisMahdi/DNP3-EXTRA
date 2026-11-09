@@ -594,10 +594,11 @@ OutstationState& OContext::ContinueMultiFragResponse(const Addresses& addresses,
     auto response = this->sol.tx.Start();
     auto writer = response.GetWriter();
     response.SetFunction(FunctionCode::RESPONSE);
-    auto control = this->rspContext.LoadResponse(writer);
+    IINField iin;
+    auto control = this->LoadSolicitedFragment(writer, iin);
     control.SEQ = seq;
     response.SetControl(control);
-    response.SetIIN(this->GetResponseIIN());
+    response.SetIIN(iin | this->GetResponseIIN());
 
     return this->BeginResponseTx(addresses.source, response);
 }
@@ -949,6 +950,25 @@ IINField OContext::HandleFileInfo(const ParsedRequest& request, HeaderWriter& wr
     return writer.WriteFreeFormat(&response, 1) ? IINField::Empty() : IINField(IINBit::PARAM_ERROR);
 }
 
+AppControlField OContext::LoadSolicitedFragment(HeaderWriter& writer, IINField& iin)
+{
+    const auto available = writer.Remaining();
+    auto control = this->rspContext.LoadResponse(writer);
+    if (!control.FIN && writer.Remaining() == available)
+    {
+        // A fresh APDU could not fit the next complete object. Another CONFIRM
+        // would start with the same capacity and selection.
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Solicited response object exceeds transmit fragment capacity");
+        this->database.Unselect();
+        this->eventBuffer.Unselect();
+        this->rspContext.Reset();
+        iin.SetBit(IINBit::DEVICE_TROUBLE);
+        control.FIN = true;
+        control.CON = false;
+    }
+    return control;
+}
+
 ser4cpp::Pair<IINField, AppControlField> OContext::HandleRead(const ser4cpp::rseq_t& objects, HeaderWriter& writer)
 {
     this->rspContext.Reset();
@@ -966,8 +986,9 @@ ser4cpp::Pair<IINField, AppControlField> OContext::HandleRead(const ser4cpp::rse
     if (result == ParseResult::OK)
     {
         this->database.SetReadIIN(this->GetResponseIIN());
-        auto control = this->rspContext.LoadResponse(writer);
-        return ser4cpp::Pair<IINField, AppControlField>(handler.Errors(), control);
+        auto iin = handler.Errors();
+        auto control = this->LoadSolicitedFragment(writer, iin);
+        return ser4cpp::Pair<IINField, AppControlField>(iin, control);
     }
 
     this->rspContext.Reset();

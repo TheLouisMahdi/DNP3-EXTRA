@@ -246,6 +246,7 @@ private:
 
     /// Handles read function codes. May trigger an unsolicited response
     /// @return an IIN field and a partial AppControlField (missing sequence info)
+    AppControlField LoadSolicitedFragment(HeaderWriter& writer, IINField& iin);
     ser4cpp::Pair<IINField, AppControlField> HandleRead(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
 
     // ------ Function Handlers ------

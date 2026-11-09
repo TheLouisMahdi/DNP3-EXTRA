@@ -204,6 +204,90 @@ TEST_CASE(SUITE("SolicitedConfirmTimeoutRetainsEventsAndStopsOldFragmentSequence
     REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00");
 }
 
+TEST_CASE(SUITE("OversizedSolicitedEventCannotStartConfirmLoopAndSurvivesReconnect"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 11;
+    config.params.solConfirmTimeout = TimeDuration::Milliseconds(10);
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(1));
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01)), 0); });
+
+    for (uint8_t seq : {0, 0, 1})
+    {
+        t.SendToOutstation(hex::ClassPoll(seq, PointClass::Class1));
+        const auto response = seq == 0 ? "C0 81 C2 00" : "C1 81 C2 00";
+        REQUIRE(t.lower->PopWriteAsHex() == response);
+        t.OnTxReady();
+        t.SendToOutstation(hex::SolicitedConfirm(seq));
+        REQUIRE(t.lower->NumWrites() == 0);
+        REQUIRE(t.NumPendingTimers() == 0);
+        REQUIRE(t.application->confirms.empty());
+    }
+
+    t.AdvanceTime(TimeDuration::Milliseconds(10));
+    t.LowerLayerDown();
+    t.LowerLayerUp();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.lower->NumWrites() == 0);
+    t.SendToOutstation(hex::ClassPoll(2, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 C2 00"); // Class 1 IIN still signals the unsent event.
+}
+
+TEST_CASE(SUITE("OversizedTimedEventIsRetainedAndFitsWhenReadUntimed"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 12;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    OutstationTestObject t(config, configure::by_count_of::binary_input(1));
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01)), 0); });
+
+    t.SendToOutstation("C0 01 02 02 06"); // G2V2 with Q28 requires 18 octets.
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 81 C2 00");
+    t.OnTxReady();
+    t.SendToOutstation("C1 01 02 01 06"); // The same event as G2V1 fits in 12 octets.
+    REQUIRE(t.lower->PopWriteAsHex() == "E1 81 80 00 02 01 28 01 00 00 00 81");
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.application->confirms.size() == 1);
+    t.SendToOutstation(hex::ClassPoll(2, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 80 00");
+}
+
+TEST_CASE(SUITE("OversizedStaticContinuationTerminatesAfterConfirmedEvent"))
+{
+    OutstationConfig config;
+    config.params.maxTxFragSize = 12;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    auto database = configure::by_count_of::binary_input(1);
+    database.analog_input[0].clazz = PointClass::Class0;
+    OutstationTestObject t(config, database);
+    t.LowerLayerUp();
+    t.Transaction([](IUpdateHandler& db) {
+        db.Update(Binary(true, Flags(0x01)), 0);
+        db.Update(Analog(7, Flags(0x01)), 0);
+    });
+
+    t.SendToOutstation("C0 01 02 01 06 1E 01 06");
+    REQUIRE(t.lower->PopWriteAsHex() == "A0 81 80 00 02 01 28 01 00 00 00 81");
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(0));
+    REQUIRE(t.lower->PopWriteAsHex() == "41 81 C0 00"); // G30V1 needs 14 octets with a narrow range.
+    t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.application->confirms.size() == 1);
+    REQUIRE(t.NumPendingTimers() == 0);
+
+    t.SendToOutstation("C2 01 1E 02 06"); // G30V2 fits with a 16-bit value.
+    REQUIRE(t.lower->PopWriteAsHex() == "C2 81 80 00 1E 02 00 00 00 01 07 00");
+    t.OnTxReady();
+    t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
+    REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00");
+}
+
 TEST_CASE(SUITE("ReadClass1WithSOE"))
 {
     OutstationConfig config;
