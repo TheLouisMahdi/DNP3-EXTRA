@@ -27,6 +27,31 @@ Core RTU Host source slices landed **4/4**. Slices with matching Windows accepta
 
 Use the latest reviewed source commit for the snapshot. A documentation-only commit does not advance it. Count a slice as landed when its code is present on `develop`. Count a slice in the evidence row only after recording its executed Windows scenarios, results and tested SHA and verifying that the evidence covers the corresponding slice at the reviewed source snapshot. Record a focused regression when intervening source changes affect that evidence. Update the two README rows, the graphical progress snapshot (`DNP3-EXTRA-progress.svg`) and this ledger together. Keep historical evidence with its original revision. Never change the four-slice progress bars to represent overall 119-requirement completion.
 
+## Host verification record — 2026-11-09 at `010dcf6`
+
+Scope: native Windows build and suite execution at the acceptance-harness commit. This is **not** an acceptance campaign: the sealed runner campaign, independent-peer evidence and target hardware remain outstanding.
+
+**Environment:** Windows, MSVC 14.44.35207 (Visual Studio 2022 Build Tools), CMake 4.4.3, vcpkg OpenSSL 3.6.5 (`x64-windows`), Python 3.11.6.
+
+**Build gate:** `RunDnp3Acceptance.py` configure failed at `27c09f8` and again at `010dcf6` (`CMAKE_CONFIGURE_FAILED`) because the pinned `catch` asset (`catchorg/Catch2` v2.11.3 `catch.hpp`) returns HTTP 504 to this network. The verified build below used the same header from `raw.githubusercontent.com/catchorg/Catch2/v2.11.3/single_include/catch2/catch.hpp`, checked against the pinned SHA1 `c127ebb7a4f65c6ceff7587c8ef18f84a74d6c15`, supplied through `-DFETCHCONTENT_SOURCE_DIR_CATCH`. No repository file was changed for this workaround, and the runner's own configure path stays blocked by that network gate.
+
+**Build:** `cmake --build build/verify --config Release --target unittests integrationtests asiotests dnp3-cli --parallel 4` exited 0 with no compiler or linker errors.
+
+| Suite at `010dcf6` | Result | Exit | Note |
+|---|---|---:|---|
+| `tools/tests/test_acceptance_infra.py` | 9/9 cases pass | 0 | Runner self-tests |
+| `unittests '[rtu-acceptance]'` | 257/257 cases, 5927 assertions pass | 0 | New Host acceptance cases |
+| `unittests` (full) | 1042/1050 cases pass, 8 fail | 8 | See attribution below |
+| `integrationtests` | 15/16 cases pass, 1 fail | 1 | `PerformanceTestSuite - PointsPerSecond`: "timeout waiting for count" at concurrency 12 (throughput-dependent) |
+| `asiotests` | 5/7 cases pass, 2 fail | 2 | Both TLS client/server cases fail `all_certs_found == false`; the `certs/` fixtures are excluded by `.gitignore` (`*.pem`) |
+
+**Failure attribution.** `opendnp3/cpp/lib`, `apps/` and `opendnp3/CMakeLists.txt` are unchanged between `42ba389` and `010dcf6`; only `cli/tests/ProcessSmoke.py` differs under those paths. The failing test files were not modified by `010dcf6`, and its mock additions are inert at their default values (`updateClockOnWrite = false`, `reflectAnalogOutput = false`). The failures therefore pre-date the harness commit.
+
+- 7 × `OutstationUnsolicitedTestSuite` assertions `NumPendingTimers() == 1` observed 0. `RestartConfirmTimer` (`430732a`) now defers the confirm timer while a transmission is in flight and arms it from `OnTxReady`. These cases assert a pending timer immediately after a queued write without calling `OnTxReady`, so they encode the pre-`430732a` timing. Whether the expectation or the deferral is wrong is unresolved; this is not a passing result for unsolicited confirmation.
+- 1 × `SecurityStatEvents - failed save marks later G122 events discontinuous permanently` (`TestSecurityStatEvents.cpp:225`): the observed frame carries an extra `0x41` (discontinuity) flag on the first event after the failed save. This falls under the open G122 Save-result item below.
+
+No requirement status, progress percentage or G122/CFG-06 claim is promoted by this record. The four slices remain IMPLEMENTED_UNVERIFIED, and the deferred unified acceptance campaign stays open.
+
 ## Historical execution phases A–E
 
 **Historical baseline:** `develop@9b2534b37152f07a439f892ba8d27c3a9863653f` (2026-11-08).
