@@ -222,7 +222,7 @@ TEST_CASE(SUITE("SecondaryResetConfirmedUserData"))
     t.link.OnTxReady();
 
     ByteStr bytes(250, 0);
-    t.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, false, 1, 1024, bytes.ToRSeq());
+    t.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, true, 1, 1024, bytes.ToRSeq());
     REQUIRE(t.NumTotalWrites() == 2);
     t.link.OnTxReady();
 
@@ -230,11 +230,12 @@ TEST_CASE(SUITE("SecondaryResetConfirmedUserData"))
     REQUIRE(t.PopLastWriteAsHex() == LinkHex::Ack(true, false, 1024, 1));
     t.upper->receivedQueue.clear();
 
-    t.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, false, 1, 1024,
+    t.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, true, 1, 1024,
               bytes.ToRSeq());               // send with wrong FCB
     REQUIRE(t.NumTotalWrites() == 3);        // should still get an ACK
     REQUIRE(t.upper->receivedQueue.empty()); // but no data
     REQUIRE(t.PopLastWriteAsHex() == LinkHex::Ack(true, false, 1024, 1));
+    REQUIRE(t.link.OnTxReady());
 }
 
 TEST_CASE(SUITE("RequestStatusOfLink"))
@@ -271,17 +272,110 @@ TEST_CASE(SUITE("TestLinkStates"))
 {
     LinkLayerTest t;
     t.link.OnLowerLayerUp();
-    t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, false, false, 1, 1024);
+    t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, false, true, 1, 1024);
     REQUIRE(t.NumTotalWrites() == 0);
 
     t.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, false, false, false, 1, 1024);
     REQUIRE(t.NumTotalWrites() == 1);
     t.link.OnTxReady();
 
-    t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, true, false, 1, 1024);
+    t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, true, true, 1, 1024);
 
     REQUIRE(t.NumTotalWrites() == 2);
     REQUIRE(t.PopLastWriteAsHex() == LinkHex::Ack(true, false, 1024, 1));
+    REQUIRE(t.link.OnTxReady());
+}
+
+TEST_CASE(SUITE("SecondaryTestLinkStatesRetransmitsAckForUnexpectedFCB"))
+{
+    LinkLayerTest t;
+    t.link.OnLowerLayerUp();
+
+    const auto ack = LinkHex::Ack(true, false, 1024, 1);
+    REQUIRE(t.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, false, false, false, 1, 1024));
+    REQUIRE(t.NumTotalWrites() == 1);
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    // FCB=1 is expected after reset. The resulting ACK is still the response to repeat
+    // after an intervening LINK_STATUS response.
+    REQUIRE(t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, true, true, 1, 1024));
+    REQUIRE(t.NumTotalWrites() == 2);
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    REQUIRE(t.OnFrame(LinkFunction::PRI_REQUEST_LINK_STATUS, false, false, false, 1, 1024));
+    REQUIRE(t.NumTotalWrites() == 3);
+    REQUIRE(t.PopLastWriteAsHex() == LinkHex::LinkStatus(true, false, 1024, 1));
+    REQUIRE(t.link.OnTxReady());
+
+    // FCB=1 is now unexpected. It repeats the earlier ACK and must leave FCB=0 expected.
+    REQUIRE(t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, true, true, 1, 1024));
+    REQUIRE(t.NumTotalWrites() == 4);
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    ByteStr first(1, 0xAA);
+    REQUIRE(t.OnFrame(
+        LinkFunction::PRI_CONFIRMED_USER_DATA, false, false, true, 1, 1024, first.ToRSeq()));
+    REQUIRE(t.NumTotalWrites() == 5);
+    REQUIRE(t.upper->receivedQueue.size() == 1);
+    REQUIRE(t.upper->receivedQueue.front() == first.ToHex());
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    // Repeat the same unexpected FCB. Each request must repeat the ACK without advancing FCB.
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        REQUIRE(t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, false, true, 1, 1024));
+        REQUIRE(t.NumTotalWrites() == 6 + i);
+        REQUIRE(t.PopLastWriteAsHex() == ack);
+        REQUIRE(t.link.OnTxReady());
+    }
+
+    ByteStr second(1, 0xBB);
+    REQUIRE(t.OnFrame(
+        LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, true, 1, 1024, second.ToRSeq()));
+    REQUIRE(t.NumTotalWrites() == 9);
+    REQUIRE(t.upper->receivedQueue.size() == 2);
+    REQUIRE(t.upper->receivedQueue.back() == second.ToHex());
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    // A correct TEST_LINK_STATES advances once; the next confirmed FCB=1 is accepted.
+    REQUIRE(t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, false, true, 1, 1024));
+    REQUIRE(t.NumTotalWrites() == 10);
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    ByteStr third(1, 0xCC);
+    REQUIRE(t.OnFrame(
+        LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, true, 1, 1024, third.ToRSeq()));
+    REQUIRE(t.NumTotalWrites() == 11);
+    REQUIRE(t.upper->receivedQueue.size() == 3);
+    REQUIRE(t.upper->receivedQueue.back() == third.ToHex());
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    // Resetting again restores expected FCB=1.
+    REQUIRE(t.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, false, false, false, 1, 1024));
+    REQUIRE(t.NumTotalWrites() == 12);
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    ByteStr fourth(1, 0xDD);
+    REQUIRE(t.OnFrame(
+        LinkFunction::PRI_CONFIRMED_USER_DATA, false, true, true, 1, 1024, fourth.ToRSeq()));
+    REQUIRE(t.NumTotalWrites() == 13);
+    REQUIRE(t.upper->receivedQueue.size() == 4);
+    REQUIRE(t.upper->receivedQueue.back() == fourth.ToHex());
+    REQUIRE(t.PopLastWriteAsHex() == ack);
+    REQUIRE(t.link.OnTxReady());
+
+    const auto writes = t.NumTotalWrites();
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, false, true, 1, 1023));
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::PRI_TEST_LINK_STATES, false, false, true, 2, 1024));
+    REQUIRE(t.NumTotalWrites() == writes);
 }
 
 TEST_CASE(SUITE("BroadcastTestLinkStates"))

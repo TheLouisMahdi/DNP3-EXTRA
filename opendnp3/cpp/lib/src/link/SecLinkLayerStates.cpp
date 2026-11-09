@@ -84,11 +84,9 @@ SecStateBase& SLLS_Reset::OnTestLinkStatus(LinkContext& ctx, uint16_t source, bo
         return SLLS_TransmitWaitReset::Instance();
     }
 
-    // "Re-transmit most recent response that contained function code 0 (ACK) or 1 (NACK)."
-    // This is a PITA implement
-    // TODO - see if this function is deprecated or not
     SIMPLE_LOG_BLOCK(ctx.logger, flags::WARN, "Received TestLinkStatus with invalid FCB");
-    return *this;
+    ctx.QueueAck(source);
+    return SLLS_TransmitWaitReset::Instance();
 }
 
 SecStateBase& SLLS_Reset::OnConfirmedUserData(
