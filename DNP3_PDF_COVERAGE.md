@@ -103,7 +103,7 @@ Values below are selections/ranges copied from the PDF-derived matrix. Blank cho
 |---|---|---|---|---|---|
 | SEC-T1-01 | Secure Authentication | Fixed: Version 5 \| Mandatory, no false reporting | MANDATORY | PARTIAL | PDF p3, Table 1, row 1 |
 | SEC-T1-02 | Maximum users | Configurable, at least 2 \| Mandatory | MANDATORY | VERIFIED | PDF p3, Table 1, row 2 |
-| SEC-T1-03 | Security response timeout | Configurable, 0-120 s \| Mandatory range; legal zero semantics to verify in IEEE | MANDATORY | PARTIAL | PDF p3, Table 1, row 3 |
+| SEC-T1-03 | Security response timeout | Configurable 0-120 s per addendum; IEEE 7.6.1.4.1 default 2 s, 100 ms steps and maximum at least 120 s \| Zero semantics still OPEN | MANDATORY | PARTIAL | PDF p3, Table 1, row 3 |
 | SEC-T1-04 | Aggressive receive | Yes, not recommended \| Capability required; usage policy separate | MANDATORY | VERIFIED | PDF p3, Table 1, row 4 |
 | SEC-T1-05 | Aggressive issue | Yes, not recommended \| Capability required; usage policy separate | MANDATORY | VERIFIED | PDF p3, Table 1, row 5 |
 | SEC-T1-06 | Challenge-response | Mandatory \| Mandatory | MANDATORY | VERIFIED | PDF p3, Table 1, row 6 |
@@ -115,7 +115,7 @@ Values below are selections/ranges copied from the PDF-derived matrix. Blank cho
 | SEC-T1-12 | DNP TCP port using TLS | Fixed: 19999 \| Mandatory when using TLS | MANDATORY | VERIFIED | PDF p4, Table 1, row 12 |
 | SEC-T1-13 | Cipher-change request timeout | Configurable, 1-60 s \| Mandatory | MANDATORY | NOT_IMPLEMENTED | PDF p4, Table 1, row 13 |
 | SEC-T1-14 | Supported CAs | At least 4 \| Mandatory | MANDATORY | IMPLEMENTED_NOT_VERIFIED | PDF p4, Table 1, row 14 |
-| SEC-T1-15 | Certificate revocation check time | Configurable; numeric value blank \| OPEN: no default/range supplied | MANDATORY | NOT_IMPLEMENTED | PDF p4, Table 1, row 15 |
+| SEC-T1-15 | Certificate revocation check time | Addendum numeric field blank; IEEE 7.8.7.4.3 default 12 h, configurable at 1-hour resolution \| CRL distribution/freshness and live-session scheduling remain open | MANDATORY | NOT_IMPLEMENTED | PDF p4, Table 1, row 15 |
 | SEC-T1-16 | Remote update-key changes | Configurable, symmetric/asymmetric algorithm options \| Must distinguish alternatives vs minimum mandatory options | MANDATORY | PARTIAL | PDF p4, Table 1, row 16 |
 | SEC-T1-17 | User-credential expiry | Yes \| Mandatory | MANDATORY | VERIFIED | PDF p4, Table 1, row 17 |
 | SEC-T2-01 | Protocol authentication | Challenge-response; Aggressive Mode not recommended | MANDATORY | VERIFIED | PDF p5, Table 2, row 1 |
