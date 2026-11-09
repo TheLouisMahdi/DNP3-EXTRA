@@ -61,6 +61,8 @@ These diagnostic defaults use explicit unprotected Compatibility mode on localho
 
 ## Requirements and evidence
 
+- [Current-head F0 decision and gap audit](F0_GAP_AUDIT.md) evaluates all 28 F0 entries against IEEE, the selected PDFs and current GitHub source. [119-ID implementation/subcase matrix](F0_IMPLEMENTATION_MATRIX.csv) records 119 unique requirements in 186 audit rows. These are static source assessments, **not test passes or approved product defaults**.
+
 - [F0 source-fixed constraints and open product decisions](F0_PRODUCT_DECISIONS.md) separates authoritative PDF/IEEE values from unresolved approvals; it does not claim implemented or tested compliance.
 
 - [Current execution ledger](EXECUTION_PHASE_STATUS.md) records code changes, outstanding decisions and deferred verification. [Windows acceptance case index](WINDOWS_TEST_TITLES.md) lists planned coverage.
