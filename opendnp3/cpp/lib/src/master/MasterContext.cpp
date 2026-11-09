@@ -552,8 +552,10 @@ void MContext::ProcessResponse(const APDUResponseHeader& header, const ser4cpp::
         return;
     }
 
-    this->tstate = this->OnResponseEvent(header, objects);
-    this->ProcessIIN(header.IIN); // TODO - should we process IIN bits for unexpected responses?
+    bool accepted = false;
+    this->tstate = this->OnResponseEvent(header, objects, accepted);
+    if (accepted)
+        this->ProcessIIN(header.IIN);
 }
 
 void MContext::QueueConfirm(const APDUHeader& header)
@@ -1118,12 +1120,13 @@ MContext::TaskState MContext::OnTransmitComplete()
     }
 }
 
-MContext::TaskState MContext::OnResponseEvent(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects)
+MContext::TaskState MContext::OnResponseEvent(const APDUResponseHeader& header,
+                                                const ser4cpp::rseq_t& objects, bool& accepted)
 {
     switch (tstate)
     {
     case (TaskState::WAIT_FOR_RESPONSE):
-        return OnResponse_WaitForResponse(header, objects);
+        return OnResponse_WaitForResponse(header, objects, accepted);
     default:
         FORMAT_LOG_BLOCK(logger, flags::WARN, "Not expecting a response, sequence: %u", header.control.SEQ);
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -1160,40 +1163,42 @@ MContext::TaskState MContext::StartTask_TaskReady()
 }
 
 MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeader& header,
-                                                         const ser4cpp::rseq_t& objects)
+                                                         const ser4cpp::rseq_t& objects, bool& accepted)
 {
-    if (!header.control.FIR && previousResponseHeader.function == FunctionCode::UNKNOWN)
-    {
-        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Ignoring continuation before the first solicited response fragment");
-        return TaskState::WAIT_FOR_RESPONSE;
-    }
+    const bool assembling = previousResponseHeader.function == FunctionCode::RESPONSE;
+    const bool expectedSequence = this->solSeq.Equals(header.control.SEQ);
 
-    if (header.control.SEQ != this->solSeq)
+    if (!assembling && (!header.control.FIR || !expectedSequence))
     {
-        if (previousResponseHeader.function == FunctionCode::RESPONSE
-            && header.control.SEQ == previousResponseHeader.control.SEQ)
-        {
-            // IEEE 1815-2012 Table 6-2: compare the entire previous fragment.
-            if (header.Equals(previousResponseHeader) && header.IIN == previousResponseHeader.IIN
-                && previousResponseView.equals(objects))
-            {
-                if (header.control.CON)
-                    this->QueueConfirm(APDUHeader::SolicitedConfirm(header.control.SEQ));
-                responseTimer.cancel();
-                this->StartResponseTimer(); // The complete-response deadline still caps this timer.
-                return TaskState::WAIT_FOR_RESPONSE;
-            }
-
-            responseTimer.cancel();
-            this->activeTask->OnBadResponse(Timestamp(executor->get_time()));
-            this->CompleteActiveTask();
-            return TaskState::IDLE;
-        }
-        FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Response with bad sequence: %u", header.control.SEQ);
+        FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Unexpected first response fragment: %u", header.control.SEQ);
 #ifdef OPENDNP3_USE_SA_CRYPTO
         if (authentication && authentication->sessions) authentication->sessions->statistics.Unexpected();
 #endif
         return TaskState::WAIT_FOR_RESPONSE;
+    }
+
+    if (assembling && (!expectedSequence || header.control.FIR))
+    {
+        // IEEE 1815-2012 Table 6-2: only an exact repeat can keep Assembly active.
+        if (header.Equals(previousResponseHeader) && header.IIN == previousResponseHeader.IIN
+            && previousResponseView.equals(objects))
+        {
+            if (header.control.CON)
+                this->QueueConfirm(APDUHeader::SolicitedConfirm(header.control.SEQ));
+            responseTimer.cancel();
+            this->StartResponseTimer(); // The complete-response deadline still caps this timer.
+            return TaskState::WAIT_FOR_RESPONSE;
+        }
+
+        responseTimer.cancel();
+        if (expectedSequence)
+            this->solSeq.Increment();
+#ifdef OPENDNP3_USE_SA_CRYPTO
+        if (authentication && authentication->sessions) authentication->sessions->statistics.Unexpected();
+#endif
+        this->activeTask->OnBadResponse(Timestamp(executor->get_time()));
+        this->CompleteActiveTask();
+        return TaskState::IDLE;
     }
 
     this->responseTimer.cancel();
@@ -1203,12 +1208,13 @@ MContext::TaskState MContext::OnResponse_WaitForResponse(const APDUResponseHeade
     auto now = Timestamp(this->executor->get_time());
 
     auto result = this->activeTask->OnResponse(header, objects, now);
+    accepted = result != IMasterTask::ResponseResult::ERROR_BAD_RESPONSE;
 #ifdef OPENDNP3_USE_SA_CRYPTO
-    if (result == IMasterTask::ResponseResult::ERROR_BAD_RESPONSE && authentication && authentication->sessions)
+    if (!accepted && authentication && authentication->sessions)
         authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
 #endif
 
-    if (header.control.CON && result != IMasterTask::ResponseResult::ERROR_BAD_RESPONSE)
+    if (header.control.CON && accepted)
     {
         this->QueueConfirm(APDUHeader::SolicitedConfirm(header.control.SEQ));
     }

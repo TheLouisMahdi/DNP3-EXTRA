@@ -685,6 +685,37 @@ TEST_CASE(SUITE("SolicitedPartialResponseWithoutCONFailsBeforeDelivery"))
     REQUIRE(callback->results.front() == TaskCompletion::FAILURE_BAD_RESPONSE);
 }
 
+TEST_CASE(SUITE("UnexpectedAssemblyFragmentsAbortWithoutApplyingTheirIIN"))
+{
+    const auto invalid = GENERATE("A1 81 80 00", "20 81 80 00", "23 81 80 00", "63 81 80 00", "C1 81 80 00");
+    MasterTestFixture t(NoStartupTasks());
+    auto callback = std::make_shared<MockTaskCallback>();
+    t.context->AddClassScan(ClassField::AllClasses(), TimeDuration::Seconds(60), t.meas, TaskConfig::With(callback));
+    t.context->OnLowerLayerUp();
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
+    REQUIRE(t.context->OnTxReady());
+
+    REQUIRE(t.SendToMaster("A3 81 80 00")); // Wrong first SEQ does not end AwaitFirst.
+    REQUIRE(t.application->rxIIN.empty());
+    REQUIRE(callback->results.empty());
+    REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02 02 81"));
+    REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, false));
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.application->rxIIN.size() == 1);
+
+    REQUIRE(t.SendToMaster(invalid));
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(t.application->rxIIN.size() == 1);
+    REQUIRE(t.meas->TotalReceived() == 1);
+    REQUIRE(callback->results.size() == 1);
+    REQUIRE(callback->results.front() == TaskCompletion::FAILURE_BAD_RESPONSE);
+
+    REQUIRE(t.SendToMaster("61 81 80 00")); // Late final fragment in Idle.
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(t.application->rxIIN.size() == 1);
+}
+
 TEST_CASE(SUITE("SolicitedCompleteResponseDeadlineSurvivesPartialProgress"))
 {
     const auto arrival = GENERATE(9, 10, 11);
@@ -1071,7 +1102,9 @@ TEST_CASE(SUITE("EventScanOnEventsAvailableIIN"))
 
     t.context->OnLowerLayerUp();
 
-    t.SendToMaster(hex::EmptyResponse(0, IINField(IINBit::CLASS1_EVENTS)));
+    t.SendToMaster(hex::NullUnsolicited(0, IINField(IINBit::CLASS1_EVENTS)));
+    REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, true));
+    REQUIRE(t.context->OnTxReady());
 
     t.exe->run_many();
 

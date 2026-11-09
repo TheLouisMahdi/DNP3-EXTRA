@@ -139,13 +139,16 @@ def ft3_crc(data):
 
 
 def f01_link_frame(apdu, transport_seq):
-    user_data = bytes([0xC0 | transport_seq]) + apdu
-    header = struct.pack("<2sBBHH", b"\x05\x64", len(user_data) + 5, 0xC4, 10, 1)
+    return f01_ft3_frame(0xC4, 10, 1, bytes([0xC0 | transport_seq]) + apdu)
+
+
+def f01_ft3_frame(control, destination, source, user_data=b""):
+    header = struct.pack("<2sBBHH", b"\x05\x64", len(user_data) + 5, control, destination, source)
     blocks = [user_data[i:i + 16] for i in range(0, len(user_data), 16)]
     return header + ft3_crc(header) + b"".join(block + ft3_crc(block) for block in blocks)
 
 
-def f01_receive_apdu(peer):
+def f01_receive_frame(peer):
     # One absolute deadline also bounds a peer sending one byte at a time.
     deadline = time.monotonic() + 5
 
@@ -163,9 +166,9 @@ def f01_receive_apdu(peer):
 
     header = exact(10)
     assert header[:2] == b"\x05\x64" and header[8:] == ft3_crc(header[:8]), header.hex()
-    assert header[3:8] == bytes.fromhex("44 01 00 0A 00"), header.hex()
+    assert header[4:8] == bytes.fromhex("01 00 0A 00"), header.hex()
     remaining = header[2] - 5
-    assert 1 < remaining <= 250, header.hex()
+    assert 0 <= remaining <= 250, header.hex()
     data = bytearray()
     while remaining:
         size = min(remaining, 16)
@@ -173,8 +176,33 @@ def f01_receive_apdu(peer):
         assert block[-2:] == ft3_crc(block[:-2]), block.hex()
         data.extend(block[:-2])
         remaining -= size
-    assert data[0] & 0xC0 == 0xC0, data.hex()  # This fixture's application fragments fit one TPDU.
-    return data[0] & 0x3F, bytes(data[1:])
+    return header[3], bytes(data)
+
+
+def f01_receive_apdu(peer):
+    control, data = f01_receive_frame(peer)
+    assert control == 0x44 and len(data) >= 3, (control, data.hex())
+    assert data[0] & 0xC0 == 0xC0, data.hex()
+    return data[0] & 0x3F, data[1:]
+
+
+def f01_publish_double_events(out, count, offset=0):
+    for n in range(offset, offset + count):
+        value = "on" if n % 2 == 0 else "off"
+        index = n % 10
+        cursor = out.send(f"set double {index} {value} force")
+        out.wait(rf"\[UPDATE\].*double {index} {value} force", cursor)
+    cursor = out.send("show")
+    out.wait(r"Input values are this application", cursor)  # Executor barrier.
+
+
+def f01_double_events(lines):
+    events = [re.search(r"EVENT DoubleBit\[(\d+)\]=(DETERMINED_ON|DETERMINED_OFF)", line) for line in lines]
+    return [(int(event[1]), event[2]) for event in events if event]
+
+
+def f01_expected_double_events(start, end):
+    return [(n % 10, "DETERMINED_ON" if n % 2 == 0 else "DETERMINED_OFF") for n in range(start, end)]
 
 
 def f01_solicited_fragments(exe):
@@ -184,15 +212,6 @@ def f01_solicited_fragments(exe):
     try:
         out.wait(r"\[HELP\]")
         port = int(options[-1])
-
-        def publish(count, offset):
-            for n in range(offset, offset + count):
-                value = "on" if n % 2 == 0 else "off"
-                index = n % 10
-                cursor = out.send(f"set double {index} {value} force")
-                out.wait(rf"\[UPDATE\].*double {index} {value} force", cursor)
-            cursor = out.send("show")
-            out.wait(r"Input values are this application", cursor)  # Executor barrier.
 
         def check_events(apdu, control, start, count):
             assert apdu[:2] == bytes([control, 0x81]), apdu.hex()
@@ -204,7 +223,7 @@ def f01_solicited_fragments(exe):
                 n = start + offset
                 assert index == n % 10 and flags == (0x81 if n % 2 == 0 else 0x41), apdu.hex()
 
-        publish(28, 0)
+        f01_publish_double_events(out, 28)
         with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
             out.wait(r"\[LINK\] OPEN$")
             # 249 APDU + TPDU byte makes a full 292-octet FT3 frame. Its
@@ -237,19 +256,110 @@ def f01_solicited_fragments(exe):
             check_events(final, 0x6F, 26, 2)
             # Disconnect without confirming the final two events.
 
-        publish(28, 28)
+        f01_publish_double_events(out, 28, 28)
         master = Peer(exe, "master", options)
         master.wait(r"\[LINK\] OPEN$")
-        cursor = master.task("scan class1", timeout=20)  # Runs after startup integrity and its queued CONFIRMs.
+        master.task("scan class1", timeout=20)  # Complete startup and the first scan.
         with master.cv:
-            events = [re.search(r"EVENT DoubleBit\[(\d+)\]=(DETERMINED_ON|DETERMINED_OFF)", line)
-                      for line in master.lines]
-            actual = [(int(event[1]), event[2]) for event in events if event]
-            assert actual == [(n % 10, "DETERMINED_ON" if n % 2 == 0 else "DETERMINED_OFF")
-                              for n in range(26, 56)], actual
-            assert not any("EVENT DoubleBit[" in line for line in master.lines[cursor:]), master.lines[cursor:]
+            actual = f01_double_events(master.lines)
+            assert actual == f01_expected_double_events(26, 56), actual
+        cursor = master.task("scan class1", timeout=20)  # Check for redelivery.
+        with master.cv:
+            assert not f01_double_events(master.lines[cursor:]), master.lines[cursor:]
     finally:
         stop(out, master)
+
+
+def f01_confirmed_link(exe):
+    ack = f01_ft3_frame(0x80, 10, 1)
+    reset = (0x40, b"")
+    for mode in ("never", "always", "multi-frame"):
+        options = ["--auth", "compat", *loopback_port()]
+        out = Peer(exe, "outstation", [*options, "--link-confirm", mode, "--link-timeout-ms", "1000"])
+        try:
+            out.wait(r"\[HELP\]")
+            port = int(options[-1])
+            # A legal-looking but incomplete FT3 frame ends at TCP EOF. The next connection starts clean.
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as stale:
+                out.wait(r"\[LINK\] OPEN$")
+                stale.sendall(f01_link_frame(bytes.fromhex("C9 18"), 0)[:11])
+            f01_publish_double_events(out, 28)
+
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+                raw.sendall(f01_link_frame(bytes.fromhex("C0 18"), 0))
+                if mode == "always":
+                    assert f01_receive_frame(raw) == reset
+                    raw.sendall(f01_ft3_frame(0x80, 10, 2))  # Foreign source cannot ACK reset.
+                    raw.settimeout(0.15)
+                    try:
+                        assert not raw.recv(1), "foreign source advanced the link transaction"
+                        raise AssertionError("link closed on a foreign ACK")
+                    except socket.timeout:
+                        pass
+                    raw.sendall(ack)
+                control, single = f01_receive_frame(raw)
+                assert control == (0x73 if mode == "always" else 0x44), (mode, control)
+                assert single[0] & 0xC0 == 0xC0 and single[1:3] == b"\xC0\x81", single.hex()
+
+                if mode == "always":
+                    raw.sendall(f01_ft3_frame(0x81, 10, 1))  # NACK, DFC=0: one reset recovery.
+                    assert f01_receive_frame(raw) == reset
+                    raw.sendall(ack)
+                    assert f01_receive_frame(raw) == (0x73, single)
+                    raw.sendall(f01_ft3_frame(0x91, 10, 1))  # NACK, DFC=1: fail and close.
+                    raw.settimeout(5)
+                    try:
+                        assert raw.recv(1) == b"", "DFC=1 unexpectedly retransmitted"
+                    except ConnectionResetError:
+                        pass
+                    # A new TCP connection will need a fresh reset handshake.
+
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+                raw.sendall(f01_link_frame(bytes.fromhex("C1 01 3C 02 06"), 0))
+                if mode != "never":
+                    assert f01_receive_frame(raw) == reset
+                    raw.sendall(ack)
+                control, first = f01_receive_frame(raw)
+                assert control == (0x44 if mode == "never" else 0x73), (mode, control)
+                assert len(first) == 250 and first[0] & 0xC0 == 0x40, first.hex()
+                if mode != "never":
+                    raw.sendall(ack)
+                control, last = f01_receive_frame(raw)
+                assert control == (0x44 if mode == "never" else 0x53), (mode, control)
+                assert len(last) == 13 and last[0] & 0xC0 == 0x80, last.hex()
+                assert last[0] & 0x3F == ((first[0] + 1) & 0x3F)
+                apdu = first[1:] + last[1:]
+                assert apdu[:2] == b"\xE1\x81" and apdu[4:9] == b"\x04\x02\x28\x1C\x00", apdu.hex()
+                if mode != "never":
+                    raw.sendall(ack)
+                raw.sendall(f01_link_frame(bytes.fromhex("C1 00"), 1))
+        finally:
+            stop(out)
+
+
+def f01_required_fragments(exe):
+    profile = "f01-" + uuid.uuid4().hex[:12]
+    args = ["--test-only", "--profile", profile, "--auth", "method4"]
+    run(exe, "test-provision", *args)
+    master = out = None
+    try:
+        master, out = connected(exe, [*args, "--trust-system-time", "--reply-ms", "5000", "--trace"],
+                                out_options=["--tx-fragment-bytes", "250"])
+        master.task("read 1 2 0 0", timeout=25)  # Startup and authentication barrier.
+        f01_publish_double_events(out, 28)
+        cursor = master.task("scan class1", timeout=25)
+        with master.cv:
+            lines = master.lines[cursor:]
+            assert f01_double_events(lines) == f01_expected_double_events(0, 28), lines
+            assert sum("Response fragment" in line for line in lines) == 2, lines
+        cursor = master.task("scan class1", timeout=25)
+        with master.cv:
+            assert not f01_double_events(master.lines[cursor:]), master.lines[cursor:]
+    finally:
+        try:
+            stop(out, master)
+        finally:
+            run(exe, "test-cleanup", *args)
 
 
 def compatibility(exe):
@@ -799,7 +909,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -817,6 +927,8 @@ def main():
         asio_fixtures(args.exe, args.asio, args.work_dir)
         return
     if args.only in ("f01-fragments", "all"): f01_solicited_fragments(args.exe)
+    if args.only in ("f01-link", "all"): f01_confirmed_link(args.exe)
+    if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
     if args.only in ("compat", "all"): compatibility(args.exe)
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")

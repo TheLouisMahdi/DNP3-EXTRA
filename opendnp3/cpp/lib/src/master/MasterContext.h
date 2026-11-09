@@ -344,12 +344,12 @@ protected:
     // state switch lookups
 
     TaskState OnTransmitComplete();
-    TaskState OnResponseEvent(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects);
+    TaskState OnResponseEvent(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects, bool& accepted);
     TaskState OnResponseTimeoutEvent();
 
     // --- state handling functions ----
     TaskState StartTask_TaskReady();
-    TaskState OnResponse_WaitForResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects);
+    TaskState OnResponse_WaitForResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects, bool& accepted);
     TaskState OnResponseTimeout_WaitForResponse();
     TaskState OnResponseTimeout_WaitForTxCompletion();
 };

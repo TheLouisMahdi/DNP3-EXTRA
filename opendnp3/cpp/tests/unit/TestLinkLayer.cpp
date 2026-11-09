@@ -504,6 +504,29 @@ TEST_CASE(SUITE("Confirmed retries are bounded and start after transmit completi
     }
 }
 
+TEST_CASE(SUITE("ConfirmedLinkRetryStartsAtTheConfiguredDeadline"))
+{
+    const auto arrival = GENERATE(9, 10, 11);
+    LinkConfig config(true);
+    config.ConfirmMode = LinkConfirmMode::Always;
+    config.NumRetries = 1;
+    config.Timeout = TimeDuration::Milliseconds(10);
+    config.KeepAliveTimeout = TimeDuration::Seconds(60);
+    LinkLayerTest t(config);
+    REQUIRE(t.link.OnLowerLayerUp());
+
+    MockTransportSegment segments(1, "AA", config.GetAddresses());
+    REQUIRE(t.upper->SendDown(segments));
+    const auto reset = LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr);
+    REQUIRE(t.PopLastWriteAsHex() == reset);
+    REQUIRE(t.link.OnTxReady());
+    t.exe->advance_time(std::chrono::milliseconds(arrival));
+    t.exe->run_many();
+    REQUIRE(t.NumTotalWrites() == (arrival < 10 ? 1u : 2u));
+    if (arrival >= 10)
+        REQUIRE(t.PopLastWriteAsHex() == reset);
+}
+
 TEST_CASE(SUITE("Confirmed NACK DFC zero recovers once per logical send"))
 {
     LinkConfig config(true);

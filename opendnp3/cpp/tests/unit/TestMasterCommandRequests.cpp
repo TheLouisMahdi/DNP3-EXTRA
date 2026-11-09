@@ -395,6 +395,42 @@ TEST_CASE(SUITE("ResponseTimeout"))
                                     CommandPointResult(0, 1, CommandPointState::INIT, CommandStatus::UNDEFINED)));
 }
 
+TEST_CASE(SUITE("DirectControlsNeverUseTheConfiguredApplicationRetryBudget"))
+{
+    auto params = NoStartupTasks();
+    params.maxApplicationRetries = 5;
+    params.responseTimeout = TimeDuration::Milliseconds(10);
+    params.taskRetryPeriod = TimeDuration::Milliseconds(1);
+    params.maxTaskRetryPeriod = TimeDuration::Milliseconds(1);
+    MasterTestFixture t(params);
+    CommandCallbackQueue callbacks;
+    AnalogOutputInt16 output(100);
+    REQUIRE(t.context->OnLowerLayerUp());
+
+    t.context->DirectOperate(CommandSet({WithIndex(output, 1)}), callbacks.Callback(), TaskConfig::Default());
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 05 29 02 28 01 00 01 00 64 00 00");
+    REQUIRE(t.context->OnTxReady());
+    t.exe->advance_time(std::chrono::milliseconds(10));
+    t.exe->run_many();
+    REQUIRE(callbacks.values.size() == 1);
+    REQUIRE(callbacks.values.front().summary == TaskCompletion::FAILURE_RESPONSE_TIMEOUT);
+    t.exe->advance_time(std::chrono::seconds(1));
+    t.exe->run_many();
+    REQUIRE(t.lower->HasNoData());
+
+    REQUIRE(t.context->DirectOperateNoAck(CommandSet({WithIndex(output, 1)}), callbacks.Callback(),
+                                           TaskConfig::Default()));
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 06 29 02 28 01 00 01 00 64 00 00");
+    REQUIRE(t.context->OnTxReady());
+    t.exe->advance_time(std::chrono::seconds(1));
+    t.exe->run_many();
+    REQUIRE(callbacks.values.size() == 2);
+    REQUIRE(callbacks.values.back().summary == TaskCompletion::SUCCESS);
+    REQUIRE(t.lower->HasNoData());
+}
+
 TEST_CASE(SUITE("SendCommandDuringFailedStartup"))
 {
     auto params = NoStartupTasks();
