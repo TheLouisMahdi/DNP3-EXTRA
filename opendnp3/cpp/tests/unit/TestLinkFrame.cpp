@@ -28,6 +28,9 @@
 #include <link/LinkFrame.h>
 #include <link/LinkHeader.h>
 
+#include <algorithm>
+#include <array>
+
 using namespace opendnp3;
 using namespace ser4cpp;
 
@@ -178,4 +181,56 @@ TEST_CASE(SUITE("NotSupported"))
     auto writeTo = buffer.as_wslice();
     auto wrapper = LinkFrame::FormatNotSupported(writeTo, false, true, 1, 1024, nullptr);
     REQUIRE(HexConversions::to_hex(wrapper) == RepairCRC("05 64 05 1F 01 00 00 04 28 5A"));
+}
+
+TEST_CASE(SUITE("FT3FrameLengthBoundaries"))
+{
+    const std::array<size_t, 9> payloadSizes = {1, 15, 16, 17, 239, 240, 241, 249, 250};
+
+    Buffer headerBuffer(292);
+    auto headerOutput = headerBuffer.as_wslice();
+    auto header = LinkFrame::FormatResetLinkStates(headerOutput, true, 1, 1024, nullptr);
+    REQUIRE(header.length() == 10);
+
+    Buffer ackBuffer(10);
+    auto ackOutput = ackBuffer.as_wslice();
+    auto ack = LinkFrame::FormatAck(ackOutput, false, false, 1024, 1, nullptr);
+    REQUIRE(ack.length() == 10);
+
+    for (const auto payloadSize : payloadSizes)
+    {
+        ByteStr data(payloadSize, 0x37);
+        std::array<uint8_t, 292> confirmedBytes{};
+        std::array<uint8_t, 292> unconfirmedBytes{};
+        wseq_t confirmedOutput(confirmedBytes.data(), confirmedBytes.size());
+        wseq_t unconfirmedOutput(unconfirmedBytes.data(), unconfirmedBytes.size());
+
+        const auto confirmed
+            = LinkFrame::FormatConfirmedUserData(confirmedOutput, true, true, 1, 1024, data.ToRSeq(), nullptr);
+        const auto unconfirmed
+            = LinkFrame::FormatUnconfirmedUserData(unconfirmedOutput, true, 1, 1024, data.ToRSeq(), nullptr);
+        const auto expectedSize = 10 + payloadSize + 2 * ((payloadSize + 15) / 16);
+
+        REQUIRE(confirmed.length() == expectedSize);
+        REQUIRE(unconfirmed.length() == expectedSize);
+    }
+}
+
+TEST_CASE(SUITE("OversizedUserDataIsRejectedWithoutWriting"))
+{
+    ByteStr data(251, 0x37);
+    std::array<uint8_t, 10> confirmedBytes{};
+    std::array<uint8_t, 10> unconfirmedBytes{};
+    confirmedBytes.fill(0xA5);
+    unconfirmedBytes.fill(0xA5);
+    wseq_t confirmedOutput(confirmedBytes.data(), confirmedBytes.size());
+    wseq_t unconfirmedOutput(unconfirmedBytes.data(), unconfirmedBytes.size());
+
+    REQUIRE(
+        LinkFrame::FormatConfirmedUserData(confirmedOutput, true, true, 1, 1024, data.ToRSeq(), nullptr).is_empty());
+    REQUIRE(
+        LinkFrame::FormatUnconfirmedUserData(unconfirmedOutput, true, 1, 1024, data.ToRSeq(), nullptr).is_empty());
+    REQUIRE(std::all_of(confirmedBytes.begin(), confirmedBytes.end(), [](uint8_t value) { return value == 0xA5; }));
+    REQUIRE(
+        std::all_of(unconfirmedBytes.begin(), unconfirmedBytes.end(), [](uint8_t value) { return value == 0xA5; }));
 }

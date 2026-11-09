@@ -25,6 +25,9 @@
 
 #include <catch.hpp>
 
+#include <array>
+#include <cstring>
+
 using namespace opendnp3;
 using namespace ser4cpp;
 
@@ -251,6 +254,134 @@ TEST_CASE(SUITE("ConfirmedUserData"))
     REQUIRE(t.sink.m_num_frames == 1);
     REQUIRE(t.sink.CheckLastWithFCB(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, 1, 2));
     REQUIRE(t.sink.received.Equals(data.ToRSeq()));
+}
+
+TEST_CASE(SUITE("FT3BoundaryPayloadRoundTrip"))
+{
+    const std::array<size_t, 9> payloadSizes = {1, 15, 16, 17, 239, 240, 241, 249, 250};
+
+    for (const auto payloadSize : payloadSizes)
+    {
+        ByteStr data(payloadSize, 0x37);
+        const std::array<bool, 2> confirmedFormats = {false, true};
+        for (const auto confirmed : confirmedFormats)
+        {
+            std::array<uint8_t, 292> bytes{};
+            wseq_t output(bytes.data(), bytes.size());
+            const auto frame = confirmed
+                                   ? LinkFrame::FormatConfirmedUserData(output, true, true, 1, 2, data.ToRSeq(), nullptr)
+                                   : LinkFrame::FormatUnconfirmedUserData(output, true, 1, 2, data.ToRSeq(), nullptr);
+
+            LinkParserTest t;
+            t.WriteData(frame);
+            REQUIRE(frame.length() == LinkFrame::CalcFrameSize(payloadSize));
+            REQUIRE(t.sink.m_num_frames == 1);
+            REQUIRE(t.sink.received.Equals(data.ToRSeq()));
+            REQUIRE(t.sink.CheckLast(confirmed ? LinkFunction::PRI_CONFIRMED_USER_DATA
+                                               : LinkFunction::PRI_UNCONFIRMED_USER_DATA,
+                                    true, 1, 2));
+        }
+    }
+}
+
+TEST_CASE(SUITE("MaximumFrameFragmentedBySingleBytes"))
+{
+    ByteStr data(250, 0x37);
+    std::array<uint8_t, 292> bytes{};
+    wseq_t output(bytes.data(), bytes.size());
+    const auto frame = LinkFrame::FormatConfirmedUserData(output, true, true, 1, 2, data.ToRSeq(), nullptr);
+
+    LinkParserTest t;
+    t.WriteData(frame, 1);
+    REQUIRE(t.sink.m_num_frames == 1);
+    REQUIRE(t.sink.received.Equals(data.ToRSeq()));
+}
+
+TEST_CASE(SUITE("MaximumFrameHeaderBodyAndCRCFragments"))
+{
+    ByteStr data(250, 0x37);
+    std::array<uint8_t, 292> bytes{};
+    wseq_t output(bytes.data(), bytes.size());
+    auto remaining = LinkFrame::FormatConfirmedUserData(output, true, true, 1, 2, data.ToRSeq(), nullptr);
+
+    LinkParserTest t;
+    for (const auto chunkSize : {size_t(9), size_t(1), size_t(17), size_t(1), size_t(262), size_t(1)})
+    {
+        t.WriteData(remaining.take(chunkSize));
+        remaining.advance(chunkSize);
+        REQUIRE(t.sink.m_num_frames == 0);
+    }
+    t.WriteData(remaining);
+    REQUIRE(t.sink.m_num_frames == 1);
+    REQUIRE(t.sink.received.Equals(data.ToRSeq()));
+}
+
+TEST_CASE(SUITE("MaximumFrameBodyCRCCorruptionAndRecovery"))
+{
+    ByteStr data(250, 0x37);
+    std::array<uint8_t, 292> validBytes{};
+    wseq_t output(validBytes.data(), validBytes.size());
+    LinkFrame::FormatUnconfirmedUserData(output, true, 1, 2, data.ToRSeq(), nullptr);
+
+    const std::array<size_t, 3> crcOffsets = {26, 188, 290};
+    for (const auto crcOffset : crcOffsets)
+    {
+        auto corrupted = validBytes;
+        corrupted[crcOffset] ^= 0x01;
+        LinkParserTest t;
+        t.WriteData(rseq_t(corrupted.data(), corrupted.size()), 37);
+        REQUIRE(t.sink.m_num_frames == 0);
+        REQUIRE(t.parser.Statistics().numBodyCrcError == 1);
+
+        Buffer resetBuffer(292);
+        auto resetOutput = resetBuffer.as_wslice();
+        auto reset = LinkFrame::FormatResetLinkStates(resetOutput, true, 1, 2, nullptr);
+        t.WriteData(reset);
+        REQUIRE(t.sink.m_num_frames == 1);
+        REQUIRE(t.sink.CheckLast(LinkFunction::PRI_RESET_LINK_STATES, true, 1, 2));
+    }
+}
+
+TEST_CASE(SUITE("MaximumFramesAndTrailingFrameUseBoundedInput"))
+{
+    ByteStr data(250, 0x37);
+    std::array<uint8_t, 292> userDataBytes{};
+    wseq_t userDataOutput(userDataBytes.data(), userDataBytes.size());
+    const auto userDataFrame
+        = LinkFrame::FormatUnconfirmedUserData(userDataOutput, true, 1, 2, data.ToRSeq(), nullptr);
+
+    std::array<uint8_t, 10> resetBytes{};
+    wseq_t resetOutput(resetBytes.data(), resetBytes.size());
+    const auto resetFrame = LinkFrame::FormatResetLinkStates(resetOutput, true, 1, 2, nullptr);
+
+    std::array<uint8_t, 594> stream{};
+    std::memcpy(stream.data(), userDataFrame, userDataFrame.length());
+    std::memcpy(stream.data() + userDataFrame.length(), userDataFrame, userDataFrame.length());
+    std::memcpy(stream.data() + 2 * userDataFrame.length(), resetFrame, resetFrame.length());
+
+    std::array<uint8_t, 500> expectedUserData{};
+    std::memcpy(expectedUserData.data(), data.ToRSeq(), data.ToRSeq().length());
+    std::memcpy(expectedUserData.data() + data.ToRSeq().length(), data.ToRSeq(), data.ToRSeq().length());
+
+    LinkParserTest t;
+    t.WriteData(rseq_t(stream.data(), stream.size()), 292);
+    REQUIRE(t.sink.m_num_frames == 3);
+    REQUIRE(t.sink.received.Equals(rseq_t(expectedUserData.data(), expectedUserData.size())));
+    REQUIRE(t.sink.CheckLast(LinkFunction::PRI_RESET_LINK_STATES, true, 1, 2));
+}
+
+TEST_CASE(SUITE("HeaderCRCCorruptionOfMaximumFrameIsRejected"))
+{
+    ByteStr data(250, 0x37);
+    std::array<uint8_t, 292> bytes{};
+    wseq_t output(bytes.data(), bytes.size());
+    LinkFrame::FormatConfirmedUserData(output, true, true, 1, 2, data.ToRSeq(), nullptr);
+    bytes[8] ^= 0x01;
+
+    LinkParserTest t;
+    t.WriteData(rseq_t(bytes.data(), bytes.size()), 37);
+    REQUIRE(t.sink.m_num_frames == 0);
+    REQUIRE(t.parser.Statistics().numHeaderCrcError == 1);
 }
 
 //////////////////////////////////////////

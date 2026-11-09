@@ -29,6 +29,7 @@
 
 #include <link/LinkLayerParser.h>
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 
@@ -43,6 +44,22 @@ public:
         assert(input.length() <= buff.length());
         buff.copy_from(input);
         parser.OnRead(input.length(), sink);
+    }
+
+    void WriteData(ser4cpp::rseq_t input, size_t maxChunkSize)
+    {
+        assert(maxChunkSize > 0);
+
+        while (input.length() > 0)
+        {
+            auto buff = parser.WriteBuff();
+            assert(buff.length() > 0);
+            const auto chunkSize = std::min(maxChunkSize, buff.length());
+            auto chunk = input.take(chunkSize);
+            buff.copy_from(chunk);
+            parser.OnRead(chunk.length(), sink);
+            input.advance(chunk.length());
+        }
     }
 
     void WriteData(const std::string& hex)
