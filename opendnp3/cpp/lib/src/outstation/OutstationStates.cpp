@@ -185,6 +185,7 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirm(OContext& ctx, const Par
 
     ctx.history.Reset(); // any time we get a confirm we can treat any request as a new request
     ctx.confirmTimer.cancel();
+    ctx.confirmTimerPending = false;
     ctx.lastBroadcastMessageReceived.clear();
 
     // information the application about the confirm

@@ -37,6 +37,8 @@ TEST_CASE(SUITE("sends null unsol on startup"))
     t.LowerLayerUp();
 
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0, IINField(IINBit::DEVICE_RESTART)));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
     REQUIRE(t.NumPendingTimers() == 1);
 }
 
@@ -61,6 +63,8 @@ TEST_CASE(SUITE("Non-read during null unsol without workaround"))
     // Continue sending unsolicited NULL responses
     t.AdvanceTime(TimeDuration::Seconds(5));
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(1, IINField()));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
     REQUIRE(t.NumPendingTimers() == 1);
 }
 
@@ -85,6 +89,8 @@ TEST_CASE(SUITE("Non-read during null unsol with workaround"))
     // Continue sending unsolicited NULL responses
     t.AdvanceTime(TimeDuration::Seconds(5));
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(1, IINField()));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
     REQUIRE(t.NumPendingTimers() == 1);
 }
 
@@ -115,6 +121,8 @@ TEST_CASE(SUITE("Read during null unsol without workaround"))
 
     // Then continue sending unsolicited NULL responses
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(1, IINField(IINBit::DEVICE_RESTART)));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
     REQUIRE(t.NumPendingTimers() == 1);
 }
 
@@ -140,6 +148,8 @@ TEST_CASE(SUITE("Read during null unsol with workaround"))
 
     // Then continue sending unsolicited NULL responses
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(1, IINField(IINBit::DEVICE_RESTART)));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
     REQUIRE(t.NumPendingTimers() == 1);
 }
 
@@ -154,13 +164,20 @@ TEST_CASE(SUITE("UnsolConfirmTimeout"))
 
     // check for the startup null unsol packet, but fail the transaction
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0, IINField(IINBit::DEVICE_RESTART)));
+    REQUIRE(t.NumPendingTimers() == 0);
     t.OnTxReady();
 
     REQUIRE(t.NumPendingTimers() == 1); // confirm timer
-    REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
+    REQUIRE(t.AdvanceTime(TimeDuration::Seconds(4)) == 0);
+    REQUIRE(t.lower->NumWrites() == 0);
+    REQUIRE(t.NumPendingTimers() == 1);
+    REQUIRE(t.AdvanceTime(TimeDuration::Seconds(1)));
 
     // immediately retries with new sequence #
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(1, IINField(IINBit::DEVICE_RESTART)));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
+    REQUIRE(t.NumPendingTimers() == 1);
 }
 
 TEST_CASE(SUITE("UnsolNumRetries"))
@@ -184,32 +201,48 @@ TEST_CASE(SUITE("UnsolNumRetries"))
     // Generate an event
     t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
 
-    // Check original unsolicited response, followed by the 3 retries
-    for (unsigned int i = 0; i <= 3; ++i)
+    const auto firstEvent = "F1 82 80 00 02 01 28 01 00 00 00 81";
+    REQUIRE(t.lower->PopWriteAsHex() == firstEvent);
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
+
+    // Check the 3 retries after the original unsolicited response.
+    for (unsigned int i = 0; i < 3; ++i)
     {
         REQUIRE(t.NumPendingTimers() == 1); // confirm timer
         REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
-        REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+        REQUIRE(t.lower->PopWriteAsHex() == firstEvent);
+        REQUIRE(t.NumPendingTimers() == 0);
         t.OnTxReady();
+        REQUIRE(t.NumPendingTimers() == 1);
     }
 
     // Check that it stops sending stuff
+    REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
     REQUIRE(t.NumPendingTimers() == 0); // no confirm timer
     REQUIRE(t.lower->PopWriteAsHex().empty());
 
     // Generate another event
     t.Transaction([](IUpdateHandler& db) { db.Update(Binary(false), 0); });
 
+    const auto secondEvent = "F2 82 80 00 02 01 28 02 00 00 00 81 00 00 01";
+    REQUIRE(t.lower->PopWriteAsHex() == secondEvent);
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
+
     // Check seq number increment and 3 retries
-    for (unsigned int i = 0; i <= 3; ++i)
+    for (unsigned int i = 0; i < 3; ++i)
     {
         REQUIRE(t.NumPendingTimers() == 1); // confirm timer
         REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
-        REQUIRE(t.lower->PopWriteAsHex() == "F2 82 80 00 02 01 28 02 00 00 00 81 00 00 01");
+        REQUIRE(t.lower->PopWriteAsHex() == secondEvent);
+        REQUIRE(t.NumPendingTimers() == 0);
         t.OnTxReady();
+        REQUIRE(t.NumPendingTimers() == 1);
     }
 
     // Check that it stops sending stuff
+    REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
     REQUIRE(t.NumPendingTimers() == 0); // no confirm timer
     REQUIRE(t.lower->PopWriteAsHex().empty());
 }
@@ -235,13 +268,20 @@ TEST_CASE(SUITE("UnsolInfiniteRetries"))
     // Generate an event
     t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
 
+    const auto event = "F1 82 80 00 02 01 28 01 00 00 00 81";
+    REQUIRE(t.lower->PopWriteAsHex() == event);
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
+
     // Check that it keeps repeating the unsolicited response
     for (unsigned int i = 0; i < 1000; ++i)
     {
         REQUIRE(t.NumPendingTimers() == 1); // confirm timer
         REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
-        REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+        REQUIRE(t.lower->PopWriteAsHex() == event);
+        REQUIRE(t.NumPendingTimers() == 0);
         t.OnTxReady();
+        REQUIRE(t.NumPendingTimers() == 1);
     }
 
     // Generate another event
@@ -252,9 +292,35 @@ TEST_CASE(SUITE("UnsolInfiniteRetries"))
     {
         REQUIRE(t.NumPendingTimers() == 1); // confirm timer
         REQUIRE(t.AdvanceTime(TimeDuration::Seconds(5)));
-        REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+        REQUIRE(t.lower->PopWriteAsHex() == event);
+        REQUIRE(t.NumPendingTimers() == 0);
         t.OnTxReady();
+        REQUIRE(t.NumPendingTimers() == 1);
     }
+}
+
+TEST_CASE(SUITE("Confirm received while unsolicited transmission is pending"))
+{
+    OutstationConfig cfg;
+    cfg.params.allowUnsolicited = true;
+    cfg.params.unsolClassMask = ClassField::AllEventClasses();
+    cfg.eventBufferConfig = EventBufferConfig::AllTypes(5);
+    OutstationTestObject t(cfg, configure::by_count_of::binary_input(1));
+
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0));
+    t.OnTxReady();
+    t.SendToOutstation(hex::UnsolConfirm(0));
+
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true), 0); });
+    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 81");
+    REQUIRE(t.NumPendingTimers() == 0);
+
+    t.SendToOutstation(hex::UnsolConfirm(1));
+    REQUIRE(t.NumPendingTimers() == 0);
+    t.OnTxReady();
+    REQUIRE(t.NumPendingTimers() == 0);
+    REQUIRE(t.lower->PopWriteAsHex().empty());
 }
 
 TEST_CASE(SUITE("UnsolData"))
@@ -291,8 +357,11 @@ TEST_CASE(SUITE("UnsolData"))
     // should immediately try to send another unsol packet,
     // Grp2Var1, qual 0x17, count 1, index 2, quality+val == 0x01
     REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 02 00 01");
+    REQUIRE(t.NumPendingTimers() == 0);
     t.OnTxReady();
+    REQUIRE(t.NumPendingTimers() == 1);
     t.SendToOutstation(hex::UnsolConfirm(1));
+    REQUIRE(t.NumPendingTimers() == 0);
     REQUIRE(t.lower->PopWriteAsHex().empty());
 
     // Check that the confirm is reported to the IOutstationApplication
