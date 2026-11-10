@@ -13,3 +13,7 @@ Edit `DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx`. Regenerate the two CSVs as U
 Binding project-owner implementation policy (2026-11-10): D-10/CFG-12 and D-18/PROFILE-055 must be implemented strictly to IEEE 1815-2012 with permanent test-harness coverage. See the OPEN_DECISIONS rows and linked procedures. D-10's contradictory Tavanir contractual acceptance and D-18's external certificate specification/production trust provisioning remain separate open gates. Reference changes do not establish runtime compliance.
 
 The IEEE body page index maps printed page n to physical PDF page n+42. The Profile and Security page numbers refer to their own PDF physical pages. The 119 IDs remain the exact contract denominator.
+
+## Fixed implementation policy and remaining evidence
+
+Implementation choices D-10, D-13, D-15, D-18, D-23, D-24 and D-25 are defined in the workbook's OPEN_DECISIONS. All eleven linked exceptional requirement rows contain exact behavior and a test obligation. `SOURCE_VARIANCE_DOCUMENTED` does not mean a missing product choice; it means source contradictions or external deployment inputs remain recorded. `IMPLEMENTATION_AND_PERMANENT_TESTS_REQUIRED` never means runtime verified. For Method 68, DER is the chosen current crypto-provider profile, not an explicit IEEE Annex A.45.14 format requirement. For G122, use >= threshold from §7.6.1.4.2. Never silently close P4-OPEN-01 or P6-OPEN-01 as an official erratum.

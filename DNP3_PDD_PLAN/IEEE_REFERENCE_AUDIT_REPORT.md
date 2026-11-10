@@ -1,53 +1,49 @@
-# DNP3 119-requirement reference audit
+# DNP3 119-requirement implementation-reference audit
 
-**Disposition** — operational Windows Host reference with scoped normative verification and explicit external and implementation evidence gates.
+## Authority and revision
 
-## Source revisions
+- Editable authority: `DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx`; two UTF-8 CSV files are generated from the workbook.
+- Source authority: supplied Tavanir Device Profile and security addendum; IEEE 1815-2012 for normative DNP3 behavior. Production values not defined by a standard remain explicit engineering policy, not invented IEEE requirements.
+- GitHub baseline inspected before this reference edit: `develop@2d636c8d6346770ec9ccb99f7466ae2bec09fd99`. Recheck HEAD before publication.
+- This edit changes **reference artifacts only**; production code, Test Harness and test evidence were not changed.
 
-- Initial live `develop` and code inspected — `c25dd10d2de22467a841d5d9d2416701cce85a8e`.
-- Final observed `origin/develop` — `962fe03652cac7255dad9ae21e9510e9461feb0b`. The intervening commit changes only `EXECUTION_PHASE_STATUS.md`.
-- The supplied ZIP had local HEAD `da2c31bd5d725fa699f4f3f55c1dee9a61f6c6b9` and unrelated working changes. Those changes were preserved.
-- Historical `PDF_SCOPE.md`, `PROFILE_MATRIX.csv`, `SECURITY_MATRIX.csv` and `OPEN_ISSUES.md` came from pinned Git history. The candidate CSVs and candidate audit/usage Markdown were absent. Their operational outputs were regenerated from the delivered workbook.
+## Scope and integrity
 
-## Integrity and scope
+- Exactly 119 unique requirement IDs: 69 PROFILE, 14 CFG and 36 SEC.
+- The original 71 normatively inspected backlog items remain tracked: 67 verified for reviewed subcases; four are marked `IEEE_IMPLEMENTATION_POLICY_FIXED__SOURCE_VARIANCE_DOCUMENTED` instead of claiming unqualified normative reconciliation.
+- Eleven `IMPLEMENTATION_INDEX` rows and associated cases now contain explicit implementation decisions and permanent-test obligations.
+- The 30 D-IDs remain unique. D-10/D-13/D-15/D-18/D-23/D-24/D-25 have precise implementation policy; D-12/D-17 were additionally annotated to preserve IEEE-mandatory legacy capabilities.
 
-- 119 unique IDs, matching the input workbook and current project coverage register. 69 Profile, 14 CFG and 36 Security.
-- All 71 backlog rows received independent source review. 67 are marked `NORMATIVE_VERIFIED` for the reviewed subcases and 4 retain explicit exceptions.
-- All 30 decisions have recorded dispositions. 19 engineering baselines, 7 external-class decision entries, two implementation-evidence entries, one explicit contract entry and one outside Windows Host.
-- 36 distinct wire/policy procedures. 15 original worksheet names and original source rows retained. The exact selected FC/Q column and procedures supersede compact summaries.
-- No runtime was executed for this review. The final remote ledger records 14 distinct Windows CTest passes at the inspected code SHA. The workbook links scoped witnesses where relevant. Independent peer and full requirement acceptance remain pending.
+## Fixed IEEE implementation decisions
 
-## Remaining source exceptions and release gates
+| Decision | Fixed technical implementation | Evidence boundary |
+| --- | --- | --- |
+| D-10 / CFG-12 | §4.6.6, §5.1.1.1 startup NULL, no objects/G120V1, matching FC0 confirmation, buffered events, explicit FC20 after restart; no prohibited static unsolicited data | Tavanir p4 contract selection is inconsistent; document deviation, never falsely claim satisfaction |
+| D-13 / TLS | TLS 1.2 IEEE 2012 baseline; §7.8.2 mandatory TLS_RSA_WITH_AES_128_SHA compatibility capability; secure mTLS production policy; TLS 1.3 separately configurable with native RFC 8446 suite identifiers | TLS 1.3 is not an IEEE-2012 cipher-suite requirement; supplied Tavanir tables differ |
+| D-15 / trust | At least four configurable CA roots, chain/name/expiry verification and fail-closed peer authentication | Real CA roots/peer identities must be provisioned externally |
+| D-18 / G120V8 | Annex A.45.8 FC32/Q5B single object; only asymmetric methods; external ID/Attribute certificates, holder/AoR/roles/revision/expiry/replay validation | Applicable IEC/TS 62351-8 profile and production PKI cannot be fabricated; permanent wire tests required |
+| D-23 / G120V7 | Annex A.45.7.2.2 code 5 = MAC Algorithm Not Supported and code 7 = Authorization Failed | §7.5.5.7 uses contradictory code 5 language; P4-OPEN-01 remains documented |
+| D-24 / Method 68 + SCS | Persist monotonic per-owner SCS. Fail closed near UINT32 wrap; controlled authority re-enrollment. Sign A-12 transcript with DSA-SHA256 and canonical DER representation as a documented implementation profile | IEEE describes SCS wrap by authority but strict greater-than receiver rule; A.45.14 does not specify DER; independent-peer encoding evidence required |
+| D-25 / G122 | Generate security-statistic event at `delta >= threshold` per §7.6.1.4.2; durable per-association totals, no freeze/clear, correct G122V1/V2 flags and time | §11.9.10.2 uses 'exceeds'; P6-OPEN-01 retained as text discrepancy |
 
-- **PROFILE-060** — Core V13 pairings and FCs verified; Method 68 companion signature encoding still provisional under D-24.
-- **PROFILE-062** — Core V15 confirmation wire verified; Method 68 companion signature encoding remains under D-24.
-- **PROFILE-065** — Event encoding is verified. P6-OPEN-01 threshold wording differs between §7.6.1.4.2 and §11.9.10.2; use the D-25 baseline.
-- **PROFILE-066** — Event encoding is verified. P6-OPEN-01 threshold wording differs between §7.6.1.4.2 and §11.9.10.2; use the D-25 baseline.
-- IEEE Table 12-63 at physical p416 corroborates G122V0 FC1 Q00/01/06/17/28. Separately, §11.9.10 requires durable statistics totals and prohibits freeze/clear; the actual Windows durable store still needs evidence.
-- Retain the distinction between the conditional IEEE authenticated FC0 dependency and the profile's displayed FC1–31 Aggressive range. Verify the separate V1 trailer and V3/V9 confirmation exchange at the wire level.
-- The other 48 requirement records were reconciled against the active decision and procedure indexes. The count of independently verified backlog rows covers the 71 requested detailed reviews.
-- Review unresolved TLS-era support for the IEEE mandatory TLS1.2 suite and configurable cipher-change timeout alongside the selected profile. Confirm production revocation, roles and identity only against their own evidence.
-- The workbook preserves G120V7 Code 5/7 provisionally. No authoritative erratum was obtained.
+Additional interoperability requirements that secure defaults do not eliminate:
+- IEEE §7.6.1.1.1: configurable HMAC-SHA-1 (10-byte TCP MAC), disabled by default in the selected production policy.
+- IEEE §7.6.1.2.1: AES-128 Key Wrap support independent of the Method 4 AES-256 Update Key policy.
+- IEEE §7.8.2: TLS_RSA_WITH_AES_128_SHA support independent of preferred modern production TLS suites.
 
-## External authority decision entries
+## What is decided versus what is still evidence
 
-- **D-01** — Product owner must supply identity.
-- **D-10** — Project owner (2026-11-10) selected IEEE-strict startup/unsolicited implementation. Tavanir must separately reconcile its selected static-unsolicited-on-restart acceptance subcase. No nonstandard compatibility mode is authorized.
-- **D-13** — Tavanir must reconcile TLS version and suite table; no claim of full IEEE TLS conformance.
-- **D-15** — Deployment acceptance requires provisioned CA chains and peer identities.
-- **D-18** — Project owner (2026-11-10) selected full IEEE-strict G120V8 Host implementation and permanent test harness. The applicable IEC/TS 62351-8 certificate profile, external authoritative fixtures, and production trust/AoR provisioning remain required.
-- **D-23** — Authoritative clarification or agreed independent-peer profile required.
-- **D-24** — SCS rollover reconciliation and Method 68 signature wire encoding evidence outstanding.
-- D-11's 0→2 s alias and D-12's TCP MAC baseline can guide implementation. Contractual meaning of zero and any additional mandatory MAC choices remain unconfirmed.
+The implementation behavior is selected; **this is not an assertion of implemented, tested or IEEE-certified behavior**. Active evidence obligations include:
 
-## Explicit owner decisions after the Work baseline
+- Actual source modifications for selected requirements not yet implemented.
+- Windows Master/Outstation independent-process TCP/TLS Test Harness, including negative, replay, timeout and malformed tests at a recorded commit.
+- IEC/TS 62351-8 exact applicable certificate profile, independent Method 68 wire interoperability vector and production CA/AoR identities.
+- Product identity and actual credential provisioning.
+- Independent-peer interoperability where claimed.
+- The contractual variance for CFG-12 and textual IEEE contradictions P4-OPEN-01/P6-OPEN-01 remain visible; an engineering decision is not an official erratum.
 
-- **CFG-12 / D-10**: IEEE 1815-2012 §4.6.6 and §5.1.1.1 control startup. Initial unsolicited NULL is object-free, and §7.5.2.3.2(h) expressly prohibits G120V1 in the initial NULL. Master confirms promptly, performs the prescribed IIN1.7/SA/clear/integrity/FC20 sequence, and parses static unsolicited data if received from another peer. Outstation does not originate prohibited static data. This is an implementation policy decision, **not** Tavanir contractual acceptance.
-- **PROFILE-055 / D-18**: IEEE Annex A.45.8 requires FC32/Q5B singleton and external-authority-signed ID/Attribute certificates used only with asymmetric Update Key methods. Full certificate validation, state transitions, negative tests and separate-process TCP test harness are implementation targets. The referenced external certificate specifications must be consulted, with real deployment CA/AoR provisioned explicitly; test certificates cannot prove production PKI acceptance.
-- Both rows remain **implementation and runtime evidence pending**. No production code or tests were changed or executed for these corrections. The decision register's external-gate count still includes D-10 and D-18 because external contractual acceptance and certificate provisioning remain outstanding, although the IEEE implementation policy has been decided.
+## Validation
 
-## Verification and publication
-
-- Verified source PDF digests, selected source-page mapping, clause references for the reviewed paths, ID sets, decision IDs, procedure cross-references, worksheet round-trip, formula results and cell-for-cell CSV exports. The workbook uses plain clause/page references and has no Excel hyperlinks to resolve.
-- `git diff --check` passed for the isolated worktree and the intervening upstream documentation commit. This review changes reference artifacts and navigation only. Production code and tests are outside this revision.
-- The corrected package contains the editable XLSX, two cell-matched derived CSV files, this audit, the owner-updated decisions register and the usage guide. Repository navigation points to the operational CSV first.
+- Workbook and UTF-8 CSV index export were checked cell for cell.
+- ID set remained 119 unique, original 30 decision IDs unchanged, source worksheets retained, and formula error scan returned zero hits.
+- No C++ build, runtime test or CI execution was performed during this reference-only update. Historical Windows CTest results apply only to their previously recorded SHA and exact test scope.
