@@ -917,6 +917,13 @@ def profile_analog_event(exe):
             line = master.wait(rf"Group32Var{variation} EVENT Analog\[3\]=12\.5\b", cursor)
             if rtu:
                 assert "time=" not in line, line
+                master.task("analog 3 2 4.25 direct")
+                out.executed(1)
+                cursor = master.task("analog 4 2 4.25 direct", success=False)
+                master.wait(r"status=NOT_SUPPORTED", cursor)
+                out.executed(1)
+                master.noack("analog 4 2 4.25 noack")
+                out.executed(1)
             else:
                 assert "time=" in line, line
         finally:
