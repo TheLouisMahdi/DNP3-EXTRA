@@ -278,5 +278,14 @@ complementary latch and accepts only these CROB codes with count 1, for
 SELECT, OPERATE, DIRECT_OPERATE and DIRECT_OPERATE_NO_ACK. Counter and
 frozen-counter points and event capacities are disabled in this mode.
 
+The Device Profile selects Trip/Close Always and Pulse On Sometimes (not
+Never). Its missing Pulse On enablement explanation is an open product decision;
+the above simulation accepts one possible CROB encoding without proving that
+the contractual control policy has been finalized.
+
+The selected RTU default for analog events is G32V5 (float32 without time);
+generic diagnostics retain G32V7. A focused two-process Windows test is
+registered as `pc-profile-analog`.
+
 This option applies only to these I/O choices. It does not configure link,
 TLS, authentication, or physical relay timing.
