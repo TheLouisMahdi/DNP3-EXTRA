@@ -365,6 +365,11 @@ public:
     {}
     template<class T> CommandStatus SelectValue(const T&, uint16_t index)
     { return index < 10 ? CommandStatus::SUCCESS : CommandStatus::OUT_OF_RANGE; }
+    CommandStatus SelectValue(const AnalogOutputDouble64&, uint16_t index)
+    {
+        if (index >= 10) return CommandStatus::OUT_OF_RANGE;
+        return rtuIoProfile ? CommandStatus::NOT_SUPPORTED : CommandStatus::SUCCESS;
+    }
     CommandStatus SelectValue(const ControlRelayOutputBlock& value, uint16_t index)
     {
         if (index >= 10) return CommandStatus::OUT_OF_RANGE;
@@ -375,7 +380,8 @@ public:
     }
     template<class T> CommandStatus OperateValue(const T& value, uint16_t index, IUpdateHandler& handler)
     {
-        if (index >= 10) return CommandStatus::OUT_OF_RANGE;
+        const auto result = SelectValue(value, index);
+        if (result != CommandStatus::SUCCESS) return result;
         handler.Update(AnalogOutputStatus(value.value), index);
         Console::Print("EXECUTED", "AnalogOutput[" + std::to_string(index) + "]=" + ValueText(value.value)
             + " simulated count=" + std::to_string(++executions));
