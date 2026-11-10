@@ -904,12 +904,31 @@ def acceptance_counter_profile(exe):
         stop(out, master)
 
 
+def profile_analog_event(exe):
+    """Check selected RTU G32V5 and unchanged generic G32V7 over real TCP."""
+    for rtu, variation in ((False, 7), (True, 5)):
+        options = ["--auth", "compat"] + (["--rtu-io-profile"] if rtu else [])
+        master, out = connected(exe, options)
+        try:
+            master.task("scan integrity")
+            cursor = out.send("set analog 3 12.5 force")
+            out.wait(r"\[UPDATE\].*analog 3 12\.5", cursor)
+            cursor = master.task("scan class2")
+            line = master.wait(rf"Group32Var{variation} EVENT Analog\[3\]=12\.5\b", cursor)
+            if rtu:
+                assert "time=" not in line, line
+            else:
+                assert "time=" in line, line
+        finally:
+            stop(out, master)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-analog", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -929,6 +948,7 @@ def main():
     if args.only in ("f01-fragments", "all"): f01_solicited_fragments(args.exe)
     if args.only in ("f01-link", "all"): f01_confirmed_link(args.exe)
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
+    if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
     if args.only in ("compat", "all"): compatibility(args.exe)
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")
