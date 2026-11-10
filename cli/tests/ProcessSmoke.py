@@ -919,6 +919,9 @@ def profile_analog_event(exe):
                 assert "time=" not in line, line
                 master.task("analog 3 2 4.25 direct")
                 out.executed(1)
+                cursor = master.task("analog 4 2 4.25 sbo", success=False)
+                master.wait(r"status=NOT_SUPPORTED", cursor)
+                out.executed(1)
                 cursor = master.task("analog 4 2 4.25 direct", success=False)
                 master.wait(r"status=NOT_SUPPORTED", cursor)
                 out.executed(1)
