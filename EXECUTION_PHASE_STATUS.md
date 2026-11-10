@@ -27,6 +27,56 @@ Core RTU Host source slices landed **4/4**. Slices with matching Windows accepta
 
 Use the latest reviewed source commit for the snapshot. A documentation-only commit does not advance it. Count a slice as landed when its code is present on `develop`. Count a slice in the evidence row only after recording its executed Windows scenarios, results and tested SHA and verifying that the evidence covers the corresponding slice at the reviewed source snapshot. Record a focused regression when intervening source changes affect that evidence. Update the two README rows, the graphical progress snapshot (`DNP3-EXTRA-progress.svg`) and this ledger together. Keep historical evidence with its original revision. Never change the four-slice progress bars to represent overall 119-requirement completion.
 
+## Windows Host Release verification - 2026-11-10 (c25dd10)
+
+**Tested source:** `develop@c25dd10d2de22467a841d5d9d2416701cce85a8e`. **Evidence source:** Windows PowerShell output supplied by the project owner on 2026-11-10, not tests executed by this documentation update. Recorded as **14/14 distinct CTest entries PASS; 0 failures**. Four separate CTest invocations were observed, including an initial `pc-profile-analog` run repeated in the later focused regression (15 total entries executed, 14 unique). The supplied console transcript is not stored as a raw log in this repository.
+
+**Environment:** Windows x64, Visual Studio 2022 MSVC 19.44.35228.0, CMake VS 2022 generator, vcpkg `x64-windows` OpenSSL 3.6.5, Python 3.11.6. The local Git branch was `develop` and clean in the reported checks. CMake configuration succeeded using the installed vcpkg toolchain; the Release `opendnp3.lib`, `dnp3-cli.exe`, `unittests.exe`, `integrationtests.exe` and `asiotests.exe` built successfully. Build/cache location: `build/native-vcpkg`, not the earlier failed `build/native` directory. CMake and OpenSSL/API deprecation warnings were present but nonfatal.
+
+**Reproduction commands** (run in the repository root with the installed toolchain; each command returned exit code 0 in the supplied transcripts):
+
+~~~powershell
+$build = 'C:\Users\poimu\Desktop\DNP3-EXTRA\build\native-vcpkg'
+$toolchain = 'C:\Users\poimu\AppData\Local\DNP3Tools\vcpkg\scripts\buildsystems\vcpkg.cmake'
+cmake -S opendnp3 -B $build -G 'Visual Studio 17 2022' -A x64 `
+    "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+    -DVCPKG_TARGET_TRIPLET=x64-windows `
+    -DDNP3_DIAGNOSTIC_CLI=ON -DDNP3_SA_CRYPTO=ON -DDNP3_TLS=ON -DDNP3_TESTS=ON
+cmake --build $build --config Release --target dnp3-cli --parallel 4
+cmake --build $build --config Release --target unittests integrationtests asiotests --parallel 4
+
+ctest --test-dir $build -C Release --no-tests=error -R '^pc-profile-analog$' --output-on-failure
+ctest --test-dir $build -C Release --no-tests=error -R '^pc-(compat|negative|f01-fragments|f01-link|f01-required-fragments|profile-analog)$' --output-on-failure
+ctest --test-dir $build -C Release --no-tests=error -R '^(unittests|integrationtests|asiotests)$' --output-on-failure
+ctest --test-dir $build -C Release --no-tests=error -R '^pc-(method4|method68|renewal|reply-timeout|tls)$' --output-on-failure
+~~~
+
+**Observed Release CTest results:**
+
+| Batch | CTest entry | Result | Time |
+| --- | --- | --- | ---: |
+| Initial single test | `pc-profile-analog` | PASS | 0.28 s; batch 0.29 s |
+| Focused (6/6; 16.05 s) | `pc-compat` | PASS | 0.15 s |
+| Focused | `pc-negative` | PASS | 12.82 s |
+| Focused | `pc-f01-fragments` | PASS | 1.37 s |
+| Focused | `pc-f01-link` | PASS | 0.47 s |
+| Focused | `pc-f01-required-fragments` | PASS | 1.05 s |
+| Focused | `pc-profile-analog` | PASS | 0.17 s |
+| Core (3/3; 64.89 s) | `unittests` | PASS | 20.48 s |
+| Core | `asiotests` | PASS | 0.97 s |
+| Core | `integrationtests` | PASS | 43.43 s |
+| Security/TLS (5/5; 74.85 s) | `pc-method4` | PASS | 14.47 s |
+| Security/TLS | `pc-method68` | PASS | 22.75 s |
+| Security/TLS | `pc-renewal` | PASS | 2.45 s |
+| Security/TLS | `pc-reply-timeout` | PASS | 32.08 s |
+| Security/TLS | `pc-tls` | PASS | 3.03 s |
+
+These are **three passing regression batches plus one separate initial focused run**, not a single all-tests invocation. The CTest summaries report suite-level PASS, not the internal Catch test-case and assertion counts.
+
+**Evidence limits:** successful build and execution of the named Windows Host tests at the specified SHA, including local two-process TCP/TLS scenarios; **not** independent-peer interoperability, a complete clause-by-clause IEEE audit, hardware/RTU acceptance or an overall 119-requirement compliance verdict. Existing open items (G120V8 certificate trust/runtime, G0V209 truthful SA advertisement, CRL re-evaluation of active connections, CFG-12 startup semantics, unapproved security/product policies) remain open. Previous failed runs at older SHAs stay in the historical ledger. No requirement matrix status or progress percentage is upgraded by this summary.
+
+**Reuse policy:** retain this as a tested-SHA baseline to avoid routinely repeating unchanged suites. After changes affecting code, tests, dependencies or configuration, rerun **relevant** focused cases and record the resulting SHA and results. Final Host acceptance and independent-peer verification remain separate gates.
+
 ## Host verification record — 2026-11-09 at `010dcf6`
 
 Scope: native Windows build and suite execution at the acceptance-harness commit. This is **not** an acceptance campaign: the sealed runner campaign, independent-peer evidence and target hardware remain outstanding.
