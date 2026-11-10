@@ -1,7 +1,7 @@
 # DNP3-EXTRA engineering rules
 
 ## Objective and authority
-Implement the applicable selections in the supplied RTU Device Profile and minimum security addendum. Read `DNP3_PDD_PLAN/PDF_SCOPE.md`, the two matrices and `OPEN_ISSUES.md`. The target is Level 3 Outstation with explicit extensions, runtime settings and SA v5. IEEE 1815-2012 governs correct protocol behavior. General Level 4 expansion requires explicit authorization.
+Implement the applicable selections in the supplied RTU Device Profile and minimum security addendum. Start with `DNP3_PDD_PLAN/DNP3_REFERENCE_119.csv` for the selected ID, then read its linked wire procedures and decisions. Open the exact cited PDF pages for an unresolved source question. The target is Level 3 Outstation with explicit extensions, runtime settings and SA v5. IEEE 1815-2012 governs correct protocol behavior. General Level 4 expansion requires explicit authorization.
 
 ## Start and navigation
 Read this file and `REPO_MAP.md`. Check Git root, branch, HEAD and local changes once. The workspace root owns Git, and `opendnp3/` is the library subtree. Preserve unrelated work. Navigate directly to relevant files. Batch tool discovery once, reuse installed tools and project-pinned dependencies, and keep output concise.

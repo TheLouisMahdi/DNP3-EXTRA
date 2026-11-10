@@ -1,7 +1,7 @@
 # Repository Map
 
 Git lives at the workspace root; `opendnp3/` contains OpenDNP3 3.1.2.
-Scope: Level 3 Outstation, selected extensions and SA v5; see the scope document below.
+Scope: Level 3 Outstation, selected extensions and SA v5; see the selected reference below.
 
 Path aliases: `src/` = `opendnp3/cpp/lib/src/`; `api/` = `opendnp3/cpp/lib/include/opendnp3/`; `tests/` = `opendnp3/cpp/tests/`.
 
@@ -79,11 +79,10 @@ Path aliases: `src/` = `opendnp3/cpp/lib/src/`; `api/` = `opendnp3/cpp/lib/inclu
 ## Requirements and Evidence
 
 - `AGENTS.md` → engineering and verification rules.
-- `DNP3_PDD_PLAN/PDF_SCOPE.md` → acceptance authority and runtime checklist.
-- `DNP3_PDD_PLAN/PROFILE_MATRIX.csv`, `SECURITY_MATRIX.csv` → selected requirements and evidence paths (same directory).
-- `DNP3_PDD_PLAN/OPEN_ISSUES.md` → unresolved behavior/product decisions.
-- `DNP3_PDD_PLAN/ENGINEERING_EVIDENCE.md` → historical revisions, results and limitations.
-- `DNP3_PDD_PLAN/IEEE_TRACEABILITY.csv` → reference-only IEEE clause/wire index.
+- `DNP3_PDD_PLAN/DNP3_REFERENCE_119.csv` → first lookup for the 119 selected requirements, exact wire cases and evidence boundaries.
+- `DNP3_PDD_PLAN/DNP3_REFERENCE_WIRE_PROCEDURES.csv` and `IEEE_REFERENCE_OPEN_DECISIONS.md` → linked procedures and engineering dispositions.
+- `DNP3_PDD_PLAN/DNP3_REFERENCE_USAGE.md` → editable workbook and export workflow. Consult the cited PDF pages for unresolved source questions.
+- `DNP3_PDD_PLAN/WINDOWS_HOST_ROADMAP.md` and `EXECUTION_PHASE_STATUS.md` → implementation and executed evidence at their recorded revisions.
 
 ## Dependency Flow
 
