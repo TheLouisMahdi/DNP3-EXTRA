@@ -13,7 +13,7 @@ Existing code includes native Master/Outstation, real TCP, measurement/event enc
 ## Implemented in the 2026-11-10 slice - Windows validation pending
 
 - `PROFILE-030`: the `--rtu-io-profile` Outstation defaults analog events to selected G32V5 (float32, without time); generic diagnostics keep G32V7. The permanent `pc-profile-analog` process test checks both. **IMPLEMENTED_UNVERIFIED**, not a Windows PASS.
-- `PROFILE-035..037`: the RTU diagnostic Outstation accepts selected G41V1/V2/V3 and now rejects unselected G41V4 on SELECT and operate paths. The generic diagnostic handler retains G41V4. Added positive G41V3 and negative G41V4 FC5/FC6 receiver-side checks to `pc-profile-analog`. **IMPLEMENTED_UNVERIFIED**.
+- `PROFILE-035..037`: the RTU diagnostic Outstation accepts selected G41V1/V2/V3 and now rejects unselected G41V4 on SELECT and operate paths. The generic diagnostic handler retains G41V4. Added positive G41V3 and negative G41V4 FC3/FC5/FC6 receiver-side checks to `pc-profile-analog`. **IMPLEMENTED_UNVERIFIED**.
 - `CFG-09` / `PROFILE-019`: the actual PDF selects **Pulse On = Sometimes**, **Pulse Off = Never**, **Trip/Close = Always**, **Count >1 = Never** and rejects Latch/Queue. Corrected live matrices and audit notes. The blank explanation for Sometimes remains **DECISION_BLOCKED**; the existing diagnostic CROB `0x41/0x81` mapping is not approved product policy by itself.
 
 ## Actual remaining gaps and acceptance work
