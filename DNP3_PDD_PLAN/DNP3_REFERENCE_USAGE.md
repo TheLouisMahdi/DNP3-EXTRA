@@ -26,3 +26,9 @@ Implementation choices D-10, D-13, D-15, D-18, D-23, D-24 and D-25 are defined i
 - **Review columns:** NORMATIVE_BACKLOG_71 column C is historical pre-final review status; column K is the current *scoped normative review result*. Historical labels must not override the detailed final result. No workbook review status implies passing source/runtime tests.
 - **Owner-decision cells:** empty approvals were replaced with literal `NOT_RECORDED` or `EXTERNAL_INPUT_REQUIRED` text where appropriate. These values explicitly do not constitute owner approval, installation-specific product decisions, or successful acceptance evidence.
 - **Acceptance test descriptions:** each of the twelve generic CFG cases in IMPLEMENTATION_INDEX now specifies exact test conditions and failure expectations. These are required permanent cases to implement, not executed test results.
+
+## IEC/TS 62351-8:2011 source audit - 2026-11-10
+
+- The IEC source previously called unavailable is now provided and inspected. Read `G120V8_IEC62351_2011_PROFILE.md` for exact normative certificate values and `G120V8_DUE_AFTER_IMPLEMENTATION.md` for tagged test/deployment gates.
+- The canonical 15-sheet XLSX remains the editable master and the two CSVs remain derived exports. **Do not patch CSVs separately or claim workbook synchronization** unless the XLSX itself has been opened, updated, exported and compared. IEC source review and any supplementary workbook do not prove runtime implementation.
+- Reviewed `develop@6fc3129a` still lacks G120V8 native runtime handling. `PROFILE-055` is MISSING_RUNTIME pending code and permanent tests. Keep `P4-OPEN-01` provisional.

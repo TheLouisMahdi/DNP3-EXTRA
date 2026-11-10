@@ -59,3 +59,10 @@ Reference-only corrections against IEEE 1815-2012 §4.3 Rules 1-7 (PDF pp80-81),
 - Twelve generic CFG acceptance narratives were replaced with defined positive, negative, malformed, boundary, timeout and process-level cases. These are implementation test plans only.
 
 **Verification scope:** reconstructed workbook, two generated CSVs, unique IDs, live Git hashes, cell-by-cell export agreement and formal source passages. No production code, CI, simulator, Windows build or test execution was performed in this reference-only task. IEEE 1815-2012 may still require consulting the external IEC/TS 62351-8 profile for real certificate acceptance.
+
+## Supplemental IEC/TS 62351-8:2011 audit (2026-11-10)
+
+- Full user-supplied IEC edition 1.0 reviewed. OID/ASN.1, roles, AoR, serial/revision, token maximum 8192 bytes, maximum lifetime 3 years, ID/AC profiles and legacy algorithm capabilities are now `NORMATIVE_DEFINED`. Prior statements that **the IEC 2011 normative text itself is missing** are superseded.
+- See `G120V8_IEC62351_2011_PROFILE.md` and `G120V8_DUE_AFTER_IMPLEMENTATION.md`. RFC5280/5755 profile detail and applicable IEC62351-3 CRL clauses require pre-implementation review; real device identity, operator CA and independent peer are acceptance/deployment inputs.
+- Code review at develop@6fc3129a found codec but no native V8 processing in RemoteUpdateKeys; status MISSING_RUNTIME. No Windows tests were executed.
+- Workbook/derived CSV sync still requires a separate controlled edit to the existing 15-sheet XLSX. Do not regenerate it by discarding unrelated sheets, and do not edit generated CSVs alone.

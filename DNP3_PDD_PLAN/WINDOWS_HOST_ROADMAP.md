@@ -58,3 +58,9 @@ if ($LASTEXITCODE -ne 0) { throw 'G32V5 process test failed.' }
 ```
 
 These are instructions, **not reported executions**. No complete Windows Host conformance or 100% compliance is claimed while mandatory subcases are unverified or contractually blocked.
+
+## G120V8 IEC source gate clarified (2026-11-10)
+
+- IEC/TS 62351-8:2011 is now available; the text-source blocker is closed. Normative details: `G120V8_IEC62351_2011_PROFILE.md`. Post-implementation checks: `G120V8_DUE_AFTER_IMPLEMENTATION.md`.
+- **Pre-implementation**: RFC5280/5755 and applicable IEC/TS 62351-3 review; security policy, laboratory CA/AA, DNP3 RoleID/AoR binding and receive-fragment support for an 8192-byte IEC token plus protocol overhead. A 4096-byte Host fragment limit alone does not cover this.
+- **Current static status:** Group120Var8 codec exists, RemoteUpdateKeys native G120V8 acceptance/verification absent. `PROFILE-055=MISSING_RUNTIME`, not verified. All applicable unit/wire/TCP tests and true external peer are still due; no build/test was run in this documentation audit.
