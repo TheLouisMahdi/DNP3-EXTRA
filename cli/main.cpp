@@ -714,7 +714,13 @@ int RunOutstation(const diagnostic::Options& o)
         p.second.evariation = o.relativeBinaryTime ? EventBinaryVariation::Group2Var3 : EventBinaryVariation::Group2Var2;
     }
     for (auto& p : database.double_binary) { p.second.clazz = PointClass::Class1; p.second.evariation = EventDoubleBinaryVariation::Group4Var2; }
-    for (auto& p : database.analog_input) { p.second.clazz = PointClass::Class2; p.second.svariation = StaticAnalogVariation::Group30Var5; p.second.evariation = EventAnalogVariation::Group32Var7; }
+    for (auto& p : database.analog_input)
+    {
+        p.second.clazz = PointClass::Class2;
+        p.second.svariation = StaticAnalogVariation::Group30Var5;
+        p.second.evariation = o.rtuIoProfile ? EventAnalogVariation::Group32Var5
+                                             : EventAnalogVariation::Group32Var7;
+    }
     for (auto& p : database.counter) p.second.clazz = PointClass::Class3;
     if (o.commandEvents)
     {
@@ -776,7 +782,8 @@ int RunOutstation(const diagnostic::Options& o)
             if (Is(w, {"show"}))
             {
                 outstation->GetStackStatistics(); // Executor barrier after submitted Apply operations.
-                Console::Print("DATABASE", std::string("Configured indices 0..9: binary/double Class1; analog G30V5/G32V7 Class2; ")
+                Console::Print("DATABASE", std::string("Configured indices 0..9: binary/double Class1; analog G30V5/")
+                    + (o.rtuIoProfile ? "G32V5" : "G32V7") + " Class2; "
                     + (o.rtuIoProfile ? "no counters. " : "counter Class3. ")
                     + "Initial class assignments may be changed by Master ASSIGN_CLASS.");
                 for (size_t n = 0; n < points.size(); ++n)
