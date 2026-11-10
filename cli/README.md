@@ -284,7 +284,9 @@ the above simulation accepts one possible CROB encoding without proving that
 the contractual control policy has been finalized.
 
 The selected RTU default for analog events is G32V5 (float32 without time);
-generic diagnostics retain G32V7. A focused two-process Windows test is
+generic diagnostics retain G32V7. In RTU mode, the unselected G41V4
+double-precision analog command is rejected for SELECT and all operation
+paths; generic diagnostics retain it. A focused two-process Windows test is
 registered as `pc-profile-analog`.
 
 This option applies only to these I/O choices. It does not configure link,
