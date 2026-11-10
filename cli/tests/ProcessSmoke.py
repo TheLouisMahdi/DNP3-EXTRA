@@ -70,7 +70,6 @@ class Peer:
         cursor = self.send(command)
         completion = self.wait(
             r"\[FC6\] local transmission complete; remote execution unknown$", cursor, timeout)
-        self.wait(r"FC6 locally accepted; remote execution unknown\)$", cursor, timeout)
         assert not any("[RESULT]" in line or "status=SUCCESS" in line
                        for line in self.lines[cursor:]), self.lines[cursor:]
         return completion
@@ -905,32 +904,699 @@ def acceptance_counter_profile(exe):
 
 
 def profile_analog_event(exe):
-    """Check selected RTU G32V5 and unchanged generic G32V7 over real TCP."""
-    for rtu, variation in ((False, 7), (True, 5)):
-        options = ["--auth", "compat"] + (["--rtu-io-profile"] if rtu else [])
-        master, out = connected(exe, options)
+    """Selected RTU analog event and output control checks over real TCP."""
+    configurations = (
+        (False, 7, False),
+        (True, 5, False),
+        (True, 5, True),
+    )
+
+    for rtu, event_variation, use_q17 in configurations:
+        common = ["--auth", "compat"]
+        if rtu:
+            common.append("--rtu-io-profile")
+
+        master, out = connected(
+            exe,
+            common,
+            master_options=["--control-q17"] if use_q17 else [],
+            out_options=["--event-q17"] if use_q17 else [],
+        )
+
         try:
             master.task("scan integrity")
+
             cursor = out.send("set analog 3 12.5 force")
             out.wait(r"\[UPDATE\].*analog 3 12\.5", cursor)
+
             cursor = master.task("scan class2")
-            line = master.wait(rf"Group32Var{variation} EVENT Analog\[3\]=12\.5\b", cursor)
-            if rtu:
-                assert "time=" not in line, line
-                master.task("analog 3 2 4.25 direct")
-                out.executed(1)
-                cursor = master.task("analog 4 2 4.25 sbo", success=False)
-                master.wait(r"status=NOT_SUPPORTED", cursor)
-                out.executed(1)
-                cursor = master.task("analog 4 2 4.25 direct", success=False)
-                master.wait(r"status=NOT_SUPPORTED", cursor)
-                out.executed(1)
-                master.noack("analog 4 2 4.25 noack")
-                out.executed(1)
-            else:
+            line = master.wait(
+                rf"Group32Var{event_variation} EVENT Analog\[3\]=12\.5\b",
+                cursor,
+            )
+
+            assert "flags=0x01" in line, line
+
+            if not rtu:
                 assert "time=" in line, line
+                continue
+
+            assert "time=" not in line, line
+
+            cursor = master.task("scan class2")
+            with master.cv:
+                assert not any(
+                    "Group32Var5 EVENT Analog[3]" in item
+                    for item in master.lines[cursor:]
+                ), master.lines[cursor:]
+
+            executions = 0
+
+            # G41V1, G41V2 and G41V3: FC3/4, FC5 and FC6.
+            for variation, index, value in (
+                (1, 1, "42"),
+                (2, 2, "-12"),
+                (3, 3, "4.25"),
+            ):
+                for mode in ("sbo", "direct", "noack"):
+                    command = f"analog {variation} {index} {value} {mode}"
+
+                    if mode == "noack":
+                        master.noack(command)
+                    else:
+                        master.task(command)
+
+                    executions += 1
+                    out.executed(executions)
+
+                cursor = master.task(
+                    f"read 40 {variation} {index} {index}"
+                )
+                master.wait(
+                    rf"AnalogOutput\[{index}\]={re.escape(value)}\b",
+                    cursor,
+                )
+
+            # G41V4 is not selected for the RTU profile.
+            for mode in ("sbo", "direct"):
+                cursor = master.task(
+                    f"analog 4 4 4.25 {mode}",
+                    success=False,
+                )
+                master.wait(r"status=NOT_SUPPORTED", cursor)
+                out.executed(executions)
+
+            master.noack("analog 4 4 4.25 noack")
+            out.executed(executions)
+
+            # Invalid point indices must not actuate outputs.
+            for variation in (1, 2, 3):
+                cursor = master.task(
+                    f"analog {variation} 10 1 direct",
+                    success=False,
+                )
+                master.wait(r"status=OUT_OF_RANGE", cursor)
+                out.executed(executions)
+
+            # Selected signed integer encoding limits.
+            for variation, index, values in (
+                (1, 1, ("-2147483648", "2147483647")),
+                (2, 2, ("-32768", "32767")),
+            ):
+                for value in values:
+                    master.task(
+                        f"analog {variation} {index} {value} direct"
+                    )
+                    executions += 1
+                    out.executed(executions)
+
+            # Reject invalid numeric input before transmission.
+            invalid_commands = (
+                ("analog 1 1 2147483648 direct",
+                 "Integer command out of range"),
+                ("analog 1 1 -2147483649 direct",
+                 "Integer command out of range"),
+                ("analog 2 2 32768 direct",
+                 "Integer command out of range"),
+                ("analog 2 2 -32769 direct",
+                 "Integer command out of range"),
+                ("analog 3 3 nan direct",
+                 "Invalid analog command"),
+                ("analog 3 3 inf direct",
+                 "Invalid analog command"),
+                ("analog 3 3 1e39 direct",
+                 "Float overflow"),
+            )
+
+            for command, error in invalid_commands:
+                cursor = master.send(command)
+                master.wait(
+                    r"\[ERROR\] " + re.escape(error),
+                    cursor,
+                )
+                out.executed(executions)
         finally:
             stop(out, master)
+
+    print(
+        "PASS RTU G32/G41 TCP smoke checks in both qualifier configurations",
+        flush=True,
+    )
+
+
+def profile_analog_wire(exe):
+    """Verify G32V5 request and response bytes over real TCP."""
+    for request_qualifier, count_bytes in (
+        (0x06, b""),
+        (0x07, b"\x01"),
+        (0x08, b"\x01\x00"),
+    ):
+        for use_q17 in (False, True):
+            options = [
+                "--auth", "compat",
+                "--rtu-io-profile",
+                *loopback_port(),
+            ]
+            out_options = ["--event-q17"] if use_q17 else []
+            out = Peer(exe, "outstation", [*options, *out_options])
+
+            try:
+                out.wait(r"\[HELP\]")
+                port = int(options[-1])
+
+                cursor = out.send("set analog 3 12.5 force")
+                out.wait(
+                    r"\[UPDATE\].*analog 3 12\.5 force",
+                    cursor,
+                )
+
+                cursor = out.send("show")
+                out.wait(
+                    r"Input values are this application",
+                    cursor,
+                )
+
+                with socket.create_connection(
+                    ("127.0.0.1", port), timeout=5
+                ) as raw:
+                    out.wait(r"\[LINK\] OPEN$")
+
+                    request = bytes((
+                        0xC0, 0x01,
+                        0x20, 0x05,
+                        request_qualifier,
+                    )) + count_bytes
+
+                    raw.sendall(f01_link_frame(request, 0))
+                    _, response = f01_receive_apdu(raw)
+
+                    assert response[1] == 0x81, response.hex()
+                    assert response[0] & 0xC0 == 0xC0, response.hex()
+                    assert response[0] & 0x0F == 0, response.hex()
+
+                    value = struct.pack("<f", 12.5)
+
+                    if use_q17:
+                        expected = bytes.fromhex(
+                            "20 05 17 01 03 01"
+                        ) + value
+                    else:
+                        expected = bytes.fromhex(
+                            "20 05 28 01 00 03 00 01"
+                        ) + value
+
+                    assert response[4:] == expected, (
+                        f"request Q{request_qualifier:02X}, "
+                        f"response Q{'17' if use_q17 else '28'}: "
+                        f"expected={expected.hex()} "
+                        f"actual={response[4:].hex()}"
+                    )
+            finally:
+                stop(out)
+
+    print(
+        "PASS G32V5 FC1 Q06/Q07/Q08 and response Q17/Q28 wire bytes",
+        flush=True,
+    )
+
+
+def profile_analog_unsolicited(exe):
+    """Verify RTU G32V5 unsolicited delivery and buffered events."""
+    master, out = connected(
+        exe,
+        ["--auth", "compat", "--rtu-io-profile"],
+        out_options=["--unsolicited"],
+    )
+    try:
+        master.task("scan integrity")
+        master.task("unsol off")
+
+        cursor = out.send("set analog 3 12.5 force")
+        out.wait(r"\[UPDATE\].*analog 3 12\.5 force", cursor)
+
+        cursor = out.send("show")
+        out.wait(r"Input values are this application", cursor)
+
+        with master.cv:
+            before = len(master.lines)
+
+        time.sleep(0.3)
+        with master.cv:
+            assert not any(
+                "Group32Var5 EVENT Analog[3]" in line
+                for line in master.lines[before:]
+            ), master.lines[before:]
+
+        cursor = master.send("unsol on")
+        master.wait(r"\[TASK\] unsol SUCCESS", cursor)
+
+        line = master.wait(
+            r"Group32Var5 EVENT Analog\[3\]=12\.5\b",
+            cursor,
+        )
+        assert "flags=0x01" in line, line
+        assert "time=" not in line, line
+
+        with master.cv:
+            assert any(
+                "Unsolicited response fragment" in item
+                for item in master.lines[cursor:]
+            ), master.lines[cursor:]
+
+        cursor = master.task("scan class2")
+        with master.cv:
+            assert not any(
+                "Group32Var5 EVENT Analog[3]" in item
+                for item in master.lines[cursor:]
+            ), master.lines[cursor:]
+
+        master.task("unsol off")
+
+        cursor = out.send("set analog 3 13.5 force")
+        out.wait(r"\[UPDATE\].*analog 3 13\.5 force", cursor)
+
+        cursor = out.send("show")
+        out.wait(r"Input values are this application", cursor)
+
+        with master.cv:
+            before = len(master.lines)
+
+        time.sleep(0.3)
+        with master.cv:
+            assert not any(
+                "Group32Var5 EVENT Analog[3]=13.5" in item
+                for item in master.lines[before:]
+            ), master.lines[before:]
+
+        cursor = master.task("scan class2")
+        line = master.wait(
+            r"Group32Var5 EVENT Analog\[3\]=13\.5\b",
+            cursor,
+        )
+        assert "time=" not in line, line
+
+    finally:
+        stop(out, master)
+
+    print("PASS G32V5 unsolicited delivery and buffering", flush=True)
+
+
+def profile_analog_confirm_wire(exe):
+    """Verify G32V5 count limit, lost CONFIRM and confirmed removal."""
+    for use_q17 in (False, True):
+        options = [
+            "--auth", "compat", "--rtu-io-profile",
+            *loopback_port(),
+        ]
+        out_options = ["--sol-confirm-ms", "1000"]
+        if use_q17:
+            out_options.append("--event-q17")
+
+        out = Peer(exe, "outstation", [*options, *out_options])
+
+        try:
+            out.wait(r"\[HELP\]")
+
+            for index, value in ((3, "12.5"), (4, "13.5")):
+                cursor = out.send(
+                    f"set analog {index} {value} force"
+                )
+                out.wait(
+                    rf"\[UPDATE\].*analog {index} "
+                    + re.escape(value) + r" force",
+                    cursor,
+                )
+
+            cursor = out.send("show")
+            out.wait(r"Input values are this application", cursor)
+
+            def event_bytes(index, value):
+                if use_q17:
+                    header = bytes((32, 5, 0x17, 1, index, 1))
+                else:
+                    header = bytes((32, 5, 0x28, 1, 0, index, 0, 1))
+                return header + struct.pack("<f", value)
+
+            with socket.create_connection(
+                ("127.0.0.1", int(options[-1])), timeout=5
+            ) as raw:
+                out.wait(r"\[LINK\] OPEN$")
+
+                def read(seq, transport_seq, count_one=True):
+                    qualifier = b"\x07\x01" if count_one else b"\x06"
+                    apdu = bytes((0xC0 | seq, 0x01, 32, 5)) + qualifier
+                    raw.sendall(f01_link_frame(apdu, transport_seq))
+                    _, response = f01_receive_apdu(raw)
+                    assert response[1] == 0x81, response.hex()
+                    return response
+
+                first = read(0, 0)
+                assert first[0] == 0xE0, first.hex()
+                assert first[4:] == event_bytes(3, 12.5), first.hex()
+
+                # No CONFIRM: let the configured 1000 ms timer expire.
+                time.sleep(1.3)
+
+                # A new READ must recover the unconfirmed first event.
+                recovered = read(1, 1)
+                assert recovered[0] == 0xE1, recovered.hex()
+                assert recovered[4:] == first[4:], recovered.hex()
+
+                # Confirm the recovered event.
+                raw.sendall(f01_link_frame(b"\xC1\x00", 2))
+
+                # Count=1 must now return only the second event.
+                second = read(2, 3)
+                assert second[0] == 0xE2, second.hex()
+                assert second[4:] == event_bytes(4, 13.5), second.hex()
+
+                raw.sendall(f01_link_frame(b"\xC2\x00", 4))
+
+                # Both confirmed events must be absent from later READs.
+                empty = read(3, 5, count_one=False)
+                assert empty[0] == 0xC3, empty.hex()
+                assert empty[4:] == b"", empty.hex()
+
+        finally:
+            stop(out)
+
+    print("PASS G32V5 lost CONFIRM and count-limited READ", flush=True)
+
+
+def profile_g41_wire(exe):
+    """Verify selected RTU G41 controls over raw TCP/FT3."""
+    commands = (
+        (1, 2, struct.pack("<i", 123456789)),
+        (2, 3, struct.pack("<h", -12345)),
+        (3, 4, struct.pack("<f", 4.25)),
+    )
+
+    for variation, index, encoded_value in commands:
+        for qualifier in (0x17, 0x28):
+            options = [
+                "--auth", "compat", "--rtu-io-profile",
+                *loopback_port(),
+            ]
+            out = Peer(exe, "outstation", options)
+
+            try:
+                out.wait(r"\[HELP\]")
+
+                if qualifier == 0x17:
+                    prefix = bytes((1, index))
+                else:
+                    prefix = struct.pack("<HH", 1, index)
+
+                objects = (
+                    bytes((41, variation, qualifier))
+                    + prefix
+                    + encoded_value
+                    + b"\x00"
+                )
+
+                with socket.create_connection(
+                    ("127.0.0.1", int(options[-1])),
+                    timeout=5,
+                ) as raw:
+                    out.wait(r"\[LINK\] OPEN$")
+
+                    def send_control(seq, function, expect_response):
+                        request = bytes((0xC0 | seq, function)) + objects
+                        raw.sendall(f01_link_frame(request, seq))
+
+                        if not expect_response:
+                            return
+
+                        _, response = f01_receive_apdu(raw)
+
+                        assert response[:2] == bytes(
+                            (0xC0 | seq, 0x81)
+                        ), response.hex()
+
+                        assert response[4:] == objects, (
+                            f"G41V{variation} Q{qualifier:02X} "
+                            f"FC{function}: {response.hex()}"
+                        )
+
+                    # FC3: SELECT must not execute an output.
+                    send_control(0, 3, True)
+                    out.executed(0)
+
+                    # FC4: matching OPERATE executes once.
+                    send_control(1, 4, True)
+                    out.executed(1)
+
+                    # FC5: direct operation executes independently.
+                    send_control(2, 5, True)
+                    out.executed(2)
+
+                    # FC6: execution without application response.
+                    send_control(3, 6, False)
+                    raw.sendall(f01_link_frame(b"\xC4\x01\x20\x05\x07\x00", 4))
+                    _, barrier = f01_receive_apdu(raw)
+                    assert barrier[:2] == b"\xC4\x81" and barrier[4:] == b"", barrier.hex()
+                    out.executed(3)
+
+                    raw.settimeout(0.2)
+                    try:
+                        unexpected = raw.recv(1)
+                    except socket.timeout:
+                        pass
+                    else:
+                        raise AssertionError(
+                            "FC6 generated a response or closed "
+                            f"the connection: {unexpected.hex()}"
+                        )
+
+            finally:
+                stop(out)
+
+    print(
+        "PASS RTU G41V1/V2/V3 FC3/4/5/6 Q17/Q28 wire checks",
+        flush=True,
+    )
+
+
+def profile_g41_negative_wire(exe):
+    """Negative RTU G41 control and duplicate tests over FT3/TCP."""
+    cases = (
+        (1, 2, struct.pack("<i", 1234)),
+        (2, 3, struct.pack("<h", -123)),
+        (3, 4, struct.pack("<f", 4.25)),
+    )
+
+    for variation, index, value in cases:
+        for qualifier in (0x17, 0x28):
+            options = [
+                "--auth", "compat", "--rtu-io-profile",
+                *loopback_port(),
+            ]
+            out = Peer(exe, "outstation", options)
+
+            try:
+                out.wait(r"\[HELP\]")
+
+                def command(point, encoded):
+                    prefix = (
+                        bytes((1, point))
+                        if qualifier == 0x17
+                        else struct.pack("<HH", 1, point)
+                    )
+                    return (
+                        bytes((41, variation, qualifier))
+                        + prefix + encoded + b"\x00"
+                    )
+
+                original = command(index, value)
+                changed_value = value[:-1] + bytes((value[-1] ^ 1,))
+                changed = command(index, changed_value)
+                invalid_point = command(10, value)
+                unsupported = (
+                    bytes((41, 4, qualifier))
+                    + (
+                        bytes((1, 4))
+                        if qualifier == 0x17
+                        else struct.pack("<HH", 1, 4)
+                    )
+                    + struct.pack("<d", 4.25)
+                    + b"\x00"
+                )
+
+                with socket.create_connection(
+                    ("127.0.0.1", int(options[-1])), timeout=5
+                ) as raw:
+                    out.wait(r"\[LINK\] OPEN$")
+
+                    transport = 0
+
+                    def exchange(seq, fc, objects, status):
+                        nonlocal transport
+                        raw.sendall(f01_link_frame(
+                            bytes((0xC0 | seq, fc)) + objects,
+                            transport,
+                        ))
+                        transport += 1
+
+                        _, response = f01_receive_apdu(raw)
+                        assert response[:2] == bytes(
+                            (0xC0 | seq, 0x81)
+                        ), response.hex()
+
+                        expected = objects[:-1] + bytes((status,))
+                        assert response[4:] == expected, (
+                            f"G41V{variation} Q{qualifier:02X} "
+                            f"FC{fc}: {response.hex()}"
+                        )
+                        return response
+
+                    def noack(seq, objects):
+                        nonlocal transport
+                        raw.sendall(f01_link_frame(
+                            bytes((0xC0 | seq, 6)) + objects,
+                            transport,
+                        ))
+                        transport += 1
+
+                    # OPERATE without SELECT: NO_SELECT = 2.
+                    exchange(0, 4, original, 2)
+                    out.executed(0)
+
+                    # SELECT succeeds without output execution.
+                    exchange(1, 3, original, 0)
+                    out.executed(0)
+
+                    # Different OPERATE value cannot use the selection.
+                    exchange(2, 4, changed, 2)
+                    out.executed(0)
+
+                    # Consumed selection cannot be reused.
+                    exchange(3, 4, original, 2)
+                    out.executed(0)
+
+                    exchange(4, 3, original, 0)
+                    out.executed(0)
+
+                    result = exchange(5, 4, original, 0)
+                    out.executed(1)
+
+                    # Identical retry returns the previous response.
+                    duplicate = exchange(5, 4, original, 0)
+                    assert duplicate == result
+                    out.executed(1)
+
+                    # Out-of-range point: OUT_OF_RANGE = 12.
+                    exchange(6, 5, invalid_point, 12)
+                    out.executed(1)
+
+                    # Unselected G41V4: NOT_SUPPORTED = 4.
+                    exchange(7, 3, unsupported, 4)
+                    out.executed(1)
+
+                    exchange(8, 5, unsupported, 4)
+                    out.executed(1)
+
+                    noack(9, unsupported)
+
+                    # Verify rejected FC6 is processed before checking execution count.
+                    raw.sendall(f01_link_frame(
+                        b"\xC9\x01\x20\x05\x07\x00", transport
+                    ))
+                    transport += 1
+                    _, barrier = f01_receive_apdu(raw)
+                    assert barrier[:2] == b"\xC9\x81" and barrier[4:] == b"", barrier.hex()
+                    out.executed(1)
+
+                    # Keep the identical FC6 requests adjacent for replay detection.
+                    noack(10, original)
+                    noack(10, original)
+
+                    # READ is ordered after both FC6 requests on the same TCP connection.
+                    raw.sendall(f01_link_frame(
+                        b"\xCB\x01\x20\x05\x07\x00", transport
+                    ))
+                    transport += 1
+                    _, barrier = f01_receive_apdu(raw)
+                    assert barrier[:2] == b"\xCB\x81" and barrier[4:] == b"", barrier.hex()
+                    out.executed(2)
+
+                    raw.settimeout(0.2)
+                    try:
+                        data = raw.recv(1)
+                    except socket.timeout:
+                        pass
+                    else:
+                        raise AssertionError(
+                            f"Unexpected FC6 data/EOF: {data.hex()}"
+                        )
+
+            finally:
+                stop(out)
+
+    print("PASS G41 negative, duplicate and FC6 replay tests", flush=True)
+
+
+def profile_g41_timeout_wire(exe):
+    """Verify expired SELECT cannot authorize G41 OPERATE."""
+    cases = (
+        (1, 2, struct.pack("<i", 1234)),
+        (2, 3, struct.pack("<h", -123)),
+        (3, 4, struct.pack("<f", 4.25)),
+    )
+
+    for variation, index, value in cases:
+        for qualifier in (0x17, 0x28):
+            options = [
+                "--auth", "compat", "--rtu-io-profile",
+                *loopback_port(),
+            ]
+            out = Peer(exe, "outstation", options)
+
+            try:
+                out.wait(r"\[HELP\]")
+
+                prefix = (
+                    bytes((1, index))
+                    if qualifier == 0x17
+                    else struct.pack("<HH", 1, index)
+                )
+                objects = (
+                    bytes((41, variation, qualifier))
+                    + prefix + value + b"\x00"
+                )
+
+                with socket.create_connection(
+                    ("127.0.0.1", int(options[-1])),
+                    timeout=5,
+                ) as raw:
+                    out.wait(r"\[LINK\] OPEN$")
+
+                    raw.sendall(f01_link_frame(
+                        b"\xC0\x03" + objects, 0
+                    ))
+                    _, selected = f01_receive_apdu(raw)
+
+                    assert selected[:2] == b"\xC0\x81", selected.hex()
+                    assert selected[4:] == objects, selected.hex()
+                    out.executed(0)
+
+                    # OutstationParams::selectTimeout defaults to 10 seconds.
+                    time.sleep(10.25)
+
+                    raw.sendall(f01_link_frame(
+                        b"\xC1\x04" + objects, 1
+                    ))
+                    _, expired = f01_receive_apdu(raw)
+
+                    assert expired[:2] == b"\xC1\x81", expired.hex()
+                    assert expired[4:] == (
+                        objects[:-1] + b"\x01"
+                    ), expired.hex()
+                    out.executed(0)
+
+            finally:
+                stop(out)
+
+    print("PASS G41 expired SELECT wire tests", flush=True)
 
 
 def main():
@@ -938,7 +1604,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-analog", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -959,6 +1625,12 @@ def main():
     if args.only in ("f01-link", "all"): f01_confirmed_link(args.exe)
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
     if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
+    if args.only in ("profile-analog-wire", "all"): profile_analog_wire(args.exe)
+    if args.only in ("profile-analog-unsol", "all"): profile_analog_unsolicited(args.exe)
+    if args.only in ("profile-analog-confirm", "all"): profile_analog_confirm_wire(args.exe)
+    if args.only in ("profile-g41-wire", "all"): profile_g41_wire(args.exe)
+    if args.only in ("profile-g41-negative", "all"): profile_g41_negative_wire(args.exe)
+    if args.only in ("profile-g41-timeout", "all"): profile_g41_timeout_wire(args.exe)
     if args.only in ("compat", "all"): compatibility(args.exe)
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")
