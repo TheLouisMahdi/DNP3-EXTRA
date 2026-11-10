@@ -61,6 +61,8 @@ These diagnostic defaults use explicit unprotected Compatibility mode on localho
 
 ## Requirements and evidence
 
+- [Active Windows Host remaining-work roadmap](DNP3_PDD_PLAN/WINDOWS_HOST_ROADMAP.md) records outstanding protocol, security, decision, and acceptance gates without introducing hardware phases. The 2026-11-10 G32V5 fix and related tests are pending native Windows execution.
+
 - [Current-head F0 decision and gap audit](F0_GAP_AUDIT.md) evaluates all 28 F0 entries against IEEE, the selected PDFs and current GitHub source. [119-ID implementation/subcase matrix](F0_IMPLEMENTATION_MATRIX.csv) records 119 unique requirements in 186 audit rows. These are static source assessments, **not test passes or approved product defaults**.
 
 - [F0 source-fixed constraints and open product decisions](F0_PRODUCT_DECISIONS.md) separates authoritative PDF/IEEE values from unresolved approvals; it does not claim implemented or tested compliance.
