@@ -43,6 +43,8 @@ Project-owner direction: implement selected requirements according to IEEE 1815-
 - **Decision state:** `DISPOSITION_RECORDED`
 - **External/deployment gate (if any):** `PRODUCT_OR_CONTRACT_DECISION`
 - **Remaining evidence or factual variance:** 4096 protected-path implementation evidence pending.
+- **2026-11-10 reference gate:** IEEE §4.3 (PDF pp80-81): Master sends ONE complete Application Fragment per request; 249 is a configurable maximum mode for capable Masters, not an unconditional maximum. §8.2 Transport Segments each contain <=249 Application octets; full request may span many segments when receiver supports it.
+- **2026-11-10 reference gate:** G120V8 must fit as a complete Object in one Application Fragment with all APDU and Q5B overhead; fail closed if configured receiver/buffer cannot hold it. Never divide a signed certificate between multiple Application Fragments. Test 249/250 transport data and app buffer 2048/2049/4096/4097 plus malformed/reordered segments.
 
 ## D-04 - Retries defaults and per-function eligibility
 
@@ -95,6 +97,7 @@ Project-owner direction: implement selected requirements according to IEEE 1815-
 - **Decision state:** `DISPOSITION_RECORDED`
 - **External/deployment gate (if any):** `PRODUCT_OR_CONTRACT_DECISION`
 - **Remaining evidence or factual variance:** Physical interlocks and actuator parameters outside Host.
+- **2026-11-10 reference gate:** Tavanir original PDF physical p3 explicitly says Pulse On = Sometimes. The historical Drive PDF_SCOPE.md Never wording is incorrect; use the selected PDF and this reference.
 
 ## D-08 - Timed binary event variation policy / explanation missing
 
@@ -242,6 +245,8 @@ Project-owner direction: implement selected requirements according to IEEE 1815-
 - **External/deployment gate (if any):** `EXTERNAL_NORMATIVE_PROFILE_INPUT`
 - **Remaining evidence or factual variance:** Code/schema must match IEEE A.45.8 and the applicable IEC/TS 62351-8 certificate profile plus RFC 5280/5755. Missing external normative text or production CA/AoR is an input gate, not permission to guess. Method 4 MUST NOT use G120V8. Runtime PASS remains unproven.
 - **Project-owner authorization:** Owner: IEEE A.45.8 strict, FC32/Q5B singleton, externally signed ID/Attribute certificates with real validation and permanent TCP test harness.
+- **2026-11-10 reference gate:** Annex A.45.8.2 (physical PDF p778) explicitly encodes UINT8 Key Change Method + UINT8 Certificate Type + Certificate. Therefore Q5B size L implies Certificate length = L-2, 2<=L<=65535, maximum certificate 65533. Annex A.45.8.3 (PDF p782) incorrectly says minus one octet and incorrectly calls certificate IEC/TS 62351-5. This is an internal source contradiction, NOT a claimed IEEE erratum.
+- **2026-11-10 reference gate:** Require ONE complete FC32/Q5B single-Object Application Fragment, which can span multiple <=249-Application-octet Transport Segments. Do not split the object across Application Fragments. Reject missing/empty/invalid DER, L=0/1/2 and truncated prefix or configured receiver overflow; include L=3/65534/65535 capacity limits and signed certificate scenarios.
 
 ## D-19 - Role permissions and default authentication policy undefined
 

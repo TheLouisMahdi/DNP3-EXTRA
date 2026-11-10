@@ -47,3 +47,15 @@ The implementation behavior is selected; **this is not an assertion of implement
 - Workbook and UTF-8 CSV index export were checked cell for cell.
 - ID set remained 119 unique, original 30 decision IDs unchanged, source worksheets retained, and formula error scan returned zero hits.
 - No C++ build, runtime test or CI execution was performed during this reference-only update. Historical Windows CTest results apply only to their previously recorded SHA and exact test scope.
+
+## Pre-implementation technical clarification (2026-11-10)
+
+Reference-only corrections against IEEE 1815-2012 §4.3 Rules 1-7 (PDF pp80-81), §§8.2.1-8.2.2 (pp310-313), and Annex A.45.8.2-.3 (pp778-782):
+
+- FRAGMENT now differentiates maximum 249 Application octets *per Transport Segment* from the independently configurable complete Master request Application Fragment; Masters must be able to restrict to 249 when able to transmit larger, and may transmit a larger single fragment when permitted by the peer receive capacity. No DNP3 object can be split across application fragments.
+- G120V8 Q5B object-size prefix includes two explicit UINT8 fields before the certificate; certificate size = size prefix - 2, and the maximum size-prefix 65535 yields a maximum 65533 certificate octets. A.45.8.3 says minus one octet, contradicting the A.45.8.2 drawing, and has an IEC/TS 62351-5 vs -8 wording discrepancy; both remain traceable, not an official erratum. A full certificate must fit a single receiver-accepted Application Fragment with overhead, using multiple Transport Segments if necessary.
+- Tavanir original Device Profile physical p3 selects Pulse On = Sometimes. Google Drive historical PDF_SCOPE.md says Never; it must be corrected rather than treated as selection authority.
+- NORMATIVE_BACKLOG_71 columns C and K explicitly distinguish historical and completed scoped reviews. Twenty-three owner-decision fields without actual explicit authorization are now labeled NOT_RECORDED or equivalent, not silently approved.
+- Twelve generic CFG acceptance narratives were replaced with defined positive, negative, malformed, boundary, timeout and process-level cases. These are implementation test plans only.
+
+**Verification scope:** reconstructed workbook, two generated CSVs, unique IDs, live Git hashes, cell-by-cell export agreement and formal source passages. No production code, CI, simulator, Windows build or test execution was performed in this reference-only task. IEEE 1815-2012 may still require consulting the external IEC/TS 62351-8 profile for real certificate acceptance.
