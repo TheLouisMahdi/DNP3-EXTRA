@@ -1,7 +1,7 @@
 # DNP3-EXTRA engineering rules
 
 ## Objective and authority
-Implement the applicable selections in the supplied RTU Device Profile and minimum security addendum. Start with `DNP3_PDD_PLAN/DNP3_REFERENCE_119.csv` for the selected ID, then read its linked wire procedures and decisions. Open the exact cited PDF pages for an unresolved source question. The target is Level 3 Outstation with explicit extensions, runtime settings and SA v5. IEEE 1815-2012 governs correct protocol behavior. General Level 4 expansion requires explicit authorization.
+Implement the applicable selections in the supplied RTU Device Profile and minimum security addendum. Use `DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx` as the canonical source for requirements, decisions, implementation status and verification evidence. Filter `IMPLEMENTATION_INDEX` by ID, then read its linked `WIRE_PROCEDURES` and `OPEN_DECISIONS`. Open only the cited PDF pages needed to resolve a source question. The target is Level 3 Outstation with explicit extensions, runtime settings and SA v5. IEEE 1815-2012 governs correct protocol behavior. General Level 4 expansion requires explicit authorization.
 
 ## Start and navigation
 Read this file and `REPO_MAP.md`. Check Git root, branch, HEAD and local changes once. The workspace root owns Git, and `opendnp3/` is the library subtree. Preserve unrelated work. Navigate directly to relevant files. Batch tool discovery once, reuse installed tools and project-pinned dependencies, and keep output concise.
@@ -18,6 +18,6 @@ Read this file and `REPO_MAP.md`. Check Git root, branch, HEAD and local changes
 ## Verification and delivery
 - Add permanent positive, negative, boundary and appropriate wire-level tests for each new behavior. Reuse existing unit/integration fixtures and process tests. Never alter application main files as temporary tests.
 - Build and execute tests only when authorized by the current task. Use the smallest relevant targets first. See README.md and cli/README.md for commands. Do not retry failures without diagnosis.
-- Inspect the complete scoped diff and run `git diff --check`. Record actual tests, source revision and limitations. Static review and codec tests cannot establish runtime or independent-peer conformance.
+- Inspect the complete scoped diff and run `git -c core.whitespace=cr-at-eol diff --check`. Record implementation and evidence status only in the workbook, including tested SHA, exact commands and wire/receiver observations. Static review and codec tests cannot establish runtime or independent-peer conformance. Keep STM32H743/FreeRTOS acceptance deferred until target integration.
 - For completed, verified source changes, stage only reviewed task files, commit clearly and push to origin/develop when authorized. Verify the remote tip. Preserve local commits and report PUSH_FAILED if needed.
 - Explicit task restrictions override this workflow. Never commit secrets, reference PDFs, binaries or temporary outputs. Never force push or destructively reset/clean the workspace.

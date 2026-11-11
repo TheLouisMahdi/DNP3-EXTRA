@@ -30,8 +30,9 @@ class CatalogTests(unittest.TestCase):
     def test_not_run_campaign_is_sealed_and_keeps_all_requirements(self):
         with tempfile.TemporaryDirectory(prefix="dnp3-acceptance-infra-") as folder:
             root = Path(folder) / "runs with spaces"
+            scenario = "AT-CFG-09-PULSE-ON"
             args = [sys.executable, "-B", str(TOOLS / "RunDnp3Acceptance.py"), "--scenario",
-                    "AT-PROFILE-003-AS00", "--seed", "9", "--artifact-root", str(root)]
+                    scenario, "--seed", "9", "--artifact-root", str(root)]
             for _ in range(2):
                 result = subprocess.run(args, timeout=30, capture_output=True, check=False)
                 self.assertEqual(result.returncode, 3, result.stderr.decode(errors="replace"))
@@ -45,8 +46,8 @@ class CatalogTests(unittest.TestCase):
                     self.assertEqual(len(list(csv.DictReader(file))), 448)
                 self.assertTrue((run / "summary.md").is_file())
                 self.assertTrue(all(row["campaign_status"] == "NOT_RUN" for row in summary))
-                report = json.loads((run / "scenarios/AT-PROFILE-003-AS00/V1/scenario.json").read_text(encoding="utf-8"))
-                self.assertEqual(report["status"], "NOT_RUN")
+                report = json.loads((run / "scenarios" / scenario / "V1/scenario.json").read_text(encoding="utf-8"))
+                self.assertEqual((report["status"], report["reason"]), ("NOT_RUN", "NO_EXECUTABLE_BINDING"))
                 self.assertIn("-Seed 9", report["reproduction"])
                 seal = json.loads((run / "sealed.json").read_text(encoding="utf-8"))
                 self.assertIn("requirements.csv", seal["sha256"])
@@ -54,12 +55,13 @@ class CatalogTests(unittest.TestCase):
     def test_external_gate_is_blocked_without_binding_or_pass(self):
         with tempfile.TemporaryDirectory(prefix="dnp3-acceptance-infra-") as folder:
             root = Path(folder) / "runs"
+            scenario = "AT-CFG-03-PRODUCT"
             result = subprocess.run([sys.executable, "-B", str(TOOLS / "RunDnp3Acceptance.py"),
-                                     "--scenario", "AT-CFG-09-PULSE-ON", "--artifact-root", str(root)],
+                                     "--scenario", scenario, "--artifact-root", str(root)],
                                     timeout=30, capture_output=True, check=False)
             self.assertEqual(result.returncode, 3)
             run, = root.iterdir()
-            path = run / "scenarios/AT-CFG-09-PULSE-ON/V1/scenario.json"
+            path = run / "scenarios" / scenario / "V1/scenario.json"
             row = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual((row["status"], row["reason"]), ("BLOCKED", "EXTERNAL_POLICY"))
 

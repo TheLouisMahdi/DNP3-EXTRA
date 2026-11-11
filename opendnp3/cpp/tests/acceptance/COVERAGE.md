@@ -2,7 +2,7 @@
 
 448 original scenario IDs, 54 requirements. 258 Host scenarios have executable bindings (457 vectors). 183 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
-A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the exact binding, vectors, independent golden values and sources. An executable binding is an implementation inventory entry. See the delivery report for the limited Linux execution sample.
+A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
 | Requirement | Executable suffixes | Pending Host suffixes | External suffixes |
 | --- | --- | --- | --- |

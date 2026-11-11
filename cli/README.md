@@ -184,46 +184,17 @@ ECDHE names under TLS 1.3. This console uses separate settings as defined by
 [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446.html) and verifies peer identity
 through [OpenSSL verification parameters](https://docs.openssl.org/master/man3/X509_VERIFY_PARAM_set1_host/).
 
-## Windows acceptance evidence
+## Acceptance and release archive
 
-Baseline `33d7994ae551e4f3b30b7ddfb894e59c6b9e336d` passed 714 unit cases /
-59,048 assertions and the two SA TCP cases / 240 assertions before edits.
-The final Release build (MSVC 17.14, OpenSSL 3.6.5) and CTest both exited **0**.
-All **8 CTest entries** passed:
+Use the [acceptance runbook](../tools/ACCEPTANCE-RUNBOOK.md) to run focused
+Host scenarios. Record the tested revision, command, peer and observed
+result in the [canonical workbook](../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
-| Suite | Result |
-| --- | --- |
-| Complete unit suite | 714 cases / 59,048 assertions |
-| Complete integration suite, including existing SA TCP | 12 cases / 241 assertions |
-| ASIO, including original self-signed and CA TLS tests | 7 cases / 105 assertions |
-| Independent-process Windows scenarios | 5 / 5: compatibility, Method 4, Method 68, denials, TLS |
+The Windows x64 release archive includes the executable, its OpenSSL runtime
+DLLs, this guide, process driver, licenses and REVISION.txt. Extract it before
+launching both terminals. Provision credentials and certificates separately.
 
-An isolated Windows Ctrl+C check also exited 0 while stdin remained open.
-Legacy non-SA integration fixtures explicitly select compatibility; their
-original security-default mismatch is not addressed by weakening the library
-default or bypassing authentication. The listener smoke check is bounded and
-asserts both shutdown calls completed.
-
-| Surface | Locally verified | Remaining boundary |
-| --- | --- | --- |
-| Measurements/classes/controls | Live binary, double-bit, analog and counter updates, static READ, class 0–3/integrity, timed events, class assignment, unsolicited delivery, CROB and G41 controls, output readback | Tests exercise selected variations; no claim that every profile row was independently verified. |
-| Attributes/time/IIN | G0V210 values 0/18, V254/V255 discovery, V209 request-error response, G50V1, native time sync | G0V209 unadvertised; no arbitrary time WRITE or remote cold/warm restart in the simulated Outstation. |
-| SA and remote keys | Native Session Key readiness, C/R and Aggressive metadata with actual control completions; G120V10–V15 for Methods 4/68, ADD/CHANGE/DELETE, role and application denials, G121/G122, reconnect and durable process restart | CLI remote provisioning is TEST-only. Existing Catch coverage supplies replay, invalid MAC, malformed G120, expiry and interrupted exchange assertions; no independent device conformance run. |
-| TLS | Mutual TLS 1.2/1.3 on 19999, SAN and CA verification, reconnect, SA over TLS, wrong identity, untrusted server/client, expiry, invalid cipher/suite and missing material rejection | Product TLS 1.3 naming conflict, certificate revocation/rotation scheduling and cipher-change timeout remain open. |
-
-These surfaces reuse the existing IEEE 1815-2012 contracts: §5.5 for attributes;
-§7.5 and Annex A.45 for SA and remote keys; Table 7-6 and §11.9.10 for security
-statistics. See the existing profile and remote-update reports for qualifiers,
-role/expiry rules and OPEN decisions. No generated object or protocol state
-machine was changed. `IStack::GetAuthenticationStatus` adds a source-compatible
-virtual diagnostic method; rebuild binary consumers of the library.
-
-The Windows x64 release archive contains the tested executable, its two OpenSSL
-runtime DLLs, this README, process driver, licenses and `REVISION.txt` (Git SHA,
-binary hashes and exact source file manifest). It contains no credentials or
-certificates. Extract the archive before launching both terminals.
-
-### Optional TLS handshake CRL checks (implementation pending Windows verification)
+### Optional TLS handshake CRL checks
 
 Supply `--crl <issuer-crls.pem>` to each TLS role together with its CA bundle.
 When configured, OpenSSL checks the peer certificate chain against the issuer
@@ -233,8 +204,8 @@ loaded at TLS context creation; changes require a new context. Existing
 connections are not rechecked. Periodic renewal, revocation interval and
 already-open connection handling remain product decisions (SEC-T1-15).
 
-This feature has not yet been built or tested on Windows. See
-`WINDOWS_TEST_TITLES.md` for the deferred test plan.
+For the selected revocation lifecycle and scoped evidence, see SEC-T1-15 in the
+[canonical workbook](../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
 ### Diagnostic application fragment buffers
 
@@ -276,21 +247,18 @@ settings. The Master sends CLOSE (`0x41`) for `crob on` and TRIP (`0x81`)
 for `crob off`. Counter and frozen-counter points and event capacities
 are disabled in this mode.
 
-The diagnostic Outstation accepts those CROBs only at explicitly configured
-simulated Complementary Latch points. In an SA-enabled RTU Outstation with
-`--test-only`, pass `--rtu-crob-latch <index>` once per point in `0..9`.
-Each latch starts inhibited. At the Outstation console, use
+In an SA-enabled RTU Outstation with `--test-only`, configure a simulated
+Complementary point with `--rtu-crob-latch <index>` or
+`--rtu-crob-two-output <index>:<pulse-ms>`. Use each index in `0..9` once.
+Points start inhibited. At the Outstation console, use
 `crob-interlock <index> allow` to permit controls or
-`crob-interlock <index> block` to inhibit them. SELECT checks permission,
-and OPERATE rechecks it before updating the simulated output.
-The configured latch retains its ON/OFF state until changed by another
-accepted control.
+`crob-interlock <index> block` to inhibit them. SELECT checks permission
+and OPERATE rechecks it before actuation. Latch points retain their state.
+Two-output points use the configured pulse duration.
 
-The Device Profile selects Pulse On = Sometimes. Approved D-07 also
-includes Two-output Complementary points and explicitly enabled Activation
-points. Their pulse timing and remaining acceptance work are separate
-development slices. This test-only latch fixture does not establish
-production point assignments, physical interlocks or safe pulse durations.
+The Device Profile selects Pulse On = Sometimes. D-07 in the workbook
+defines the selected Activation behavior. The diagnostic point options
+above simulate Complementary points only.
 
 The selected RTU default for analog events is G32V5 (float32 without time);
 generic diagnostics retain G32V7. In RTU mode, the unselected G41V4

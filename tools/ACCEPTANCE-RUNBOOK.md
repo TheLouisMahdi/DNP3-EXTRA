@@ -1,37 +1,6 @@
 # DNP3-EXTRA automated acceptance
 
-The catalog has 448 scenarios across 54 requirements. See [coverage](../opendnp3/cpp/tests/acceptance/COVERAGE.md) for executable bindings, pending Host scenarios and external gates. Campaign results describe the tested source and binaries. Contractual statuses remain in the project coverage records.
-
-## Install once
-
-Use PowerShell 7 and a clean repository without Phase 0 installed. Save `DNP3-54-AUTOMATED-ACCEPTANCE.patch` directly on the Desktop. This procedure resolves redirected Desktop locations through Windows.
-
-```powershell
-$ErrorActionPreference = 'Stop'
-$desktop = [Environment]::GetFolderPath('Desktop')
-$repo = Join-Path $desktop 'DNP3-EXTRA'
-$patch = Join-Path $desktop 'DNP3-54-AUTOMATED-ACCEPTANCE.patch'
-
-if (-not (Test-Path -LiteralPath $repo -PathType Container)) { throw "Repository not found: $repo" }
-if (-not (Test-Path -LiteralPath $patch -PathType Leaf)) { throw "Patch not found: $patch" }
-
-Set-Location -LiteralPath $repo
-$expected = '64f6f932ed9f386a81275bcc65119ceb708d5b05'
-$head = & git rev-parse HEAD
-if ($LASTEXITCODE -ne 0) { throw 'Cannot read repository HEAD.' }
-$actual = ($head | Out-String).Trim()
-if ($actual -ne $expected) { throw "Repository HEAD mismatch: $actual" }
-$changes = @(& git status --porcelain=v1)
-if ($LASTEXITCODE -ne 0 -or $changes.Count -gt 0) { throw 'Working tree is not clean. No changes applied.' }
-
-git apply --check --whitespace=error $patch
-if ($LASTEXITCODE -ne 0) { throw 'Patch validation failed.' }
-git apply --whitespace=error $patch
-if ($LASTEXITCODE -ne 0) { throw 'Patch application failed.' }
-git diff --check
-if ($LASTEXITCODE -ne 0) { throw 'Applied patch has whitespace errors.' }
-Write-Host 'Unified acceptance patch applied successfully.'
-```
+The catalog has 448 scenarios across 54 requirements. See [coverage](../opendnp3/cpp/tests/acceptance/COVERAGE.md) for executable bindings, pending Host scenarios and external gates. Campaign results describe the tested source and binaries. Record contractual implementation and verification status in the [canonical workbook](../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
 ## Run from the repository root
 

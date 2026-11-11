@@ -74,15 +74,13 @@ Path aliases: `src/` = `opendnp3/cpp/lib/src/`; `api/` = `opendnp3/cpp/lib/inclu
 - `tests/asiotests/` → executor, socket and TLS tests.
 - `tests/dnp3mocks/` → reusable fixtures; `tests/fuzz/` → parser fuzz targets.
 - `cli/tests/ProcessSmoke.py` → process scenarios: compatibility, Methods 4/68, denial, renewal, reply timeout and TLS.
-- `DNP3-AUTOTEST-KIT/TEST_CASES.json`, `FREEBUFF_TEST_GUIDE.md` → acceptance case index/guide (same directory).
+- `opendnp3/cpp/tests/acceptance/DNP3-54-TEST-MATRIX.csv`, `phase0.json` → Host scenario catalog, golden vectors and executable bindings (same directory).
+- `tools/ACCEPTANCE-RUNBOOK.md` → run selected Host scenarios and collect evidence.
 
 ## Requirements and Evidence
 
 - `AGENTS.md` → engineering and verification rules.
-- `DNP3_PDD_PLAN/DNP3_REFERENCE_119.csv` → first lookup for the 119 selected requirements, exact wire cases and evidence boundaries.
-- `DNP3_PDD_PLAN/DNP3_REFERENCE_WIRE_PROCEDURES.csv` and `IEEE_REFERENCE_OPEN_DECISIONS.md` → linked procedures and engineering dispositions.
-- `DNP3_PDD_PLAN/DNP3_REFERENCE_USAGE.md` → editable workbook and export workflow. Consult the cited PDF pages for unresolved source questions.
-- `DNP3_PDD_PLAN/WINDOWS_HOST_ROADMAP.md` and `EXECUTION_PHASE_STATUS.md` → implementation and executed evidence at their recorded revisions.
+- `DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx` → filter `IMPLEMENTATION_INDEX` by ID. Follow `WIRE_PROCEDURES`, `OPEN_DECISIONS` and `SOURCES` for exact wire behavior, decision authority and page anchors. Record implementation and execution evidence in the workbook.
 
 ## Dependency Flow
 
