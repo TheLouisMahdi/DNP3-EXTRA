@@ -1402,6 +1402,8 @@ TEST_CASE("AT-PROFILE-041-NEG", "[rtu-acceptance]")
     if (Selected("V2")) InvalidRestartResponse("34 01 07 00");
     if (Selected("V3")) InvalidRestartResponse("34 01 07 02 34 12 78 56");
     if (Selected("V4")) InvalidRestartResponse("34 01 07 01 34");
+    if (Selected("V5")) RejectRestartPayload(true);
+    if (Selected("V6")) RejectDelayVariation();
 }
 
 TEST_CASE("AT-PROFILE-042-RESTART", "[rtu-acceptance]")
@@ -1416,6 +1418,8 @@ TEST_CASE("AT-PROFILE-042-NEG", "[rtu-acceptance]")
     if (Selected("V2")) InvalidRestartResponse("34 02 07 00");
     if (Selected("V3")) InvalidRestartResponse("34 02 07 02 34 12 78 56");
     if (Selected("V4")) InvalidRestartResponse("34 02 07 01 34");
+    if (Selected("V5")) RejectRestartPayload(false);
+    if (Selected("V6")) RejectDelayVariation();
 }
 
 TEST_CASE("AT-PROFILE-042-DELAY", "[rtu-acceptance]")

@@ -1263,6 +1263,37 @@ TEST_CASE(SUITE("Warm restart interprets coarse delay in seconds"))
     REQUIRE(queue.responses[0].restartTime == TimeDuration::Seconds(0xBBBB));
 }
 
+TEST_CASE("ProfileTime - restart delay holds this Master's requests until the deadline", "[profile-time]")
+{
+    const bool coarse = GENERATE(false, true);
+    const bool reconnect = GENERATE(false, true);
+    MasterTestFixture t(NoStartupTasks());
+    REQUIRE(t.context->OnLowerLayerUp());
+    CallbackQueue<RestartOperationResult> queue;
+    t.context->Restart(RestartType::COLD, queue.Callback());
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 0D");
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster(coarse ? "C0 81 00 00 34 01 07 01 02 00" : "C0 81 00 00 34 02 07 01 02 00"));
+    REQUIRE(queue.responses.size() == 1);
+    REQUIRE(queue.responses.front().summary == TaskCompletion::SUCCESS);
+    if (reconnect)
+    {
+        REQUIRE(t.context->OnLowerLayerDown());
+        REQUIRE(t.context->OnLowerLayerUp());
+    }
+
+    t.context->ScanClasses(ClassField::AllClasses(), t.meas, TaskConfig::Default());
+    t.exe->run_many();
+    REQUIRE(t.lower->HasNoData());
+    t.exe->advance_time(std::chrono::milliseconds(coarse ? 1999 : 1));
+    t.exe->run_many();
+    REQUIRE(t.lower->HasNoData());
+    t.exe->advance_time(std::chrono::milliseconds(1));
+    t.exe->run_many();
+    REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(reconnect ? 0 : 1));
+}
+
 TEST_CASE(SUITE("IntegrityPollOnBufferOverflowIIN"))
 {
     MasterParams params;

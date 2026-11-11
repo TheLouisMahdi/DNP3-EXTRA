@@ -1805,6 +1805,12 @@ void MContext::ServiceAuthentication()
         return;
     auto& auth = *authentication;
     auth.serviceTimer.cancel();
+    const auto holdoff = tasks.context->RequestsNotBefore();
+    if (executor->get_time() < holdoff.value)
+    {
+        auth.serviceTimer = executor->start(holdoff.value, [this]() { this->ServiceAuthentication(); });
+        return;
+    }
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
 

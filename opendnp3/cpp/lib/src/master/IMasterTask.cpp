@@ -49,7 +49,10 @@ IMasterTask::~IMasterTask()
 
 Timestamp IMasterTask::ExpirationTime() const
 {
-    return this->IsEnabled() ? this->behavior.GetExpiration() : Timestamp::Max();
+    if (!this->IsEnabled()) return Timestamp::Max();
+    const auto ready = this->behavior.GetExpiration();
+    const auto holdoff = this->context->RequestsNotBefore();
+    return ready < holdoff ? holdoff : ready;
 }
 
 Timestamp IMasterTask::StartExpirationTime() const

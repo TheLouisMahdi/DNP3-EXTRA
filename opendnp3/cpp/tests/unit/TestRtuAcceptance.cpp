@@ -675,6 +675,35 @@ void InvalidRestartResponse(const char* objects)
     REQUIRE(master.lower->PopWriteAsHex().empty());
 }
 
+void RejectRestartPayload(bool coarse)
+{
+    OutstationTestObject t(OutstationConfig{});
+    t.application->coldRestartSupport = coarse ? RestartMode::SUPPORTED_DELAY_COARSE : RestartMode::SUPPORTED_DELAY_FINE;
+    t.application->coldRestartTimeDelay = 0x1234;
+    t.LowerLayerUp();
+    const std::string delay = coarse ? "34 01 07 01 34 12" : "34 02 07 01 34 12";
+    CheckFrame("invalid_restart", Request(t, ("C0 0D " + delay).c_str()), "C0 81 80 04");
+    Observe("invalid_restart_calls", t.application->coldRestartCalls);
+    REQUIRE(t.application->coldRestartCalls == 0);
+    const auto good = "C1 81 80 00 " + delay;
+    CheckFrame("valid_restart", Request(t, "C1 0D"), good.c_str());
+    Observe("valid_restart_calls", t.application->coldRestartCalls);
+    REQUIRE(t.application->coldRestartCalls == 1);
+}
+
+void RejectDelayVariation()
+{
+    MockLogHandler log;
+    TimeSyncHandler handler;
+    const HexSequence bytes("34 01 07 01 34 12");
+    const auto result = APDUParser::Parse(bytes.ToRSeq(), handler, &log.logger);
+    uint16_t delay = 0xFFFF;
+    const bool rejected = result != ParseResult::OK || !handler.GetTimeDelay(delay);
+    Observe("coarse_delay_rejected", rejected);
+    REQUIRE(rejected);
+    REQUIRE(delay == 0xFFFF);
+}
+
 void SecurityStatistics(const char* response, const char* truncated, uint16_t index)
 {
     auto params = NoStartupTasks();

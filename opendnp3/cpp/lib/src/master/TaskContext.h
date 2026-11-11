@@ -20,6 +20,7 @@
 #ifndef OPENDNP3_TASKCONTEXT_H
 #define OPENDNP3_TASKCONTEXT_H
 
+#include "opendnp3/util/Timestamp.h"
 #include "opendnp3/util/Uncopyable.h"
 
 #include <set>
@@ -39,6 +40,7 @@ class IMasterTask; // break circular dependency
 class TaskContext : private Uncopyable
 {
     std::set<const IMasterTask*> blocking_tasks;
+    Timestamp restartHoldoff = Timestamp::Min();
 
 public:
     void AddBlock(const IMasterTask& task);
@@ -46,6 +48,9 @@ public:
     void RemoveBlock(const IMasterTask& task);
 
     bool IsBlocked(const IMasterTask& task) const;
+
+    void HoldRequestsUntil(Timestamp deadline) { restartHoldoff = deadline; }
+    Timestamp RequestsNotBefore() const { return restartHoldoff; }
 };
 
 } // namespace opendnp3

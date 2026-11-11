@@ -1,6 +1,22 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-041-RESTART": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-041-NEG": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
+    },
+    "AT-PROFILE-042-RESTART": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-042-NEG": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
+    },
     "AT-PROFILE-039-NEG": {
       "kind": "unit",
       "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
@@ -1854,6 +1870,160 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-041-RESTART/V1": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Master receives delay after exactly one Outstation restart hook",
+      "input_hex": "C0 0D",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "C0 81 80 00 34 01 07 01 34 12"],
+        ["restart_calls", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["delay_ms", "receiver", "STATE", "MASTER", 4660000, 0, 4294967295]
+      ]
+    },
+    "AT-PROFILE-041-RESTART/V2": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Master receives delay after exactly one Outstation restart hook",
+      "input_hex": "C0 0E",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0E"],
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "C0 81 80 00 34 01 07 01 34 12"],
+        ["restart_calls", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["delay_ms", "receiver", "STATE", "MASTER", 4660000, 0, 4294967295]
+      ]
+    },
+    "AT-PROFILE-041-NEG/V1": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 01 08 01 00 34 12",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-041-NEG/V2": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 01 07 00",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-041-NEG/V3": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 01 07 02 34 12 78 56",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-041-NEG/V4": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 01 07 01 34",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-041-NEG/V5": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "G52 is response-only in the restart procedure",
+      "input_hex": "C0 0D 34 01 07 01 34 12",
+      "checks": [
+        ["invalid_restart", "frame", "SERIALIZER", "OUTSTATION", "C0 81 80 04"],
+        ["invalid_restart_calls", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["valid_restart", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00 34 01 07 01 34 12"],
+        ["valid_restart_calls", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-041-NEG/V6": {
+      "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Coarse delay is invalid for DELAY_MEASURE",
+      "input_hex": "C0 81 00 00 34 01 07 01 34 12",
+      "checks": [
+        ["coarse_delay_rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-042-RESTART/V1": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Master receives delay after exactly one Outstation restart hook",
+      "input_hex": "C0 0D",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "C0 81 80 00 34 02 07 01 34 12"],
+        ["restart_calls", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["delay_ms", "receiver", "STATE", "MASTER", 4660, 0, 4294967295]
+      ]
+    },
+    "AT-PROFILE-042-RESTART/V2": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Master receives delay after exactly one Outstation restart hook",
+      "input_hex": "C0 0E",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0E"],
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "C0 81 80 00 34 02 07 01 34 12"],
+        ["restart_calls", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["delay_ms", "receiver", "STATE", "MASTER", 4660, 0, 4294967295]
+      ]
+    },
+    "AT-PROFILE-042-NEG/V1": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 02 08 01 00 34 12",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-042-NEG/V2": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 02 07 00",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-042-NEG/V3": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 02 07 02 34 12 78 56",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-042-NEG/V4": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Malformed restart response is rejected",
+      "input_hex": "C0 81 00 00 34 02 07 01 34",
+      "checks": [
+        ["request", "frame", "SERIALIZER", "MASTER", "C0 0D"],
+        ["rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-042-NEG/V5": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "G52 is response-only in the restart procedure",
+      "input_hex": "C0 0D 34 02 07 01 34 12",
+      "checks": [
+        ["invalid_restart", "frame", "SERIALIZER", "OUTSTATION", "C0 81 80 04"],
+        ["invalid_restart_calls", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["valid_restart", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00 34 02 07 01 34 12"],
+        ["valid_restart_calls", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-042-NEG/V6": {
+      "reference": "Annex A.25.2; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
+      "description": "Coarse delay is invalid for DELAY_MEASURE",
+      "input_hex": "C0 81 00 00 34 01 07 01 34 12",
+      "checks": [
+        ["coarse_delay_rejected", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
     "AT-PROFILE-039-NEG/V1": {
       "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
       "description": "Zero CTO quantity",

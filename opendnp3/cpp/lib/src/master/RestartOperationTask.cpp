@@ -91,7 +91,7 @@ IMasterTask::ResponseResult RestartOperationTask::ProcessResponse(const APDUResp
 
     auto result = APDUParser::Parse(objects, *this, &logger);
 
-    return (result == ParseResult::OK) ? ResponseResult::OK_FINAL : ResponseResult::ERROR_BAD_RESPONSE;
+    return (result == ParseResult::OK && !this->Errors().Any()) ? ResponseResult::OK_FINAL : ResponseResult::ERROR_BAD_RESPONSE;
 }
 
 IINField RestartOperationTask::ProcessHeader(const CountHeader& /*header*/, const ICollection<Group52Var1>& values)
@@ -123,16 +123,11 @@ FunctionCode RestartOperationTask::ToFunctionCode(RestartType op)
     return (op == RestartType::COLD) ? FunctionCode::COLD_RESTART : FunctionCode::WARM_RESTART;
 }
 
-void RestartOperationTask::OnTaskComplete(TaskCompletion result, Timestamp /*now*/)
+void RestartOperationTask::OnTaskComplete(TaskCompletion result, Timestamp now)
 {
-    if (this->Errors().Any())
-    {
-        this->callback(RestartOperationResult(TaskCompletion::FAILURE_BAD_RESPONSE, this->duration));
-    }
-    else
-    {
-        this->callback(RestartOperationResult(result, this->duration));
-    }
+    if (result == TaskCompletion::SUCCESS)
+        this->context->HoldRequestsUntil(now + this->duration);
+    this->callback(RestartOperationResult(result, this->duration));
 }
 
 } // namespace opendnp3
