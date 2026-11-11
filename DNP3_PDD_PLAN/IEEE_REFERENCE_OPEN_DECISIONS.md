@@ -97,6 +97,7 @@ Project-owner direction: implement selected requirements according to IEEE 1815-
 - **Decision state:** `DISPOSITION_RECORDED`
 - **External/deployment gate (if any):** `PRODUCT_OR_CONTRACT_DECISION`
 - **Remaining evidence or factual variance:** Physical interlocks and actuator parameters outside Host.
+- **2026-11-11 Host overlap policy:** Owner approved Reject While Active for the Windows Host simulation. While either CLOSE or TRIP is active, SELECT, OPERATE, DIRECT_OPERATE and DIRECT_OPERATE_NO_ACK reject another otherwise valid command with `ALREADY_ACTIVE`; the active drive, deadline and execution count remain unchanged. After expiry, a fresh authorized command is permitted. This decision does not specify behavior for an energized physical output on network loss; hardware overlap policy and hardware acceptance remain unresolved.
 - **2026-11-10 reference gate:** Tavanir original PDF physical p3 explicitly says Pulse On = Sometimes. The historical Drive PDF_SCOPE.md Never wording is incorrect; use the selected PDF and this reference.
 
 ## D-08 - Timed binary event variation policy / explanation missing

@@ -271,17 +271,26 @@ remains 16-bit headers. Pass `--control-q17` on the master to select
 
 ### RTU I/O profile for the diagnostic peers
 
-Pass --rtu-io-profile to both peers to exercise the selected control and
-counter settings (device-profile PDF pp. 3–4). The master sends CLOSE (0x41)
-for crob on and TRIP (0x81) for crob off. The outstation simulates a
-complementary latch and accepts only these CROB codes with count 1, for
-SELECT, OPERATE, DIRECT_OPERATE and DIRECT_OPERATE_NO_ACK. Counter and
-frozen-counter points and event capacities are disabled in this mode.
+Pass `--rtu-io-profile` to both peers to exercise the selected I/O
+settings. The Master sends CLOSE (`0x41`) for `crob on` and TRIP (`0x81`)
+for `crob off`. Counter and frozen-counter points and event capacities
+are disabled in this mode.
 
-The Device Profile selects Trip/Close Always and Pulse On Sometimes (not
-Never). Its missing Pulse On enablement explanation is an open product decision;
-the above simulation accepts one possible CROB encoding without proving that
-the contractual control policy has been finalized.
+The diagnostic Outstation accepts those CROBs only at explicitly configured
+simulated Complementary Latch points. In an SA-enabled RTU Outstation with
+`--test-only`, pass `--rtu-crob-latch <index>` once per point in `0..9`.
+Each latch starts inhibited. At the Outstation console, use
+`crob-interlock <index> allow` to permit controls or
+`crob-interlock <index> block` to inhibit them. SELECT checks permission,
+and OPERATE rechecks it before updating the simulated output.
+The configured latch retains its ON/OFF state until changed by another
+accepted control.
+
+The Device Profile selects Pulse On = Sometimes. Approved D-07 also
+includes Two-output Complementary points and explicitly enabled Activation
+points. Their pulse timing and remaining acceptance work are separate
+development slices. This test-only latch fixture does not establish
+production point assignments, physical interlocks or safe pulse durations.
 
 The selected RTU default for analog events is G32V5 (float32 without time);
 generic diagnostics retain G32V7. In RTU mode, the unselected G41V4

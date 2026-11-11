@@ -35,6 +35,8 @@
 #include <ser4cpp/serialization/LittleEndian.h>
 #include "app/MeasurementFactory.h"
 #include "app/WriteConversions.h"
+#include <cstring>
+#include <limits>
 
 using namespace ser4cpp;
 
@@ -115,12 +117,18 @@ Group41Var3::Group41Var3() : value(0.0), status(0)
 
 bool Group41Var3::Read(rseq_t& buffer, Group41Var3& output)
 {
-  return LittleEndian::read(buffer, output.value, output.status);
+  static_assert(sizeof(float) == sizeof(uint32_t) && std::numeric_limits<float>::is_iec559, "G41V3 requires IEEE 754 binary32");
+  uint32_t bits = 0;
+  if (!LittleEndian::read(buffer, bits, output.status)) return false;
+  std::memcpy(&output.value, &bits, sizeof(bits));
+  return true;
 }
 
 bool Group41Var3::Write(const Group41Var3& arg, ser4cpp::wseq_t& buffer)
 {
-  return LittleEndian::write(buffer, arg.value, arg.status);
+  uint32_t bits = 0;
+  std::memcpy(&bits, &arg.value, sizeof(bits));
+  return LittleEndian::write(buffer, bits, arg.status);
 }
 
 bool Group41Var3::ReadTarget(rseq_t& buff, AnalogOutputFloat32& output)

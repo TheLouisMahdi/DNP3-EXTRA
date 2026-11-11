@@ -1,6 +1,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #ifndef DNP3_CLI_SECURITY_H
 #define DNP3_CLI_SECURITY_H
+#include <array>
+#include <bitset>
 #include <opendnp3/app/AppConstants.h>
 #include <opendnp3/auth/AuthenticationConfig.h>
 #include <opendnp3/auth/UpdateKeyConfig.h>
@@ -26,6 +28,9 @@ struct Options
     bool unsolicited = false, trace = false, tls = false;
     bool commandEvents = false;
     bool rtuIoProfile = false;
+    std::bitset<10> rtuCrobLatches;
+    std::bitset<10> rtuCrobTwoOutputs;
+    std::array<uint32_t, 10> rtuCrobTwoOutputPulseMs{};
     bool expiredTestCertificate = false, selfSignedTestCertificate = false;
 };
 Options ParseOptions(int argc, char** argv);

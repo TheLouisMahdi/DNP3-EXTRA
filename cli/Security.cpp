@@ -365,6 +365,39 @@ Options ParseOptions(int argc, char** argv)
         else if (option == "--reply-ms") o.replyMs = Number(value, 120000);
         else if (option == "--renewal-ms") o.renewalMs = Number(value, 7200000);
         else if (option == "--message-count") o.messageCount = Number(value, 0xFFFFFFFF);
+        else if (option == "--rtu-crob-latch")
+        {
+            const auto index = Number(value, static_cast<uint32_t>(o.rtuCrobLatches.size() - 1));
+            if (o.rtuCrobTwoOutputs.test(index))
+                throw std::runtime_error("Conflicting CROB models for point");
+            if (o.rtuCrobLatches.test(index))
+                throw std::runtime_error("Duplicate --rtu-crob-latch index");
+            o.rtuCrobLatches.set(index);
+        }
+        else if (option == "--rtu-crob-two-output")
+        {
+            const auto separator = value.find(':');
+            if (separator == std::string::npos ||
+                value.find(':', separator + 1) != std::string::npos)
+                throw std::runtime_error("Expected --rtu-crob-two-output <index>:<pulse-ms>");
+            uint32_t index = 0;
+            uint32_t pulseMs = 0;
+            try
+            {
+                index = Number(value.substr(0, separator), 9);
+                pulseMs = PositiveMilliseconds(value.substr(separator + 1));
+            }
+            catch (const std::invalid_argument&)
+            {
+                throw std::runtime_error("Invalid --rtu-crob-two-output index or pulse duration");
+            }
+            if (o.rtuCrobLatches.test(index))
+                throw std::runtime_error("Conflicting CROB models for point");
+            if (o.rtuCrobTwoOutputs.test(index))
+                throw std::runtime_error("Duplicate --rtu-crob-two-output index");
+            o.rtuCrobTwoOutputs.set(index);
+            o.rtuCrobTwoOutputPulseMs[index] = pulseMs;
+        }
         else if (option == "--auth") o.auth = value;
         else if (option == "--profile") o.profile = value;
         else if (option == "--credentials") o.credentials = value;
@@ -392,6 +425,9 @@ Options ParseOptions(int argc, char** argv)
         throw std::runtime_error("--crl requires a TLS master or outstation");
     if (o.rtuIoProfile && o.role != "master" && o.role != "outstation")
         throw std::runtime_error("--rtu-io-profile requires master or outstation");
+    if ((o.rtuCrobLatches.any() || o.rtuCrobTwoOutputs.any()) &&
+        (o.role != "outstation" || !o.rtuIoProfile || !o.testOnly || o.auth == "compat"))
+        throw std::runtime_error("RTU CROB models require an RTU outstation, --test-only and SA");
     if (o.linkRetries && o.linkConfirmMode == LinkConfirmMode::Never)
         throw std::runtime_error("Nonzero --link-retries requires a confirmed link mode");
     if (o.unsolRetries && !o.unsolicited)

@@ -185,6 +185,79 @@ TEST_CASE("ProfileControls - exact SELECT retry does not restart the timer and t
     }
 }
 
+TEST_CASE("ProfileControls - G41 OPERATE rejects changed qualifier or point and consumes selection",
+          "[profile-controls][g41-selection-match]")
+{
+    const auto type = GENERATE(1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    const bool changeQualifier = GENERATE(false, true);
+
+    CAPTURE(type, wide, changeQualifier);
+
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+
+    auto body = [&](bool useWide, uint8_t index, uint8_t status = 0) {
+        const auto original = Body(type, false, status);
+
+        const auto prefix = useWide
+            ? std::string("28 01 00 ") + Byte(index) + " 00 "
+            : std::string("17 01 ") + Byte(index) + " ";
+
+        return original.substr(0, 6) + prefix + original.substr(15);
+    };
+
+    const auto selected = body(wide, 3);
+
+    const bool operateWide = changeQualifier ? !wide : wide;
+    const uint8_t operateIndex = changeQualifier ? 3 : 4;
+
+    const auto mismatch = body(operateWide, operateIndex);
+    const auto rejected = body(operateWide, operateIndex, 2);
+
+    REQUIRE(selected != mismatch);
+
+    REQUIRE(Exchange(t, "C0 03 " + selected)
+            == "C0 81 80 00 " + selected);
+
+    REQUIRE(t.cmdHandler->NumSelect() == 1);
+    REQUIRE(t.cmdHandler->NumOperate() == 0);
+
+    REQUIRE(Exchange(t, "C1 04 " + mismatch)
+            == "C1 81 80 00 " + rejected);
+
+    REQUIRE(t.cmdHandler->NumSelect() == 1);
+    REQUIRE(t.cmdHandler->NumOperate() == 0);
+
+    // Keep the original expected application sequence.
+    // Corrected object bytes must not revive a consumed SELECT.
+    REQUIRE(Exchange(t, "C1 04 " + selected)
+            == "C1 81 80 00 " + body(wide, 3, 2));
+
+    REQUIRE(t.cmdHandler->NumSelect() == 1);
+    REQUIRE(t.cmdHandler->NumOperate() == 0);
+
+    // A fresh SELECT must restore normal operation.
+    REQUIRE(Exchange(t, "C2 03 " + selected)
+            == "C2 81 80 00 " + selected);
+
+    REQUIRE(t.cmdHandler->NumSelect() == 2);
+    REQUIRE(t.cmdHandler->NumOperate() == 0);
+
+    REQUIRE(Exchange(t, "C3 04 " + selected)
+            == "C3 81 80 00 " + selected);
+
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+    REQUIRE(t.cmdHandler->numStart == t.cmdHandler->numEnd);
+
+    if (type == 1)
+        REQUIRE(t.cmdHandler->aoInt32Ops.back().index == 3);
+    else if (type == 2)
+        REQUIRE(t.cmdHandler->aoInt16Ops.back().index == 3);
+    else
+        REQUIRE(t.cmdHandler->aoFloat32Ops.back().index == 3);
+}
+
 TEST_CASE("ProfileControls - CRC collision cannot substitute a different OPERATE", "[profile-controls]")
 {
     HexSequence first(collisionA), second(collisionB);

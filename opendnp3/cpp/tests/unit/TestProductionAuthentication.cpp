@@ -2923,19 +2923,36 @@ TEST_CASE("ProductionAuthentication - Code 7 cannot cancel an indistinguishable 
     REQUIRE(value.macAlgorithm == 4); // Code 7 must never select the Code 5 recovery path.
 }
 
+namespace
+{
+CommandSet FC6Commands(unsigned type, uint16_t index);
+}
+
 TEST_CASE("ProductionAuthentication - Code 7 distinguishes policy denial from OPERATE ownership failure",
-          "[production-sa][auth-error]")
+          "[production-sa][auth-error][g41-sa-owner]")
 {
     const bool aggressive = GENERATE(false, true);
     const bool denyPolicy = GENERATE(false, true);
-    const auto selection = GENERATE(0, 1, 2); // Missing SELECT, other user, same user with wrong app sequence.
+    const auto selection = GENERATE(0, 1, 2);
+    const auto type = GENERATE(0u, 1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    CAPTURE(aggressive, denyPolicy, selection, type, wide);
+
     auto observer = std::make_shared<RuntimeErrorObserver>();
-    RuntimePair pair(false, aggressive, false, nullptr, false, observer);
+    RuntimePair pair(false, aggressive, false, nullptr, false, observer,
+                     2, false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+
     pair.Pump();
     pair.outstation.application->SetTime(DNPTime(123456789));
-    // Complete a real SELECT/OPERATE to establish both users' session material,
-    // the Aggressive seed/sequence, and an empty current SELECT ownership.
-    pair.SelectOperate();
+
+    // Establish genuine authenticated SELECT/OPERATE and session history.
+    auto config = TaskConfig::Default();
+    config.authenticationUser = 2;
+    pair.master.context->SelectAndOperate(
+        FC6Commands(type, wide ? 0x1234 : 3),
+        pair.results.Callback(), config);
+    pair.master.exe->run_many();
     const auto select = pair.master.lower->PopWriteAsHex();
     REQUIRE(pair.master.context->OnTxReady());
     pair.outstation.SendToOutstation(select);
@@ -2944,6 +2961,11 @@ TEST_CASE("ProductionAuthentication - Code 7 distinguishes policy denial from OP
     HexSequence selected(select);
     std::vector<uint8_t> native(static_cast<const uint8_t*>(selected.ToRSeq()),
         static_cast<const uint8_t*>(selected.ToRSeq()) + selected.ToRSeq().length());
+    REQUIRE(native.size() >= 5);
+    REQUIRE(native[1] == 3);
+    REQUIRE(native[2] == (type == 0 ? 12 : 41));
+    REQUIRE(native[3] == (type == 0 ? 1 : type));
+    REQUIRE(native[4] == (wide ? 0x28 : 0x17));
     uint8_t appSequence = pair.master.context->solSeq.Get();
     MasterResponder responder(7, 16);
     std::array<uint8_t, 2048> wire{};
@@ -4319,6 +4341,297 @@ TEST_CASE("ProductionAuthentication - FC6 rejects invalid or unauthorized protec
     RequireLocalFC6Result(pair, TaskCompletion::SUCCESS);
 }
 
+TEST_CASE("ProductionAuthentication - disconnect while waiting for G41 OPERATE Reply discards the exchange",
+          "[production-sa][g41-sa-disconnect-pending-reply]")
+{
+    const auto variation = GENERATE(1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    CAPTURE(variation, wide);
+
+    const uint16_t index = wide ? 0x1234 : 3;
+
+    RuntimePair pair(false, false, false, nullptr, false, nullptr, 2,
+                     false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+
+    pair.Pump();
+    REQUIRE(pair.changes == 2);
+
+    const auto now =
+        ProductionAuthenticationTestAccess::Now(pair.outstation.context);
+
+    auto& session =
+        ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+
+    const MACPolicySessionSnapshot oldSession(session, now);
+
+    auto config = TaskConfig::Default();
+    config.authenticationUser = 2;
+
+    const auto submitSbo = [&]() {
+        pair.master.context->SelectAndOperate(
+            FC6Commands(variation, index),
+            pair.results.Callback(),
+            config);
+
+        pair.master.exe->run_many();
+    };
+
+    submitSbo();
+
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto selectWire = pair.master.lower->PopWriteAsHex();
+    HexSequence selectPacket(selectWire);
+    const auto select = selectPacket.ToRSeq();
+
+    REQUIRE(select.length() > 5);
+    REQUIRE(select[1] == 3);
+    REQUIRE(select[2] == 41);
+    REQUIRE(select[3] == variation);
+    REQUIRE(select[4] == (wide ? 0x28 : 0x17));
+    REQUIRE(select[select.length() - 1] == 0);
+
+    REQUIRE(pair.master.context->OnTxReady());
+
+    // Genuine SELECT Challenge and user-2 Reply.
+    const auto selectChallenge = ChallengeFC6(pair, selectWire);
+    const auto selectReply = ReplyFC6(pair, selectChallenge);
+
+    HexSequence selectReplyPacket(selectReply);
+    Group120Var2 selectedUser;
+
+    REQUIRE(selectedUser.Read(selectReplyPacket.ToRSeq().skip(8)));
+    REQUIRE(selectedUser.userNum == 2);
+
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(selectReply);
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+
+    // Authenticate the SELECT response so Master can issue OPERATE.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto selectResponseWire =
+        pair.outstation.lower->PopWriteAsHex();
+
+    HexSequence selectResponsePacket(selectResponseWire);
+    const auto selectResponse = selectResponsePacket.ToRSeq();
+
+    REQUIRE(selectResponse.length() >= 4);
+    REQUIRE(selectResponse[1] == 0x81);
+    REQUIRE((selectResponse[0] & 0x0F) == (select[0] & 0x0F));
+    REQUIRE(selectResponse.skip(4).equals(select.skip(2)));
+
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(selectResponseWire));
+    pair.master.exe->run_many();
+
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto monitoringChallenge =
+        pair.master.lower->PopWriteAsHex();
+
+    HexSequence monitoringPacket(monitoringChallenge);
+
+    REQUIRE(monitoringPacket.ToRSeq().length() >= 4);
+    REQUIRE(monitoringPacket.ToRSeq()[1] == 0x20);
+    REQUIRE(monitoringPacket.ToRSeq()[2] == 120);
+    REQUIRE(monitoringPacket.ToRSeq()[3] == 1);
+
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(monitoringChallenge);
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto monitoringReply =
+        pair.outstation.lower->PopWriteAsHex();
+
+    pair.outstation.OnTxReady();
+    REQUIRE(pair.master.SendToMaster(monitoringReply));
+    pair.master.exe->run_many();
+
+    // Deliver matching native OPERATE.
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto operateWire = pair.master.lower->PopWriteAsHex();
+    HexSequence operatePacket(operateWire);
+    const auto operate = operatePacket.ToRSeq();
+
+    REQUIRE(operate.length() > 5);
+    REQUIRE(operate[1] == 4);
+
+    const auto operateSequence =
+        ((select[0] & 0x0F) + 1) & 0x0F;
+
+    REQUIRE((operate[0] & 0x0F) == operateSequence);
+    REQUIRE(operate.skip(2).equals(select.skip(2)));
+
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(operateWire);
+
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+
+    // Outstation issues a genuine G120V1 Control Challenge.
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto operateChallengeWire =
+        pair.outstation.lower->PopWriteAsHex();
+
+    HexSequence operateChallengePacket(operateChallengeWire);
+    const auto challenge = operateChallengePacket.ToRSeq();
+
+    REQUIRE(challenge.length() >= 10);
+    REQUIRE(challenge[1] == 0x83);
+    REQUIRE((challenge[0] & 0x0F) == operateSequence);
+    REQUIRE(challenge[4] == 120);
+    REQUIRE(challenge[5] == 1);
+    REQUIRE(challenge[6] == 0x5B);
+
+    Group120Var1 challengeObject;
+
+    REQUIRE(challengeObject.Read(challenge.skip(10)));
+    REQUIRE(challengeObject.userNum == 0);
+    REQUIRE(challengeObject.reason == 1);
+
+    pair.outstation.OnTxReady();
+
+    // Generate the genuine G120V2, but do not deliver it.
+    const auto oldReplyWire =
+        ReplyFC6(pair, operateChallengeWire);
+
+    HexSequence oldReplyPacket(oldReplyWire);
+    const auto oldReply = oldReplyPacket.ToRSeq();
+
+    REQUIRE(oldReply.length() >= 8);
+    REQUIRE((oldReply[0] & 0x0F) == operateSequence);
+    REQUIRE(oldReply[4] == 0x5B);
+
+    Group120Var2 oldReplyObject;
+
+    REQUIRE(oldReplyObject.Read(oldReply.skip(8)));
+    REQUIRE(oldReplyObject.userNum == 2);
+    REQUIRE(oldReplyObject.seqNum == challengeObject.seqNum);
+
+    REQUIRE(pair.master.context->OnTxReady());
+
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(
+                pair.outstation.context)
+            == OutstationChallenger::State::WAITING_FOR_REPLY);
+
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+    REQUIRE(pair.results.values.empty());
+
+    // Disconnect while the original G120V2 remains undelivered.
+    REQUIRE(pair.master.context->OnLowerLayerDown());
+    pair.outstation.LowerLayerDown();
+
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(
+                pair.outstation.context)
+            == OutstationChallenger::State::NO_SESSION_KEYS);
+
+    REQUIRE(pair.results.values.size() == 1);
+
+    REQUIRE(pair.results.values.front().summary
+            == TaskCompletion::FAILURE_NO_COMMS);
+
+    pair.results.values.clear();
+
+    // Reconnect and negotiate replacement sessions.
+    pair.outstation.LowerLayerUp();
+    REQUIRE(pair.master.context->OnLowerLayerUp());
+
+    pair.master.exe->run_many();
+    pair.Pump();
+
+    REQUIRE(pair.changes == 4);
+
+    REQUIRE(ProductionAuthenticationTestAccess::Now(
+                pair.outstation.context) == now);
+
+    REQUIRE(ProductionAuthenticationTestAccess::SessionReady(
+        pair.outstation.context, 1));
+
+    REQUIRE(ProductionAuthenticationTestAccess::SessionReady(
+        pair.outstation.context, 2));
+
+    REQUIRE(session.IsReady(now));
+    REQUIRE(session.Sequence() != oldSession.sequence);
+
+    const auto freshKey = session.ControlKey(now);
+
+    REQUIRE(freshKey.length() == oldSession.control.size());
+
+    REQUIRE_FALSE(crypto::ConstantTimeEqual(
+        freshKey,
+        rseq_t(oldSession.control.data(), oldSession.control.size())));
+
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(
+                pair.outstation.context)
+            == OutstationChallenger::State::IDLE);
+
+    REQUIRE(ProductionAuthenticationTestAccess::AcceptedChallenge(
+                pair.outstation.context).is_empty());
+
+    // The old Reply must be rejected after fresh key negotiation.
+    auto& stats =
+        ProductionAuthenticationTestAccess::Stats(
+            pair.outstation.context);
+
+    const auto successes =
+        stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+
+    const auto unexpected =
+        stats.Value(SecurityStatistic::UNEXPECTED_MESSAGES);
+
+    const auto discarded =
+        stats.Value(SecurityStatistic::DISCARDED_MESSAGES);
+
+    pair.outstation.SendToOutstation(oldReplyWire);
+
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == successes);
+
+    REQUIRE(stats.Value(SecurityStatistic::UNEXPECTED_MESSAGES)
+            == unexpected + 1);
+
+    REQUIRE(stats.Value(SecurityStatistic::DISCARDED_MESSAGES)
+            == discarded + 1);
+
+    REQUIRE(ProductionAuthenticationTestAccess::ChallengeState(
+                pair.outstation.context)
+            == OutstationChallenger::State::IDLE);
+
+    REQUIRE(ProductionAuthenticationTestAccess::AcceptedChallenge(
+                pair.outstation.context).is_empty());
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.results.values.empty());
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 0);
+
+    // A fresh authenticated SBO must still execute once.
+    submitSbo();
+    pair.Pump();
+
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    REQUIRE(pair.results.values.front().results.size() == 1);
+
+    const auto& point =
+        pair.results.values.front().results.front();
+
+    REQUIRE(point.index == index);
+    REQUIRE(point.state == CommandPointState::SUCCESS);
+    REQUIRE(point.status == CommandStatus::SUCCESS);
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == 2);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
+}
+
 TEST_CASE("ProductionAuthentication - FC6 timeout and disconnect are terminal in every submission phase",
           "[production-sa][sa-fc6]")
 {
@@ -4703,6 +5016,275 @@ private:
 };
 }
 
+TEST_CASE("ProductionAuthentication - disconnect before G41 OPERATE invalidates selection and authentication",
+          "[production-sa][g41-sa-disconnect-before-operate]")
+{
+    const auto variation = GENERATE(1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    CAPTURE(variation, wide);
+
+    const uint16_t index = wide ? 0x1234 : 3;
+
+    RuntimePair pair(false, true, false, nullptr, false, nullptr, 2,
+                     false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+
+    B07Prime(pair, false);
+
+    REQUIRE(pair.changes == 2);
+
+    const auto selections = pair.outstation.cmdHandler->NumSelect();
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+
+    const auto now =
+        ProductionAuthenticationTestAccess::Now(pair.outstation.context);
+
+    auto& session =
+        ProductionAuthenticationTestAccess::Session(*pair.master.context, 2);
+
+    const MACPolicySessionSnapshot oldSession(session, now);
+
+    auto& stats =
+        ProductionAuthenticationTestAccess::Stats(pair.outstation.context);
+
+    const auto beforeSelect =
+        stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+
+    auto config = TaskConfig::Default();
+    config.authenticationUser = 2;
+
+    const auto submitSbo = [&]() {
+        pair.master.context->SelectAndOperate(
+            FC6Commands(variation, index),
+            pair.results.Callback(),
+            config);
+
+        pair.master.exe->run_many();
+    };
+
+    submitSbo();
+
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto selectWire = pair.master.lower->PopWriteAsHex();
+    const auto select = B07Envelope(selectWire, false, 2);
+
+    REQUIRE(select.size() > 5);
+    REQUIRE(select[1] == 3);
+    REQUIRE(select[2] == 41);
+    REQUIRE(select[3] == variation);
+    REQUIRE(select[4] == (wide ? 0x28 : 0x17));
+    REQUIRE(select.back() == 0);
+
+    const auto selectSequence = select[0] & 0x0F;
+    const auto selectedObjects =
+        rseq_t(select.data(), select.size()).skip(2);
+
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(selectWire);
+
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == beforeSelect + 1);
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto selectResponseWire =
+        pair.outstation.lower->PopWriteAsHex();
+
+    const auto selectResponse =
+        B07Envelope(selectResponseWire, true, 1);
+
+    REQUIRE(selectResponse[1] == 0x81);
+    REQUIRE((selectResponse[0] & 0x0F) == selectSequence);
+
+    REQUIRE(rseq_t(selectResponse.data(), selectResponse.size())
+                .skip(4).equals(selectedObjects));
+
+    pair.outstation.OnTxReady();
+
+    REQUIRE(pair.master.SendToMaster(selectResponseWire));
+    pair.master.exe->run_many();
+
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto oldOperateWire =
+        pair.master.lower->PopWriteAsHex();
+
+    const auto operate =
+        B07Envelope(oldOperateWire, false, 2);
+
+    REQUIRE(operate[1] == 4);
+
+    REQUIRE((operate[0] & 0x0F)
+            == ((selectSequence + 1) & 0x0F));
+
+    const auto nativeOperate =
+        rseq_t(operate.data(), operate.size());
+
+    REQUIRE(nativeOperate.skip(2).equals(selectedObjects));
+
+    B07CheckMAC(
+        oldOperateWire,
+        ProductionAuthenticationTestAccess::AcceptedChallenge(
+            pair.outstation.context),
+        rseq_t(oldSession.control.data(), oldSession.control.size()));
+
+    // The genuine matching FC4 has not reached the Outstation.
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.results.values.empty());
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+
+    REQUIRE(pair.master.context->OnLowerLayerDown());
+    pair.outstation.LowerLayerDown();
+
+    REQUIRE_FALSE(
+        ProductionAuthenticationTestAccess::SessionReady(
+            pair.outstation.context, 2));
+
+    REQUIRE(pair.results.values.size() == 1);
+
+    REQUIRE(pair.results.values.front().summary
+            == TaskCompletion::FAILURE_NO_COMMS);
+
+    pair.results.values.clear();
+
+    // Establish replacement sessions after reconnect.
+    pair.outstation.LowerLayerUp();
+    REQUIRE(pair.master.context->OnLowerLayerUp());
+    pair.master.exe->run_many();
+    pair.Pump();
+
+    REQUIRE(pair.changes == 4);
+
+    REQUIRE(ProductionAuthenticationTestAccess::Now(
+                pair.outstation.context) == now);
+
+    REQUIRE(ProductionAuthenticationTestAccess::SessionReady(
+        pair.outstation.context, 1));
+
+    REQUIRE(ProductionAuthenticationTestAccess::SessionReady(
+        pair.outstation.context, 2));
+
+    REQUIRE(session.IsReady(now));
+    REQUIRE(session.Sequence() != oldSession.sequence);
+
+    const auto freshKey = session.ControlKey(now);
+
+    REQUIRE(freshKey.length() == oldSession.control.size());
+
+    REQUIRE_FALSE(crypto::ConstantTimeEqual(
+        freshKey,
+        rseq_t(oldSession.control.data(), oldSession.control.size())));
+
+    const auto successes =
+        stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+
+    const auto failures =
+        stats.Value(SecurityStatistic::AUTHENTICATION_FAILURES);
+
+    const auto discarded =
+        stats.Value(SecurityStatistic::DISCARDED_MESSAGES);
+
+    const auto denied =
+        stats.Value(SecurityStatistic::AUTHORIZATION_FAILURES);
+
+    // Authenticate the exact previous native OPERATE using
+    // the replacement user-2 session.
+    MasterResponder responder(7, 16);
+
+    REQUIRE(responder.SetSessionKey(
+                2, freshKey, session.ValidUntil(), now)
+            == MasterResponder::Result::OK);
+
+    REQUIRE(responder.RetainRequest(7, nativeOperate, now)
+            == MasterResponder::Result::OK);
+
+    pair.outstation.SendToOutstation(
+        HexConversions::to_hex(nativeOperate));
+
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    HexSequence challenge(
+        pair.outstation.lower->PopWriteAsHex());
+
+    pair.outstation.OnTxReady();
+
+    std::array<uint8_t, SessionKeys::MAX_APDU> reply{};
+    size_t replySize = 0;
+
+    REQUIRE(responder.Respond(
+                7,
+                challenge.ToRSeq(),
+                now,
+                wseq_t(reply.data(), reply.size()),
+                replySize)
+            == MasterResponder::Result::OK);
+
+    pair.outstation.SendToOutstation(
+        HexConversions::to_hex(rseq_t(reply.data(), replySize)));
+
+    // Authentication succeeds, but the previous SELECT
+    // must no longer authorize execution.
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == successes + 1);
+
+    REQUIRE(stats.Value(SecurityStatistic::AUTHENTICATION_FAILURES)
+            == failures);
+
+    REQUIRE(stats.Value(SecurityStatistic::DISCARDED_MESSAGES)
+            == discarded + 1);
+
+    REQUIRE(stats.Value(SecurityStatistic::AUTHORIZATION_FAILURES)
+            == denied);
+
+    REQUIRE(ProductionAuthenticationTestAccess::AcceptedChallenge(
+                pair.outstation.context).equals(challenge.ToRSeq()));
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+
+    // Deliver the retained old-session Aggressive OPERATE
+    // only after replacement Challenge history is established.
+    pair.outstation.SendToOutstation(oldOperateWire);
+
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == successes + 1);
+
+    REQUIRE(stats.Value(SecurityStatistic::AUTHENTICATION_FAILURES)
+            == failures + 1);
+
+    REQUIRE(stats.Value(SecurityStatistic::DISCARDED_MESSAGES)
+            == discarded + 2);
+
+    REQUIRE(stats.Value(SecurityStatistic::AUTHORIZATION_FAILURES)
+            == denied);
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+
+    // A completely new authenticated SBO must still succeed.
+    submitSbo();
+    pair.Pump();
+
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    REQUIRE(pair.results.values.front().results.size() == 1);
+
+    const auto& point =
+        pair.results.values.front().results.front();
+
+    REQUIRE(point.index == index);
+    REQUIRE(point.state == CommandPointState::SUCCESS);
+    REQUIRE(point.status == CommandStatus::SUCCESS);
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 2);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+}
+
 TEST_CASE("ProductionAuthentication - B07 selected FC3 FC4 FC5 envelopes retain typed qualifier and echo bytes",
           "[production-sa][sa-b07]")
 {
@@ -4749,6 +5331,186 @@ TEST_CASE("ProductionAuthentication - B07 selected FC3 FC4 FC5 envelopes retain 
     REQUIRE(pair.results.values.front().results.front().status == CommandStatus::SUCCESS);
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
     REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + (direct ? 0 : 1));
+}
+
+TEST_CASE("ProductionAuthentication - G41 FC3 FC4 FC5 reject invalid MAC and replay",
+          "[production-sa][g41-sa-replay]")
+{
+    const auto type = GENERATE(1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    const bool aggressive = GENERATE(false, true);
+    const auto target = GENERATE(3u, 4u, 5u);
+    const bool badMac = GENERATE(false, true);
+    CAPTURE(type, wide, aggressive, target, badMac);
+
+    RuntimePair pair(false, aggressive, false, nullptr, false,
+                     nullptr, 2, false, 2000, 2000, false,
+                     IndexQualifierMode::allow_one_byte);
+
+    if (aggressive)
+        B07Prime(pair, false);
+    else
+        pair.Pump();
+
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto selections = pair.outstation.cmdHandler->NumSelect();
+
+    auto config = TaskConfig::Default();
+    config.authenticationUser = 2;
+
+    if (target == 5)
+        pair.master.context->DirectOperate(
+            FC6Commands(type, wide ? 0x1234 : 3),
+            pair.results.Callback(), config);
+    else
+        pair.master.context->SelectAndOperate(
+            FC6Commands(type, wide ? 0x1234 : 3),
+            pair.results.Callback(), config);
+
+    pair.master.exe->run_many();
+
+    for (unsigned phase = 0; phase < (target == 5 ? 1u : 2u); ++phase)
+    {
+        const unsigned fc = target == 5 ? 5 : phase == 0 ? 3 : 4;
+
+        REQUIRE(pair.master.lower->NumWrites() == 1);
+        const auto request = pair.master.lower->PopWriteAsHex();
+        HexSequence packet(request);
+
+        std::vector<uint8_t> native;
+        if (aggressive)
+            native = B07Envelope(request, false, 2);
+        else
+            native.assign(
+                static_cast<const uint8_t*>(packet.ToRSeq()),
+                static_cast<const uint8_t*>(packet.ToRSeq())
+                    + packet.ToRSeq().length());
+
+        REQUIRE(native.size() >= 5);
+        REQUIRE(native[1] == fc);
+        REQUIRE(native[2] == 41);
+        REQUIRE(native[3] == type);
+        REQUIRE(native[4] == (wide ? 0x28 : 0x17));
+
+        const auto beforeSelect = pair.outstation.cmdHandler->NumSelect();
+        const auto beforeOperate = pair.outstation.cmdHandler->NumOperate();
+
+        std::string protectedWire = request;
+        REQUIRE(pair.master.context->OnTxReady());
+
+        if (!aggressive)
+        {
+            pair.outstation.SendToOutstation(request);
+
+            REQUIRE(pair.outstation.cmdHandler->NumSelect() == beforeSelect);
+            REQUIRE(pair.outstation.cmdHandler->NumOperate() == beforeOperate);
+            REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+            const auto challenge = pair.outstation.lower->PopWriteAsHex();
+            HexSequence challengePacket(challenge);
+
+            REQUIRE(challengePacket.ToRSeq()[1] == 0x83);
+            REQUIRE(challengePacket.ToRSeq()[4] == 120);
+            REQUIRE(challengePacket.ToRSeq()[5] == 1);
+
+            pair.outstation.OnTxReady();
+            protectedWire = ReplyFC6(pair, challenge);
+            REQUIRE(pair.master.context->OnTxReady());
+        }
+
+        if (fc == target && badMac)
+        {
+            HexSequence authentic(protectedWire);
+            std::vector<uint8_t> tampered(
+                static_cast<const uint8_t*>(authentic.ToRSeq()),
+                static_cast<const uint8_t*>(authentic.ToRSeq())
+                    + authentic.ToRSeq().length());
+
+            tampered.back() ^= 1;
+            pair.outstation.SendToOutstation(
+                HexConversions::to_hex(
+                    rseq_t(tampered.data(), tampered.size())));
+
+            REQUIRE(pair.outstation.cmdHandler->NumSelect() == beforeSelect);
+            REQUIRE(pair.outstation.cmdHandler->NumOperate() == beforeOperate);
+            RequireOnlyAuthenticationErrors(pair);
+            REQUIRE(pair.results.values.empty());
+
+            pair.master.exe->advance_time(
+                pair.master.context->params.responseTimeout.value);
+            pair.master.exe->run_many();
+
+            REQUIRE(pair.results.values.size() == 1);
+            REQUIRE(pair.results.values.front().summary != TaskCompletion::SUCCESS);
+            REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+            return;
+        }
+
+        pair.outstation.SendToOutstation(protectedWire);
+
+        REQUIRE(pair.outstation.cmdHandler->NumSelect()
+                == beforeSelect + (fc == 3 ? 1 : 0));
+        REQUIRE(pair.outstation.cmdHandler->NumOperate()
+                == beforeOperate + (fc == 3 ? 0 : 1));
+
+        REQUIRE(pair.outstation.lower->NumWrites() == 1);
+        const auto response = pair.outstation.lower->PopWriteAsHex();
+        pair.outstation.OnTxReady();
+
+        REQUIRE(pair.master.SendToMaster(response));
+        pair.master.exe->run_many();
+
+        if (!aggressive)
+        {
+            // Complete the genuine monitoring authentication
+            // without automatically transmitting the next control.
+            REQUIRE(pair.master.lower->NumWrites() == 1);
+            const auto challenge = pair.master.lower->PopWriteAsHex();
+            HexSequence monitoringChallenge(challenge);
+
+            REQUIRE(monitoringChallenge.ToRSeq()[1] == 0x20);
+            REQUIRE(monitoringChallenge.ToRSeq()[2] == 120);
+            REQUIRE(monitoringChallenge.ToRSeq()[3] == 1);
+
+            REQUIRE(pair.master.context->OnTxReady());
+            pair.outstation.SendToOutstation(challenge);
+
+            REQUIRE(pair.outstation.lower->NumWrites() == 1);
+            const auto reply = pair.outstation.lower->PopWriteAsHex();
+            HexSequence monitoringReply(reply);
+
+            REQUIRE(monitoringReply.ToRSeq()[1] == 0x83);
+            REQUIRE(monitoringReply.ToRSeq()[4] == 120);
+            REQUIRE(monitoringReply.ToRSeq()[5] == 2);
+
+            pair.outstation.OnTxReady();
+            REQUIRE(pair.master.SendToMaster(reply));
+            pair.master.exe->run_many();
+        }
+
+        if (fc == target)
+        {
+            const auto selects = pair.outstation.cmdHandler->NumSelect();
+            const auto operates = pair.outstation.cmdHandler->NumOperate();
+            const auto results = pair.results.values.size();
+
+            // Replay the exact authenticated bytes, not a fresh request.
+            pair.outstation.SendToOutstation(protectedWire);
+
+            REQUIRE(pair.outstation.cmdHandler->NumSelect() == selects);
+            REQUIRE(pair.outstation.cmdHandler->NumOperate() == operates);
+            RequireOnlyAuthenticationErrors(pair);
+            REQUIRE(pair.results.values.size() == results);
+        }
+    }
+
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    REQUIRE(pair.results.values.front().results.front().status
+            == CommandStatus::SUCCESS);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect()
+            == selections + (target == 5 ? 0 : 1));
 }
 
 TEST_CASE("ProductionAuthentication - B07 selected non-command functions traverse native Aggressive routing",
@@ -5043,6 +5805,261 @@ TEST_CASE("ProductionAuthentication - B07 monitoring faults preserve pending con
     }
 }
 
+
+TEST_CASE("ProductionAuthentication - authenticated unsolicited CONFIRM preserves G41 selection",
+          "[production-sa][sa-b07][g41-sa-confirm]")
+{
+    const auto variation = GENERATE(1u, 2u, 3u);
+    const bool wide = GENERATE(false, true);
+    CAPTURE(variation, wide);
+
+    const uint16_t index = wide ? 0x1234 : 3;
+
+    RuntimePair pair(true, true, false, nullptr, false, nullptr, 2,
+                     false, 2000, 2000, true,
+                     IndexQualifierMode::allow_one_byte);
+
+    B07Prime(pair, true);
+
+    const auto selections = pair.outstation.cmdHandler->NumSelect();
+    const auto operations = pair.outstation.cmdHandler->NumOperate();
+    const auto& confirms = pair.outstation.application->confirms;
+    const auto confirmed = confirms.size();
+
+    pair.outstation.Transaction([](IUpdateHandler& update) {
+        update.Update(Binary(true), 0);
+    });
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto eventWire = pair.outstation.lower->PopWriteAsHex();
+    const auto event = B07Envelope(eventWire, true, 1);
+
+    REQUIRE(event.size() > 4);
+    REQUIRE(event[1] == 0x82);
+    REQUIRE((event[0] & 0x30) == 0x30);
+    REQUIRE(event[4] == 2);
+
+    const auto eventSequence = event[0] & 0x0F;
+
+    pair.outstation.OnTxReady();
+
+    auto config = TaskConfig::Default();
+    config.authenticationUser = 2;
+
+    pair.master.context->SelectAndOperate(
+        FC6Commands(variation, index),
+        pair.results.Callback(),
+        config);
+
+    pair.master.exe->run_many();
+
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto selectWire = pair.master.lower->PopWriteAsHex();
+    const auto select = B07Envelope(selectWire, false, 2);
+
+    REQUIRE(select.size() > 5);
+    REQUIRE(select[1] == 3);
+    REQUIRE(select[2] == 41);
+    REQUIRE(select[3] == variation);
+    REQUIRE(select[4] == (wide ? 0x28 : 0x17));
+    REQUIRE(select.back() == 0);
+
+    const auto selectSequence = select[0] & 0x0F;
+    const auto operateSequence = (selectSequence + 1) & 0x0F;
+    const auto selectedObjects =
+        rseq_t(select.data(), select.size()).skip(2);
+
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(selectWire);
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto selectResponseWire =
+        pair.outstation.lower->PopWriteAsHex();
+
+    const auto selectResponse =
+        B07Envelope(selectResponseWire, true, 1);
+
+    REQUIRE(selectResponse[1] == 0x81);
+    REQUIRE((selectResponse[0] & 0x0F) == selectSequence);
+
+    REQUIRE(rseq_t(selectResponse.data(), selectResponse.size())
+                .skip(4).equals(selectedObjects));
+
+    pair.outstation.OnTxReady();
+
+    // Deliver the previously emitted unsolicited event before
+    // the SELECT echo. Retain the FC0 transmit ownership.
+    REQUIRE(pair.master.SendToMaster(eventWire));
+    pair.master.exe->run_many();
+
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto confirmWire = pair.master.lower->PopWriteAsHex();
+    HexSequence confirm(confirmWire);
+
+    REQUIRE(confirm.ToRSeq().length() == 2);
+    REQUIRE(confirm.ToRSeq()[0] == (0xD0 | eventSequence));
+    REQUIRE(confirm.ToRSeq()[1] == 0);
+
+    REQUIRE(pair.master.context->solSeq.Get() == selectSequence);
+
+    REQUIRE(pair.master.SendToMaster(selectResponseWire));
+    pair.master.exe->run_many();
+
+    REQUIRE(pair.master.context->solSeq.Get() == operateSequence);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.results.values.empty());
+
+    auto& stats =
+        ProductionAuthenticationTestAccess::Stats(
+            pair.outstation.context);
+
+    const auto authenticated =
+        stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS);
+
+    // Bare CONFIRM must not release the unsolicited event.
+    pair.outstation.SendToOutstation(confirmWire);
+
+    REQUIRE(confirms.size() == confirmed);
+
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == authenticated);
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto challengeWire =
+        pair.outstation.lower->PopWriteAsHex();
+
+    HexSequence challengePacket(challengeWire);
+    const auto challenge = challengePacket.ToRSeq();
+
+    REQUIRE(challenge.length() >= 10);
+    REQUIRE(challenge[1] == 0x83);
+    REQUIRE((challenge[0] & 0x0F) == eventSequence);
+    REQUIRE(challenge[4] == 120);
+    REQUIRE(challenge[5] == 1);
+    REQUIRE(challenge[6] == 0x5B);
+
+    Group120Var1 challengeObject;
+    REQUIRE(challengeObject.Read(challenge.skip(10)));
+
+    pair.outstation.OnTxReady();
+
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+
+    const auto replyWire = ReplyFC6(pair, challengeWire);
+
+    HexSequence replyPacket(replyWire);
+    const auto reply = replyPacket.ToRSeq();
+
+    REQUIRE(reply.length() >= 8);
+    REQUIRE((reply[0] & 0x0F) == eventSequence);
+    REQUIRE(reply[4] == 0x5B);
+
+    Group120Var2 replyObject;
+    REQUIRE(replyObject.Read(reply.skip(8)));
+    REQUIRE(replyObject.userNum == 1);
+    REQUIRE(replyObject.seqNum == challengeObject.seqNum);
+
+    // Authenticate CONFIRM as common user 1 before releasing
+    // the matching user-2 OPERATE.
+    pair.outstation.SendToOutstation(replyWire);
+
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == authenticated + 1);
+
+    REQUIRE(confirms.size() == confirmed + 1);
+    REQUIRE(confirms.back().is_unsolicited);
+
+    REQUIRE(ProductionAuthenticationTestAccess::IsIdle(
+        pair.outstation.context));
+
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+
+    REQUIRE(pair.master.context->solSeq.Get() == operateSequence);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+
+    REQUIRE(pair.master.context->OnTxReady());
+    REQUIRE(pair.master.lower->NumWrites() == 1);
+
+    const auto operateWire =
+        pair.master.lower->PopWriteAsHex();
+
+    const auto operate = B07Envelope(operateWire, false, 2);
+
+    REQUIRE(operate[1] == 4);
+    REQUIRE((operate[0] & 0x0F) == operateSequence);
+
+    REQUIRE(rseq_t(operate.data(), operate.size())
+                .skip(2).equals(selectedObjects));
+
+    REQUIRE(pair.master.context->OnTxReady());
+    pair.outstation.SendToOutstation(operateWire);
+
+    REQUIRE(stats.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS)
+            == authenticated + 2);
+
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    const auto operateResponseWire =
+        pair.outstation.lower->PopWriteAsHex();
+
+    const auto operateResponse =
+        B07Envelope(operateResponseWire, true, 1);
+
+    REQUIRE(operateResponse[1] == 0x81);
+    REQUIRE((operateResponse[0] & 0x0F) == operateSequence);
+
+    REQUIRE(rseq_t(operateResponse.data(), operateResponse.size())
+                .skip(4).equals(selectedObjects));
+
+    pair.outstation.OnTxReady();
+
+    REQUIRE(pair.master.SendToMaster(operateResponseWire));
+    pair.master.exe->run_many();
+
+    REQUIRE(pair.results.values.size() == 1);
+    REQUIRE(pair.results.values.front().summary == TaskCompletion::SUCCESS);
+    REQUIRE(pair.results.values.front().results.size() == 1);
+
+    const auto& point = pair.results.values.front().results.front();
+
+    REQUIRE(point.index == index);
+    REQUIRE(point.state == CommandPointState::SUCCESS);
+    REQUIRE(point.status == CommandStatus::SUCCESS);
+
+    REQUIRE(confirms.size() == confirmed + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + 1);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+
+    // This fixture has capacity for one binary event.
+    // A new event must fit without overflow after CONFIRM.
+    pair.outstation.Transaction([](IUpdateHandler& update) {
+        update.Update(Binary(false), 0);
+    });
+
+    REQUIRE(pair.outstation.lower->NumWrites() == 1);
+
+    REQUIRE_FALSE(ProductionAuthenticationTestAccess::ResponseIIN(
+        pair.outstation.context).IsSet(IINBit::EVENT_BUFFER_OVERFLOW));
+
+    pair.Pump();
+
+    REQUIRE(confirms.size() == confirmed + 2);
+    REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
+    REQUIRE(pair.master.lower->NumWrites() == 0);
+    REQUIRE(pair.outstation.lower->NumWrites() == 0);
+}
 
 TEST_CASE("ProductionAuthentication - B07 expired monitoring keys and reconnect reject retained Aggressive responses",
           "[production-sa][sa-b07]")

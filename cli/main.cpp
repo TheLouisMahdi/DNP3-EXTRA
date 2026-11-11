@@ -23,10 +23,14 @@
 #include <opendnp3/outstation/SimpleCommandHandler.h>
 #include <opendnp3/outstation/UpdateBuilder.h>
 
+#include <algorithm>
 #include <cstring>
 #include <atomic>
+#include <array>
+#include <bitset>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -37,6 +41,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -356,15 +362,292 @@ void CommandResult(const std::string& label, const ICommandTaskResult& result)
 
 class SimulatedCommands final : public SimpleCommandHandler
 {
+    using SteadyClock = std::chrono::steady_clock;
+    enum class Drive { INACTIVE, CLOSE, TRIP };
+    struct PulseState
+    {
+        Drive drive = Drive::INACTIVE;
+        SteadyClock::time_point deadline{};
+    };
+
     const bool rtuIoProfile;
+    const std::bitset<10> rtuCrobLatches;
+    const std::bitset<10> rtuCrobTwoOutputs;
+    const std::array<uint32_t, 10> rtuCrobTwoOutputPulseMs;
+    const bool testOnly;
+    std::bitset<10> crobInterlockPermits;
+    std::mutex crobInterlockMutex;
+    std::condition_variable crobPulseChanged;
+    std::array<PulseState, 10> crobPulseStates{};
+    std::chrono::milliseconds crobTestClockOffset{0};
+    std::thread crobPulseWorker;
+    bool shuttingDown = false;
+    size_t inFlightActuations = 0;
+
+    SteadyClock::time_point PulseNowLocked() const
+    {
+        return (testOnly ? SteadyClock::time_point{} : SteadyClock::now()) +
+            crobTestClockOffset;
+    }
+
+    void FinishActuation()
+    {
+        {
+            std::lock_guard<std::mutex> lock(crobInterlockMutex);
+            --inFlightActuations;
+        }
+        crobPulseChanged.notify_all();
+    }
+
+    struct ActuationLease
+    {
+        SimulatedCommands& owner;
+        ~ActuationLease() { owner.FinishActuation(); }
+    };
+
+    void RunPulseTimer()
+    {
+        std::unique_lock<std::mutex> lock(crobInterlockMutex);
+        while (!shuttingDown)
+        {
+            auto nextDeadline = SteadyClock::time_point::max();
+            for (size_t index = 0; index < crobPulseStates.size(); ++index)
+            {
+                if (rtuCrobTwoOutputs.test(index) &&
+                    crobPulseStates[index].drive != Drive::INACTIVE)
+                    nextDeadline = std::min(nextDeadline, crobPulseStates[index].deadline);
+            }
+
+            if (nextDeadline == SteadyClock::time_point::max())
+            {
+                crobPulseChanged.wait(lock);
+                continue;
+            }
+
+            if (testOnly)
+            {
+                crobPulseChanged.wait(lock);
+                if (shuttingDown)
+                    break;
+            }
+            else
+            {
+                const auto wakeAt = nextDeadline - crobTestClockOffset;
+                if (crobPulseChanged.wait_until(lock, wakeAt) != std::cv_status::timeout)
+                    continue;
+            }
+
+            const auto now = PulseNowLocked();
+            if (nextDeadline > now)
+                continue;
+            std::vector<std::pair<uint16_t, Drive>> expired;
+            for (size_t index = 0; index < crobPulseStates.size(); ++index)
+            {
+                auto& state = crobPulseStates[index];
+                if (rtuCrobTwoOutputs.test(index) &&
+                    state.drive != Drive::INACTIVE &&
+                    state.deadline <= now)
+                {
+                    expired.emplace_back(static_cast<uint16_t>(index), state.drive);
+                    state.drive = Drive::INACTIVE;
+                }
+            }
+
+            lock.unlock();
+            for (const auto& item : expired)
+                Console::Print("CROB-PULSE",
+                    "expired point=" + std::to_string(item.first) +
+                    " drive=" + (item.second == Drive::CLOSE ? "close" : "trip"));
+            lock.lock();
+        }
+    }
+
+    CommandStatus ValidateCrob(const ControlRelayOutputBlock& value, uint16_t index) const
+    {
+        if (shuttingDown)
+            return CommandStatus::AUTOMATION_INHIBIT;
+
+        if (!rtuIoProfile)
+            return index < 10 ? CommandStatus::SUCCESS : CommandStatus::OUT_OF_RANGE;
+
+        if (index >= rtuCrobLatches.size())
+            return CommandStatus::NOT_SUPPORTED;
+
+        const bool latch = rtuCrobLatches.test(index);
+        const bool twoOutput = rtuCrobTwoOutputs.test(index);
+        if ((!latch && !twoOutput) || value.count != 1 ||
+            (value.rawCode != 0x41 && value.rawCode != 0x81))
+            return CommandStatus::NOT_SUPPORTED;
+
+        if (twoOutput && crobPulseStates[index].drive != Drive::INACTIVE)
+            return CommandStatus::ALREADY_ACTIVE;
+
+        return crobInterlockPermits.test(index)
+            ? CommandStatus::SUCCESS
+            : CommandStatus::AUTOMATION_INHIBIT;
+    }
 
 public:
     std::atomic<uint32_t> executions{0};
-    explicit SimulatedCommands(bool rtuIoProfile)
-        : SimpleCommandHandler(CommandStatus::SUCCESS), rtuIoProfile(rtuIoProfile)
-    {}
+    explicit SimulatedCommands(const diagnostic::Options& options)
+        : SimpleCommandHandler(CommandStatus::SUCCESS),
+          rtuIoProfile(options.rtuIoProfile),
+          rtuCrobLatches(options.rtuCrobLatches),
+          rtuCrobTwoOutputs(options.rtuCrobTwoOutputs),
+          rtuCrobTwoOutputPulseMs(options.rtuCrobTwoOutputPulseMs),
+          testOnly(options.testOnly)
+    {
+        if (rtuCrobTwoOutputs.any())
+            crobPulseWorker = std::thread(&SimulatedCommands::RunPulseTimer, this);
+    }
+
+    ~SimulatedCommands() { Shutdown(); }
+
+    bool SetCrobInterlock(uint16_t index, bool allowed)
+    {
+        if (!rtuIoProfile ||
+            index >= rtuCrobLatches.size() ||
+            (!rtuCrobLatches.test(index) && !rtuCrobTwoOutputs.test(index)))
+            return false;
+
+        std::lock_guard<std::mutex> lock(crobInterlockMutex);
+        if (shuttingDown)
+            return false;
+        crobInterlockPermits.set(index, allowed);
+        return true;
+    }
+
+    bool AdvancePulseClock(uint32_t milliseconds)
+    {
+        if (!testOnly || !rtuCrobTwoOutputs.any() || !milliseconds)
+            return false;
+
+        int64_t totalMilliseconds = 0;
+        {
+            std::lock_guard<std::mutex> lock(crobInterlockMutex);
+            const auto maxClockMilliseconds =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    SteadyClock::time_point::max().time_since_epoch()).count() -
+                120000;
+            if (shuttingDown ||
+                crobTestClockOffset.count() >
+                    maxClockMilliseconds - static_cast<int64_t>(milliseconds))
+                return false;
+            crobTestClockOffset += std::chrono::milliseconds(milliseconds);
+            totalMilliseconds = crobTestClockOffset.count();
+        }
+        crobPulseChanged.notify_all();
+        Console::Print("CROB-CLOCK",
+            "advanced-ms=" + std::to_string(milliseconds) +
+            " total-ms=" + std::to_string(totalMilliseconds));
+        return true;
+    }
+
+    void PrintConfiguration() const
+    {
+        for (size_t index = 0; index < rtuCrobLatches.size(); ++index)
+        {
+            if (rtuCrobLatches.test(index))
+                Console::Print("CROB-CONFIG",
+                    "point=" + std::to_string(index) +
+                    " model=complementary-latch");
+            if (rtuCrobTwoOutputs.test(index))
+                Console::Print("CROB-CONFIG",
+                    "point=" + std::to_string(index) +
+                    " model=complementary-two-output pulse-ms=" +
+                    std::to_string(rtuCrobTwoOutputPulseMs[index]) +
+                    " close=inactive trip=inactive");
+        }
+    }
+
+    void PrintDiagnostics()
+    {
+        struct DiagnosticState
+        {
+            uint16_t index;
+            bool latch;
+            bool twoOutput;
+            bool permitted;
+            Drive drive;
+        };
+        std::array<DiagnosticState, 10> states{};
+        size_t count = 0;
+        uint32_t executionCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(crobInterlockMutex);
+            executionCount = executions.load();
+            for (size_t index = 0; index < rtuCrobLatches.size(); ++index)
+            {
+                if (rtuCrobLatches.test(index) || rtuCrobTwoOutputs.test(index))
+                    states[count++] = {
+                        static_cast<uint16_t>(index),
+                        rtuCrobLatches.test(index),
+                        rtuCrobTwoOutputs.test(index),
+                        crobInterlockPermits.test(index),
+                        crobPulseStates[index].drive
+                    };
+            }
+        }
+
+        for (size_t n = 0; n < count; ++n)
+        {
+            const auto& state = states[n];
+            const auto prefix = "point=" + std::to_string(state.index) +
+                " model=" + (state.twoOutput ? "complementary-two-output"
+                                               : "complementary-latch") +
+                " interlock=" + (state.permitted ? "allowed" : "blocked");
+            if (state.twoOutput)
+                Console::Print("CROB-STATE",
+                    prefix + " close=" +
+                    (state.drive == Drive::CLOSE ? "active" : "inactive") +
+                    " trip=" +
+                    (state.drive == Drive::TRIP ? "active" : "inactive") +
+                    " executed=" + std::to_string(executionCount));
+            else
+                Console::Print("CROB-STATE",
+                    prefix + " executed=" + std::to_string(executionCount));
+        }
+    }
+
+    void Shutdown()
+    {
+        std::vector<std::pair<uint16_t, Drive>> stopped;
+        {
+            std::unique_lock<std::mutex> lock(crobInterlockMutex);
+            shuttingDown = true;
+            crobPulseChanged.notify_all();
+            crobPulseChanged.wait(lock, [this] { return inFlightActuations == 0; });
+            for (size_t index = 0; index < crobPulseStates.size(); ++index)
+            {
+                auto& state = crobPulseStates[index];
+                if (state.drive != Drive::INACTIVE)
+                {
+                    stopped.emplace_back(static_cast<uint16_t>(index), state.drive);
+                    state.drive = Drive::INACTIVE;
+                }
+            }
+        }
+
+        crobPulseChanged.notify_all();
+        if (crobPulseWorker.joinable())
+            crobPulseWorker.join();
+        for (const auto& item : stopped)
+            Console::Print("CROB-PULSE",
+                "shutdown=inactive point=" + std::to_string(item.first) +
+                " drive=" + (item.second == Drive::CLOSE ? "close" : "trip"));
+    }
     template<class T> CommandStatus SelectValue(const T&, uint16_t index)
     { return index < 10 ? CommandStatus::SUCCESS : CommandStatus::OUT_OF_RANGE; }
+    CommandStatus SelectValue(const AnalogOutputFloat32& value, uint16_t index)
+    {
+        if (index >= 10)
+            return CommandStatus::OUT_OF_RANGE;
+
+        if (rtuIoProfile && !std::isfinite(value.value))
+            return CommandStatus::OUT_OF_RANGE;
+
+        return CommandStatus::SUCCESS;
+    }
     CommandStatus SelectValue(const AnalogOutputDouble64&, uint16_t index)
     {
         if (index >= 10) return CommandStatus::OUT_OF_RANGE;
@@ -372,11 +655,8 @@ public:
     }
     CommandStatus SelectValue(const ControlRelayOutputBlock& value, uint16_t index)
     {
-        if (index >= 10) return CommandStatus::OUT_OF_RANGE;
-        // IEEE 1815-2012 A.8.1 Table A-2: CLOSE/TRIP + PULSE_ON, no clear or queue.
-        if (rtuIoProfile && (value.count != 1 || (value.rawCode != 0x41 && value.rawCode != 0x81)))
-            return CommandStatus::NOT_SUPPORTED;
-        return CommandStatus::SUCCESS;
+        std::lock_guard<std::mutex> lock(crobInterlockMutex);
+        return ValidateCrob(value, index);
     }
     template<class T> CommandStatus OperateValue(const T& value, uint16_t index, IUpdateHandler& handler)
     {
@@ -387,14 +667,56 @@ public:
             + " simulated count=" + std::to_string(++executions));
         return CommandStatus::SUCCESS;
     }
-    CommandStatus OperateValue(const ControlRelayOutputBlock& value, uint16_t index, IUpdateHandler& handler)
+    CommandStatus OperateValue(const ControlRelayOutputBlock& value,
+                               uint16_t index, IUpdateHandler& handler)
     {
-        const auto result = SelectValue(value, index);
-        if (result != CommandStatus::SUCCESS) return result;
-        const bool closed = rtuIoProfile ? value.tcc == TripCloseCode::CLOSE
-                                         : value.opType == OperationType::LATCH_ON;
-        handler.Update(BinaryOutputStatus(closed), index);
-        Console::Print("EXECUTED", "CROB[" + std::to_string(index) + "] simulated count=" + std::to_string(++executions));
+        bool twoOutput = false;
+        Drive drive = Drive::INACTIVE;
+        uint32_t executionCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(crobInterlockMutex);
+            const auto result = ValidateCrob(value, index);
+            if (result != CommandStatus::SUCCESS)
+                return result;
+
+            ++inFlightActuations;
+            twoOutput = rtuCrobTwoOutputs.test(index);
+            if (twoOutput)
+            {
+                drive = value.tcc == TripCloseCode::CLOSE
+                    ? Drive::CLOSE : Drive::TRIP;
+                auto& state = crobPulseStates[index];
+                state.drive = drive;
+                state.deadline = PulseNowLocked() +
+                    std::chrono::milliseconds(rtuCrobTwoOutputPulseMs[index]);
+                executionCount = ++executions;
+            }
+        }
+        ActuationLease lease{*this};
+
+        if (twoOutput)
+        {
+            crobPulseChanged.notify_all();
+            Console::Print("CROB-PULSE",
+                "started point=" + std::to_string(index) +
+                " drive=" + (drive == Drive::CLOSE ? "close" : "trip") +
+                " configured-ms=" +
+                std::to_string(rtuCrobTwoOutputPulseMs[index]) +
+                " request-on-ms=" + std::to_string(value.onTimeMS) +
+                " request-off-ms=" + std::to_string(value.offTimeMS) +
+                " executed=" + std::to_string(executionCount));
+        }
+        else
+        {
+            const bool closed = rtuIoProfile
+                ? value.tcc == TripCloseCode::CLOSE
+                : value.opType == OperationType::LATCH_ON;
+            handler.Update(BinaryOutputStatus(closed), index);
+            Console::Print("EXECUTED",
+                "CROB[" + std::to_string(index) +
+                "] simulated count=" + std::to_string(++executions));
+        }
+
         return CommandStatus::SUCCESS;
     }
 #define CLI_COMMAND(T) \
@@ -490,6 +812,10 @@ void Help(bool master, bool rtuIoProfile)
     }
     else Console::Print("HELP", std::string("set binary|double|analog")
         + (rtuIoProfile ? "" : "|counter") + " <index:0..9> <value> [force|suppress] | show | restart (restart IIN)");
+    if (!master && rtuIoProfile)
+        Console::Print("HELP", "crob-interlock <index:0..9> allow|block (configured TEST CROB point only)");
+    if (!master && rtuIoProfile)
+        Console::Print("HELP", "crob-pulse advance <ms> (TEST-only pulse clock)");
     Console::Print("HELP", "status | auth | users | reconnect | trace on|off (metadata only in SA) | help | quit");
 }
 uint32_t RequiredNumber(const std::string& value, uint32_t maximum)
@@ -766,9 +1092,10 @@ int RunOutstation(const diagnostic::Options& o)
     config.link.KeepAliveTimeout = TimeDuration::Max();
     auto application = std::make_shared<OutstationApplication>();
     if (o.trustedTime) application->WriteAbsoluteTime(UTCTimestamp(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())));
-    auto commands = std::make_shared<SimulatedCommands>(o.rtuIoProfile);
+    auto commands = std::make_shared<SimulatedCommands>(o);
     auto outstation = channel->AddOutstation("cli-outstation-stack", commands, application, config);
     if (!outstation || !outstation->Enable()) throw std::runtime_error("Outstation could not enable");
+    commands->PrintConfiguration();
     std::array<LocalPoints, 10> points{};
     Help(false, o.rtuIoProfile);
     std::string line;
@@ -780,9 +1107,37 @@ int RunOutstation(const diagnostic::Options& o)
         try
         {
             if (Is(w, {"help"})) { Help(false, o.rtuIoProfile); continue; }
+            if (w[0] == "crob-interlock" && w.size() == 3)
+            {
+                if (w[2] != "allow" && w[2] != "block")
+                    throw std::runtime_error("Expected allow or block");
+
+                const auto index = static_cast<uint16_t>(RequiredNumber(w[1], 9));
+
+                if (!commands->SetCrobInterlock(index, w[2] == "allow"))
+                    throw std::runtime_error("CROB interlock requires a configured test CROB point");
+
+                Console::Print("INTERLOCK",
+                    "CROB[" + std::to_string(index) + "] " + w[2]);
+
+                continue;
+            }
+            if (w[0] == "crob-pulse" && w.size() == 3 && w[1] == "advance")
+            {
+                const auto milliseconds = RequiredNumber(w[2], 120000);
+                if (!milliseconds ||
+                    !commands->AdvancePulseClock(milliseconds))
+                    throw std::runtime_error("Pulse clock advance requires a configured TEST two-output point");
+                continue;
+            }
             if (Is(w, {"auth"})) { AuthStatus(outstation, o); continue; }
             if (Is(w, {"users"})) { diagnostic::PrintUsers(o, false); continue; }
-            if (Is(w, {"status"})) { Console::Print("INFO", "channel=" + std::string(ChannelStateSpec::to_string(observer->Current())) + " executed=" + std::to_string(commands->executions)); continue; }
+            if (Is(w, {"status"}))
+            {
+                Console::Print("INFO", "channel=" + std::string(ChannelStateSpec::to_string(observer->Current())) + " executed=" + std::to_string(commands->executions));
+                commands->PrintDiagnostics();
+                continue;
+            }
             if (Is(w, {"restart"})) { outstation->SetRestartIIN(); Console::Print("INFO", "Restart IIN submitted; full restart/recovery requires process restart"); continue; }
             if (Is(w, {"reconnect"})) { outstation->Disable(); outstation->Enable(); continue; }
             if (Is(w, {"show"}))
@@ -827,6 +1182,7 @@ int RunOutstation(const diagnostic::Options& o)
         }
         catch (const std::exception& e) { Console::Print("ERROR", e.what()); }
     }
+    commands->Shutdown();
     manager.Shutdown(); Console::Print("SHUTDOWN", "Outstation stopped"); return 0;
 }
 #ifdef _WIN32

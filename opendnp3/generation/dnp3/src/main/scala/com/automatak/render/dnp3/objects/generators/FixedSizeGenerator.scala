@@ -71,11 +71,29 @@ object FixedSizeGenerator {
     }
 
     def readFunction: Iterator[String] = readSignature ++ bracket {
-      FixedSizeHelpers.fixedReads(x.fields, true, "buffer", "output.")
+      if (x.name == "Group41Var3") {
+        Iterator(
+          "static_assert(sizeof(float) == sizeof(uint32_t) && std::numeric_limits<float>::is_iec559, \"G41V3 requires IEEE 754 binary32\");",
+          "uint32_t bits = 0;",
+          "if (!LittleEndian::read(buffer, bits, output.status)) return false;",
+          "std::memcpy(&output.value, &bits, sizeof(bits));",
+          "return true;"
+        )
+      } else {
+        FixedSizeHelpers.fixedReads(x.fields, true, "buffer", "output.")
+      }
     }
 
     def writeFunction: Iterator[String] = writeSignature ++ bracket {
-      FixedSizeHelpers.fixedWrites(x.fields, true, "buffer", "arg.")
+      if (x.name == "Group41Var3") {
+        Iterator(
+          "uint32_t bits = 0;",
+          "std::memcpy(&bits, &arg.value, sizeof(bits));",
+          "return LittleEndian::write(buffer, bits, arg.status);"
+        )
+      } else {
+        FixedSizeHelpers.fixedWrites(x.fields, true, "buffer", "arg.")
+      }
     }
 
     def defaultConstructor: Iterator[String] = defaultConstructorSignature

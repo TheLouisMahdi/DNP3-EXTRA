@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import socket
 import struct
 import subprocess
@@ -82,7 +83,7 @@ class Peer:
         if self.process.poll() is None:
             try:
                 self.send("quit")
-            except BrokenPipeError:
+            except OSError:
                 pass
         try:
             code = self.process.wait(timeout=15)
@@ -1599,12 +1600,1098 @@ def profile_g41_timeout_wire(exe):
     print("PASS G41 expired SELECT wire tests", flush=True)
 
 
+def profile_g41_sa(exe, method):
+    """Same-implementation SA v5 G41 control and policy acceptance."""
+    cases = ((1, 2, "1234"), (2, 3, "-123"), (3, 4, "4.25"))
+
+    for q17 in (False, True):
+        profile = "g41sa-" + uuid.uuid4().hex[:12]
+        provision = ["--test-only", "--profile", profile, "--auth", method]
+        run(exe, "test-provision", *provision)
+        options = [*provision, *loopback_port(), "--trust-system-time",
+                   "--reply-ms", "5000", "--rtu-io-profile", "--trace"]
+        master_options = ["--control-q17"] if q17 else []
+
+        try:
+            for denied in (False, True):
+                master = out = None
+                try:
+                    master, out = connected(
+                        exe, options, master_options=master_options,
+                        out_options=["--deny-controls"] if denied else [],
+                    )
+                    master.task("read 1 2 0 0")
+                    executions = 0
+
+                    for variation, index, value in cases:
+                        for mode in ("sbo", "direct"):
+                            command = f"analog {variation} {index} {value} {mode}"
+                            if denied:
+                                with out.cv:
+                                    start = len(out.lines)
+                                master.task(command, success=False)
+                                out.wait(r"\[DENIED\] association=7 user=2$", start)
+                            else:
+                                master.task(command)
+                                executions += 1
+                            out.executed(executions)
+
+                        command = f"analog {variation} {index} {value} noack"
+                        if denied:
+                            with out.cv:
+                                start = len(out.lines)
+                            master.send(command)
+                            out.wait(r"\[DENIED\] association=7 user=2$", start)
+                        else:
+                            master.noack(command)
+
+                        # Receiver-side barrier for FC6 processing.
+                        master.task("read 1 2 0 0")
+                        if not denied:
+                            executions += 1
+                        out.executed(executions)
+
+                    if not denied:
+                        cursor = master.send("auth")
+                        master.wait(r"\[SESSION\] user=2 ready=1", cursor)
+                        cursor = out.send("auth")
+                        out.wait(r"\[SESSION\] user=2 ready=1", cursor)
+                        out.wait(r"\[SA-OBJECT\] TX G120V1$")
+                        master.wait(r"\[SA-OBJECT\] TX G120V2$")
+                finally:
+                    stop(out, master)
+        finally:
+            run(exe, "test-cleanup", *provision)
+
+    print("PASS G41 SA " + method +
+          ": FC3/4/5/6, Q17/Q28, authorization", flush=True)
+
+
+def profile_g41_bounds_wire(exe):
+    """Selected RTU G41 numeric boundaries and non-finite rejection."""
+    valid = (
+        (1, 2, struct.pack("<i", -2147483648)),
+        (1, 2, struct.pack("<i", 2147483647)),
+        (2, 3, struct.pack("<h", -32768)),
+        (2, 3, struct.pack("<h", 32767)),
+        (3, 4, struct.pack("<I", 0x7F7FFFFF)),
+        (3, 4, struct.pack("<I", 0xFF7FFFFF)),
+        (3, 4, struct.pack("<I", 0x00000000)),
+        (3, 4, struct.pack("<I", 0x80000000)),
+        (3, 4, struct.pack("<I", 0x00000001)),
+        (3, 4, struct.pack("<I", 0x80000001)),
+        (3, 4, struct.pack("<I", 0x007FFFFF)),
+        (3, 4, struct.pack("<I", 0x807FFFFF)),
+    )
+
+    invalid = (
+        struct.pack("<I", 0x7F800000),
+        struct.pack("<I", 0xFF800000),
+        struct.pack("<I", 0x7FC00000),
+        struct.pack("<I", 0x7FC01234),
+        struct.pack("<I", 0xFFC01234),
+    )
+
+    for qualifier in (0x17, 0x28):
+        options = [
+            "--auth", "compat", "--rtu-io-profile",
+            *loopback_port(),
+        ]
+        out = Peer(exe, "outstation", options)
+
+        try:
+            out.wait(r"\[HELP\]")
+
+            with socket.create_connection(
+                ("127.0.0.1", int(options[-1])),
+                timeout=5,
+            ) as raw:
+                out.wait(r"\[LINK\] OPEN$")
+
+                app_seq = 0
+                transport_seq = 0
+                executions = 0
+
+                def objects(variation, index, value):
+                    prefix = (
+                        bytes((1, index))
+                        if qualifier == 0x17
+                        else struct.pack("<HH", 1, index)
+                    )
+                    return (
+                        bytes((41, variation, qualifier))
+                        + prefix + value + b"\x00"
+                    )
+
+                def send(fc, body, expect_response=True):
+                    nonlocal app_seq, transport_seq
+
+                    control = 0xC0 | app_seq
+                    raw.sendall(f01_link_frame(
+                        bytes((control, fc)) + body,
+                        transport_seq,
+                    ))
+
+                    app_seq = (app_seq + 1) & 0x0F
+                    transport_seq = (transport_seq + 1) & 0x3F
+
+                    if not expect_response:
+                        return None
+
+                    _, response = f01_receive_apdu(raw)
+                    assert response[:2] == bytes(
+                        (control, 0x81)
+                    ), response.hex()
+                    return response
+
+                def exchange(fc, body, status):
+                    response = send(fc, body)
+                    expected = body[:-1] + bytes((status,))
+                    assert response[4:] == expected, (
+                        qualifier, fc, body.hex(), response.hex()
+                    )
+
+                def barrier():
+                    # Valid all-objects READ of an empty analog
+                    # input event buffer. It also detects an
+                    # unexpected application response to FC6.
+                    response = send(1, b"\x20\x05\x06")
+                    assert response[4:] == b"", response.hex()
+
+                for variation, index, value in valid:
+                    body = objects(variation, index, value)
+
+                    exchange(3, body, 0)
+                    out.executed(executions)
+
+                    exchange(4, body, 0)
+                    executions += 1
+                    out.executed(executions)
+
+                    exchange(5, body, 0)
+                    executions += 1
+                    out.executed(executions)
+
+                    send(6, body, expect_response=False)
+                    barrier()
+                    executions += 1
+                    out.executed(executions)
+
+                for value in invalid:
+                    body = objects(3, 4, value)
+
+                    # Reject non-finite SELECT and leave
+                    # no valid selection for OPERATE.
+                    exchange(3, body, 12)
+                    out.executed(executions)
+
+                    exchange(4, body, 2)
+                    out.executed(executions)
+
+                    exchange(5, body, 12)
+                    out.executed(executions)
+
+                    send(6, body, expect_response=False)
+                    barrier()
+                    out.executed(executions)
+
+        finally:
+            stop(out)
+
+    print("PASS RTU G41 numeric boundaries and non-finite rejection",
+          flush=True)
+
+
+def profile_crob_latch(exe):
+    """Exercise explicit interlocked Complementary Latches over authenticated TCP."""
+
+    rejected = run(
+        exe, "outstation", "--rtu-io-profile", "--test-only",
+        "--auth", "compat", "--rtu-crob-latch", "3",
+        success=False,
+    )
+    assert "RTU CROB models require an RTU outstation, --test-only and SA" in rejected.stderr
+
+    duplicate = run(
+        exe, "outstation", "--rtu-io-profile", "--test-only",
+        "--auth", "method4", "--rtu-crob-latch", "3",
+        "--rtu-crob-latch", "3", success=False,
+    )
+    assert "Duplicate --rtu-crob-latch index" in duplicate.stderr
+
+    master, out = connected(
+        exe, ["--auth", "compat", "--rtu-io-profile"]
+    )
+    try:
+        cursor = master.task("crob 3 on sbo", success=False)
+        master.wait(r"status=NOT_SUPPORTED", cursor)
+        out.executed(0)
+    finally:
+        stop(out, master)
+
+    profile = "pc-" + uuid.uuid4().hex[:12]
+    args = ["--test-only", "--profile", profile, "--auth", "method4"]
+
+    run(exe, "test-provision", *args)
+    try:
+        options = [
+            *args, "--trust-system-time", "--reply-ms", "5000",
+            "--trace", "--rtu-io-profile",
+        ]
+
+        for q17 in (False, True):
+            master, out = connected(
+                exe, options,
+                master_options=["--control-q17"] if q17 else [],
+                out_options=[
+                    "--rtu-crob-latch", "3",
+                    "--rtu-crob-latch", "5",
+                ],
+            )
+            try:
+                cursor = master.task("crob 3 on sbo", success=False)
+                master.wait(
+                    r"state=SELECT_FAIL status=AUTOMATION_INHIBIT",
+                    cursor,
+                )
+                out.wait(r"\[SA-OBJECT\] TX G120V1$")
+                master.wait(r"\[SA-OBJECT\] TX G120V2$")
+                out.executed(0)
+
+                cursor = master.task("crob 4 on sbo", success=False)
+                master.wait(r"status=NOT_SUPPORTED", cursor)
+                out.executed(0)
+
+                cursor = out.send("crob-interlock 3 allow")
+                out.wait(r"\[INTERLOCK\] CROB\[3\] allow$", cursor)
+
+                cursor = master.task("crob 5 on sbo", success=False)
+                master.wait(
+                    r"state=SELECT_FAIL status=AUTOMATION_INHIBIT",
+                    cursor,
+                )
+                out.executed(0)
+
+                master.task("crob 3 on sbo")
+                out.executed(1)
+
+                cursor = master.task("read 10 2 3 3")
+                master.wait(r"BinaryOutput\[3\]=ON\b", cursor)
+
+                master.task("crob 3 off direct")
+                out.executed(2)
+
+                cursor = master.task("read 10 2 3 3")
+                master.wait(r"BinaryOutput\[3\]=OFF\b", cursor)
+
+                master.noack("crob 3 on noack")
+
+                cursor = master.task("read 10 2 3 3")
+                master.wait(r"BinaryOutput\[3\]=ON\b", cursor)
+                out.executed(3)
+
+                cursor = out.send("crob-interlock 3 block")
+                out.wait(r"\[INTERLOCK\] CROB\[3\] block$", cursor)
+
+                cursor = master.task("crob 3 off direct", success=False)
+                master.wait(r"status=AUTOMATION_INHIBIT", cursor)
+
+                master.noack("crob 3 off noack")
+
+                cursor = master.task("read 10 2 3 3")
+                master.wait(r"BinaryOutput\[3\]=ON\b", cursor)
+                out.executed(3)
+            finally:
+                stop(out, master)
+    finally:
+        run(exe, "test-cleanup", *args)
+
+
+def profile_crob_interlock_transition(exe):
+    """Hold authenticated FC4 while the CLI interlock changes."""
+    profile = "pc-" + uuid.uuid4().hex[:12]
+    args = ["--test-only", "--profile", profile, "--auth", "method4"]
+    options = [*args, "--trust-system-time", "--rtu-io-profile",
+               "--aggressive", "--user", "2", "--link-confirm", "never",
+               "--response-ms", "15000", "--reply-ms", "5000"]
+
+    def read_frame(peer):
+        deadline = time.monotonic() + 5
+
+        def exact(size):
+            data = bytearray()
+            while len(data) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Incomplete D-07 FT3 frame")
+                peer.settimeout(remaining)
+                chunk = peer.recv(size - len(data))
+                assert chunk, "Unexpected EOF in D-07 FT3 frame"
+                data.extend(chunk)
+            return bytes(data)
+
+        header = exact(10)
+        assert header[:2] == b"\x05\x64"
+        assert header[8:] == ft3_crc(header[:8])
+        size = header[2] - 5
+        assert 0 <= size <= 250
+
+        wire = bytearray(header)
+        payload = bytearray()
+        while size:
+            count = min(size, 16)
+            block = exact(count + 2)
+            assert block[-2:] == ft3_crc(block[:-2])
+            wire.extend(block)
+            payload.extend(block[:-2])
+            size -= count
+
+        apdu = (bytes(payload[1:]) if len(payload) >= 3
+                and (payload[0] & 0xC0) == 0xC0 else b"")
+        return bytes(wire), apdu
+
+    def aggressive_objects(apdu, header_size, user):
+        assert len(apdu) >= header_size + 10 + 22
+        assert apdu[header_size:header_size + 4] == b"\x78\x03\x07\x01"
+        assert int.from_bytes(
+            apdu[header_size + 8:header_size + 10], "little"
+        ) == user
+        assert apdu[-22:-16] == b"\x78\x09\x5b\x01\x10\x00"
+        return apdu[header_size + 10:-22]
+
+    def run_case(q17):
+        master = out = None
+        captured = {}
+        errors = []
+        held = threading.Event()
+        release = threading.Event()
+        stopping = threading.Event()
+        out_send_lock = threading.Lock()
+        qualifier = 0x17 if q17 else 0x28
+
+        try:
+            with ExitStack() as sockets:
+                listener = sockets.enter_context(
+                    socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                )
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(10)
+                master_port = str(listener.getsockname()[1])
+
+                out_port_args = loopback_port()
+                out = Peer(
+                    exe, "outstation",
+                    [*options, *out_port_args, "--rtu-crob-latch", "3"]
+                )
+                out.wait(r"Listening on:")
+
+                out_link = sockets.enter_context(
+                    socket.create_connection(
+                        ("127.0.0.1", int(out_port_args[1])), timeout=5
+                    )
+                )
+
+                master_options = [*options, "--port", master_port]
+                if q17:
+                    master_options.append("--control-q17")
+
+                master = Peer(exe, "master", master_options)
+                master_link, _ = listener.accept()
+                sockets.enter_context(master_link)
+                master_link.settimeout(5)
+
+                def send_to_out(wire):
+                    with out_send_lock:
+                        out_link.sendall(wire)
+
+                def relay():
+                    try:
+                        while not stopping.is_set():
+                            ready, _, _ = select.select(
+                                (master_link, out_link), (), (), 0.25
+                            )
+                            for source in ready:
+                                wire, apdu = read_frame(source)
+                                fc = apdu[1] if apdu else None
+
+                                if source is master_link:
+                                    if fc == 3:
+                                        captured.setdefault("select", apdu)
+                                    elif fc == 4 and "operate" not in captured:
+                                        captured["operate"] = (wire, apdu)
+                                        held.set()
+                                        if not release.wait(6):
+                                            raise TimeoutError(
+                                                "D-07 OPERATE gate expired"
+                                            )
+                                        if stopping.is_set():
+                                            return
+                                    send_to_out(wire)
+                                else:
+                                    if fc == 0x81 and "select" in captured:
+                                        if "operate" not in captured:
+                                            if ((apdu[0] & 0x0F) ==
+                                                    (captured["select"][0] & 0x0F)):
+                                                captured.setdefault(
+                                                    "select_response", apdu
+                                                )
+                                        elif ((apdu[0] & 0x0F) ==
+                                              (captured["operate"][1][0] & 0x0F)):
+                                            captured.setdefault(
+                                                "operate_response", apdu
+                                            )
+                                    master_link.sendall(wire)
+                    except Exception as error:
+                        if not stopping.is_set():
+                            errors.append(error)
+                    finally:
+                        held.set()
+
+                def interlock(state, timeout=5):
+                    cursor = out.send(f"crob-interlock 3 {state}")
+                    out.wait(
+                        rf"\[INTERLOCK\] CROB\[3\] {state}$",
+                        cursor, timeout
+                    )
+
+                def readback(state):
+                    cursor = master.task("read 10 2 3 3")
+                    master.wait(
+                        rf"BinaryOutput\[3\]={state}\b", cursor
+                    )
+
+                def authentication_failures():
+                    cursor = out.send("auth")
+                    line = out.wait(
+                        r"\[LOCAL-STAT\] index=2 value=\d+$", cursor
+                    )
+                    return int(line.rsplit("=", 1)[1])
+
+                worker = threading.Thread(target=relay, daemon=True)
+                worker.start()
+
+                try:
+                    master.wait(r"\[LINK\] OPEN$")
+                    out.wait(r"\[LINK\] OPEN$")
+                    master.task("read 10 2 3 3")
+
+                    for peer in (master, out):
+                        cursor = peer.send("auth")
+                        peer.wait(
+                            r"\[SESSION\] user=2 ready=1\b", cursor
+                        )
+
+                    interlock("allow")
+                    master.task("crob 3 off direct")
+                    out.executed(1)
+                    readback("OFF")
+
+                    cursor = master.send("crob 3 on sbo")
+                    assert held.wait(20) and "operate" in captured, errors
+                    assert not errors, errors
+                    assert "select" in captured
+                    assert "select_response" in captured
+
+                    select_apdu = captured["select"]
+                    select_response = captured["select_response"]
+                    operate_wire, operate_apdu = captured["operate"]
+
+                    assert operate_wire[3] == 0xC4
+
+                    prefix = (
+                        bytes.fromhex("0C 01 17 01 03") if q17
+                        else bytes.fromhex("0C 01 28 01 00 03 00")
+                    )
+                    body = prefix + struct.pack(
+                        "<BBIIB", 0x41, 1, 100, 0, 0
+                    )
+
+                    select_seq = select_apdu[0] & 0x0F
+                    operate_seq = (select_seq + 1) & 0x0F
+
+                    assert aggressive_objects(select_apdu, 2, 2) == body
+                    assert aggressive_objects(
+                        select_response, 4, 1
+                    ) == body
+                    assert (operate_apdu[0] & 0x0F) == operate_seq
+                    assert aggressive_objects(
+                        operate_apdu, 2, 2
+                    ) == body
+
+                    status = out.send("status")
+                    out.wait(
+                        r"channel=.* executed=1$", status, timeout=2
+                    )
+
+                    interlock("block", timeout=2)
+                    release.set()
+
+                    master.wait(
+                        r"\[RX\] crob\[3\] state=SUCCESS "
+                        r"status=AUTOMATION_INHIBIT\b",
+                        cursor
+                    )
+                    master.wait(r"\[RESULT\] crob task=", cursor)
+
+                    response = captured["operate_response"]
+                    assert (response[0] & 0x0F) == operate_seq
+                    assert aggressive_objects(
+                        response, 4, 1
+                    ) == body[:-1] + b"\x0a"
+
+                    out.executed(1)
+                    readback("OFF")
+
+                    interlock("allow")
+                    failures = authentication_failures()
+
+                    send_to_out(operate_wire)
+                    readback("OFF")
+
+                    assert authentication_failures() == failures + 1
+                    out.executed(1)
+
+                    master.task("crob 3 on sbo")
+                    out.executed(2)
+                    readback("ON")
+
+                    assert not errors, errors
+                    print(
+                        f"D-07 Q{qualifier:02X} "
+                        "interlock transition and replay checked",
+                        flush=True
+                    )
+                finally:
+                    stopping.set()
+                    release.set()
+                    for peer_link in (master_link, out_link):
+                        try:
+                            peer_link.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+                    worker.join(timeout=6)
+                    assert not worker.is_alive(), (
+                        "D-07 relay failed to stop"
+                    )
+        finally:
+            stop(out, master)
+
+    run(exe, "test-provision", *args)
+    try:
+        for q17 in (False, True):
+            run_case(q17)
+    finally:
+        run(exe, "test-cleanup", *args)
+
+
+def profile_crob_two_output(exe):
+    """Test deterministic authenticated Complementary Two-output CROB pulses."""
+    profile = "pc-" + uuid.uuid4().hex[:12]
+    provision = ["--test-only", "--profile", profile, "--auth", "method4"]
+    out_config = ["--rtu-io-profile", "--rtu-crob-two-output", "3:10000"]
+
+    invalid_options = (
+        (["--rtu-crob-two-output", "3:0"], "Timeout must be"),
+        (["--rtu-crob-two-output", "3:"], "Invalid numeric option"),
+        (["--rtu-crob-two-output", "3"], "Expected --rtu-crob-two-output"),
+        (["--rtu-crob-two-output", "x:1"],
+         "Invalid --rtu-crob-two-output index or pulse duration"),
+        (["--rtu-crob-two-output", "3:abc"],
+         "Invalid --rtu-crob-two-output index or pulse duration"),
+        (["--rtu-crob-two-output", "10:1"], "Numeric option out of range"),
+        (["--rtu-crob-two-output", "3:120001"], "Numeric option out of range"),
+        (["--rtu-crob-two-output", "3:4294967296"], "Numeric option out of range"),
+        (["--rtu-crob-two-output", "3:-1"], "Invalid numeric option"),
+        (["--rtu-crob-two-output", "3:1",
+          "--rtu-crob-two-output", "3:2"], "Duplicate --rtu-crob-two-output"),
+        (["--rtu-crob-latch", "3",
+          "--rtu-crob-two-output", "3:1"], "Conflicting CROB models"),
+    )
+    for extra, message in invalid_options:
+        result = run(
+            exe, "outstation", *provision, "--rtu-io-profile",
+            *extra, success=False
+        )
+        assert message in result.stderr, (extra, result.stderr)
+
+    wrong_role = run(
+        exe, "master", *provision, "--rtu-io-profile",
+        "--rtu-crob-two-output", "3:1", success=False
+    )
+    assert "RTU CROB models require an RTU outstation" in wrong_role.stderr
+    no_test_mode = run(
+        exe, "outstation", "--auth", "method4", "--rtu-io-profile",
+        "--rtu-crob-two-output", "3:1", success=False
+    )
+    assert "require an RTU outstation, --test-only and SA" in no_test_mode.stderr
+    compat_mode = run(
+        exe, "outstation", "--test-only", "--auth", "compat",
+        "--rtu-io-profile", "--rtu-crob-two-output", "3:1",
+        success=False
+    )
+    assert "require an RTU outstation, --test-only and SA" in compat_mode.stderr
+
+    def read_frame(peer):
+        deadline = time.monotonic() + 5
+
+        def exact(size):
+            data = bytearray()
+            while len(data) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Incomplete two-output FT3 frame")
+                peer.settimeout(remaining)
+                chunk = peer.recv(size - len(data))
+                assert chunk, "Unexpected EOF in two-output FT3 frame"
+                data.extend(chunk)
+            return bytes(data)
+
+        header = exact(10)
+        assert header[:2] == b"\x05\x64"
+        assert header[8:] == ft3_crc(header[:8])
+        remaining = header[2] - 5
+        assert 0 <= remaining <= 250
+
+        wire = bytearray(header)
+        payload = bytearray()
+        while remaining:
+            count = min(remaining, 16)
+            block = exact(count + 2)
+            assert block[-2:] == ft3_crc(block[:-2])
+            wire.extend(block)
+            payload.extend(block[:-2])
+            remaining -= count
+
+        apdu = (bytes(payload[1:]) if len(payload) >= 3
+                and (payload[0] & 0xC0) == 0xC0 else b"")
+        return bytes(wire), apdu
+
+    def authenticated_objects(apdu, header_size, user):
+        assert len(apdu) >= header_size + 32
+        assert apdu[header_size:header_size + 4] == b"\x78\x03\x07\x01"
+        assert int.from_bytes(
+            apdu[header_size + 8:header_size + 10], "little"
+        ) == user
+        assert apdu[-22:-16] == b"\x78\x09\x5b\x01\x10\x00"
+        return apdu[header_size + 10:-22]
+
+    run(exe, "test-provision", *provision)
+    try:
+        base = [
+            *provision, "--trust-system-time", "--rtu-io-profile",
+            "--aggressive", "--user", "2", "--response-ms", "15000",
+            "--reply-ms", "5000", "--link-confirm", "never",
+        ]
+
+        # A policy-denied control must not start a pulse.
+        denied_master, denied_out = connected(
+            exe, base,
+            out_options=[*out_config, "--deny-controls"],
+        )
+        try:
+            cursor = denied_out.send("crob-interlock 3 allow")
+            denied_out.wait(r"\[INTERLOCK\] CROB\[3\] allow$", cursor)
+            with denied_out.cv:
+                denied_cursor = len(denied_out.lines)
+            denied_master.task(
+                "crob 3 on direct", success=False
+            )
+            denied_out.wait(
+                r"\[DENIED\] association=7 user=2$", denied_cursor
+            )
+            denied_out.executed(0)
+            cursor = denied_out.send("status")
+            denied_out.wait(
+                r"\[CROB-STATE\] point=3 model=complementary-two-output "
+                r"interlock=allowed close=inactive trip=inactive executed=0$",
+                cursor
+            )
+        finally:
+            stop(denied_out, denied_master)
+
+        def run_case(q17):
+            master = out = None
+            captured = {
+                "requests": {},
+                "responses": {},
+                "gate_used": False,
+            }
+            errors = []
+            held = threading.Event()
+            release = threading.Event()
+            stopping = threading.Event()
+            out_send_lock = threading.Lock()
+            fc6_forwarded = threading.Event()
+
+            def send_to_out(wire):
+                with out_send_lock:
+                    out_link.sendall(wire)
+
+            try:
+                with ExitStack() as sockets:
+                    listener = sockets.enter_context(
+                        socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    )
+                    listener.bind(("127.0.0.1", 0))
+                    listener.listen(1)
+                    listener.settimeout(10)
+
+                    out_port = loopback_port()
+                    out = Peer(
+                        exe, "outstation",
+                        [*base, *out_port, *out_config]
+                    )
+                    out.wait(
+                        r"Listening on:"
+                    )
+                    out.wait(
+                        r"\[CROB-CONFIG\] point=3 "
+                        r"model=complementary-two-output pulse-ms=10000 "
+                        r"close=inactive trip=inactive$"
+                    )
+                    out_link = sockets.enter_context(
+                        socket.create_connection(
+                            ("127.0.0.1", int(out_port[1])), timeout=5
+                        )
+                    )
+
+                    master_options = [
+                        *base, "--port", str(listener.getsockname()[1])
+                    ]
+                    if q17:
+                        master_options.append("--control-q17")
+                    master = Peer(exe, "master", master_options)
+                    master_link, _ = listener.accept()
+                    sockets.enter_context(master_link)
+                    master_link.settimeout(5)
+
+                    def relay():
+                        try:
+                            while not stopping.is_set():
+                                ready, _, _ = select.select(
+                                    (master_link, out_link), (), (), 0.25
+                                )
+                                for source in ready:
+                                    wire, apdu = read_frame(source)
+                                    function = apdu[1] if apdu else None
+                                    sequence = apdu[0] & 0x0F if apdu else None
+
+                                    if source is master_link:
+                                        if function in (3, 4, 5, 6):
+                                            captured["requests"][sequence] = (
+                                                function, apdu, wire
+                                            )
+                                        if function == 4 and not captured["gate_used"]:
+                                            captured["gate_used"] = True
+                                            captured["held_operate"] = (
+                                                sequence, apdu, wire
+                                            )
+                                            held.set()
+                                            if not release.wait(20):
+                                                raise TimeoutError(
+                                                    "Two-output FC4 gate expired"
+                                                )
+                                            if stopping.is_set():
+                                                return
+                                        send_to_out(wire)
+                                        if function == 6:
+                                            fc6_forwarded.set()
+                                    else:
+                                        if function == 0x81 and apdu:
+                                            captured["responses"][sequence] = apdu
+                                        master_link.sendall(wire)
+                        except Exception as error:
+                            if not stopping.is_set():
+                                errors.append(error)
+                        finally:
+                            held.set()
+
+                    worker = threading.Thread(target=relay, daemon=True)
+                    worker.start()
+
+                    def interlock(state):
+                        cursor = out.send(f"crob-interlock 3 {state}")
+                        out.wait(rf"\[INTERLOCK\] CROB\[3\] {state}$", cursor)
+
+                    def state(close, trip, execution_count):
+                        cursor = out.send("status")
+                        return out.wait(
+                            rf"\[CROB-STATE\] point=3 "
+                            rf"model=complementary-two-output "
+                            rf"interlock=(?:allowed|blocked) "
+                            rf"close={close} trip={trip} "
+                            rf"executed={execution_count}$",
+                            cursor
+                        )
+
+                    def readback(value):
+                        cursor = master.task("read 10 2 3 3")
+                        master.wait(
+                            rf"BinaryOutput\[3\]={value}\b", cursor
+                        )
+
+                    def echo(function, variation, qualifier, index,
+                             code, status):
+                        entries = [
+                            (seq, request)
+                            for seq, request in captured["requests"].items()
+                            if request[0] == function
+                        ]
+                        assert entries, (function, captured["requests"])
+                        sequence, (_, apdu, _) = entries[-1]
+                        response = captured["responses"].get(sequence)
+                        assert response is not None, (function, sequence)
+                        assert response[1] == 0x81
+                        prefix = (
+                            bytes((12, variation, qualifier, 1, index))
+                            if qualifier == 0x17 else
+                            bytes((12, variation, qualifier, 1, 0,
+                                   index, 0))
+                        )
+                        expected = prefix + struct.pack(
+                            "<BBIIB", code, 1, 100, 0, status
+                        )
+                        assert authenticated_objects(apdu, 2, 2) == (expected[:-1] + b"\x00")
+                        assert authenticated_objects(response, 4, 1) == expected
+                        return sequence, expected
+
+                    def advance(milliseconds, total):
+                        cursor = out.send(
+                            f"crob-pulse advance {milliseconds}"
+                        )
+                        out.wait(
+                            rf"\[CROB-CLOCK\] advanced-ms={milliseconds} "
+                            rf"total-ms={total}$", cursor
+                        )
+
+                    def auth_failures():
+                        cursor = out.send("auth")
+                        line = out.wait(
+                            r"\[LOCAL-STAT\] index=2 value=\d+$", cursor
+                        )
+                        return int(line.rsplit("=", 1)[1])
+
+                    try:
+                        master.wait(r"\[LINK\] OPEN$")
+                        out.wait(r"\[LINK\] OPEN$")
+                        master.task("read 10 2 3 3")
+
+                        for peer in (master, out):
+                            cursor = peer.send("auth")
+                            peer.wait(
+                                r"\[SESSION\] user=2 ready=1\b", cursor
+                            )
+
+                        state("inactive", "inactive", 0)
+                        readback("OFF")
+
+                        cursor = master.task(
+                            "crob 3 on sbo", success=False
+                        )
+                        master.wait(
+                            r"\[RX\] crob\[3\] state=SELECT_FAIL "
+                            r"status=AUTOMATION_INHIBIT\b",
+                            cursor
+                        )
+                        echo(3, 1, 0x17 if q17 else 0x28,
+                             3, 0x41, 10)
+                        state("inactive", "inactive", 0)
+
+                        interlock("allow")
+                        cursor = master.send("crob 3 on sbo")
+                        assert held.wait(20), errors
+                        assert not errors, errors
+                        assert "held_operate" in captured
+                        state("inactive", "inactive", 0)
+
+                        selected = [
+                            (seq, request)
+                            for seq, request in captured["requests"].items()
+                            if request[0] == 3
+                        ][-1]
+                        select_sequence = selected[0]
+                        select_response = captured["responses"].get(
+                            select_sequence
+                        )
+                        assert select_response is not None
+                        qualifier = 0x17 if q17 else 0x28
+                        prefix = (
+                            bytes((12, 1, qualifier, 1, 3))
+                            if q17 else bytes((12, 1, qualifier, 1, 0, 3, 0))
+                        )
+                        close_body = prefix + struct.pack(
+                            "<BBIIB", 0x41, 1, 100, 0, 0
+                        )
+                        assert authenticated_objects(
+                            selected[1][1], 2, 2
+                        ) == close_body
+                        assert authenticated_objects(
+                            select_response, 4, 1
+                        ) == close_body
+                        assert select_response[1] == 0x81
+
+                        held_sequence, held_apdu, held_wire = (
+                            captured["held_operate"]
+                        )
+                        assert held_wire[3] == 0xC4
+                        assert (held_sequence
+                                == ((select_sequence + 1) & 0x0F))
+                        assert authenticated_objects(
+                            held_apdu, 2, 2
+                        ) == close_body
+
+                        release.set()
+                        master.wait(r"\[RESULT\] crob task=", cursor)
+                        master.wait(
+                            r"\[RX\] crob\[3\] state=SUCCESS "
+                            r"status=SUCCESS\b",
+                            cursor
+                        )
+                        out.wait(
+                            r"\[CROB-PULSE\] started point=3 drive=close "
+                            r"configured-ms=10000 request-on-ms=100 "
+                            r"request-off-ms=0 executed=1$"
+                        )
+                        echo(4, 1, qualifier, 3, 0x41, 0)
+                        out.executed(1)
+                        state("active", "inactive", 1)
+
+                        cursor = master.task(
+                            "crob 3 on sbo", success=False
+                        )
+                        master.wait(
+                            r"\[RX\] crob\[3\] state=SELECT_FAIL "
+                            r"status=ALREADY_ACTIVE\b",
+                            cursor
+                        )
+                        echo(3, 1, qualifier, 3, 0x41, 5)
+
+                        cursor = master.task(
+                            "crob 3 off direct", success=False
+                        )
+                        master.wait(
+                            r"\[RX\] crob\[3\] state=SUCCESS "
+                            r"status=ALREADY_ACTIVE\b",
+                            cursor
+                        )
+                        echo(5, 1, qualifier, 3, 0x81, 5)
+
+                        responses_before_fc6 = len(captured["responses"])
+                        fc6_forwarded.clear()
+                        master.noack("crob 3 off noack")
+                        assert fc6_forwarded.wait(5), ("FC6 not forwarded", errors)
+                        fc6_sequence = [
+                            seq for seq, request in
+                            captured["requests"].items()
+                            if request[0] == 6
+                        ][-1]
+                        assert fc6_sequence not in captured["responses"]
+                        assert len(captured["responses"]) == responses_before_fc6
+                        out.executed(1)
+                        state("active", "inactive", 1)
+
+                        advance(101, 101)
+                        state("active", "inactive", 1)
+                        advance(9898, 9999)
+                        state("active", "inactive", 1)
+                        advance(1, 10000)
+                        out.wait(
+                            r"\[CROB-PULSE\] expired point=3 drive=close$"
+                        )
+                        state("inactive", "inactive", 1)
+                        readback("OFF")
+
+                        failures = auth_failures()
+                        send_to_out(held_wire)
+                        deadline = time.monotonic() + 5
+                        while True:
+                            current = auth_failures()
+                            if current > failures:
+                                break
+                            remaining = deadline - time.monotonic()
+                            assert remaining > 0, (
+                                "Replayed Aggressive OPERATE was not rejected"
+                            )
+                            with out.cv:
+                                out.cv.wait(min(0.05, remaining))
+                        out.executed(1)
+                        state("inactive", "inactive", 1)
+
+                        cursor = master.task("crob 3 off direct")
+                        master.wait(
+                            r"\[RX\] crob\[3\] state=SUCCESS "
+                            r"status=SUCCESS\b",
+                            cursor
+                        )
+                        echo(5, 1, qualifier, 3, 0x81, 0)
+                        out.wait(
+                            r"\[CROB-PULSE\] started point=3 drive=trip "
+                            r"configured-ms=10000 request-on-ms=100 "
+                            r"request-off-ms=0 executed=2$"
+                        )
+                        out.executed(2)
+                        state("inactive", "active", 2)
+                        readback("OFF")
+
+                        advance(10000, 20000)
+                        out.wait(
+                            r"\[CROB-PULSE\] expired point=3 drive=trip$"
+                        )
+                        state("inactive", "inactive", 2)
+
+                        responses_before_fc6 = len(captured["responses"])
+                        fc6_forwarded.clear()
+                        master.noack("crob 3 on noack")
+                        assert fc6_forwarded.wait(5), ("FC6 not forwarded", errors)
+                        fc6_sequence = [
+                            seq for seq, request in
+                            captured["requests"].items()
+                            if request[0] == 6
+                        ][-1]
+                        fc6_apdu = captured["requests"][fc6_sequence][1]
+                        assert authenticated_objects(
+                            fc6_apdu, 2, 2
+                        ) == close_body
+                        assert fc6_sequence not in captured["responses"]
+                        assert len(captured["responses"]) == responses_before_fc6
+                        out.executed(3)
+                        state("active", "inactive", 3)
+                        readback("OFF")
+
+                        stopping.set()
+                        release.set()
+                        worker.join(timeout=6)
+                        assert not worker.is_alive(), (
+                            "Two-output relay failed to stop"
+                        )
+                        cursor = out.send("quit")
+                        out.wait(
+                            r"\[CROB-PULSE\] shutdown=inactive "
+                            r"point=3 drive=close$",
+                            cursor
+                        )
+                    finally:
+                        stopping.set()
+                        release.set()
+                        if worker.is_alive():
+                            worker.join(timeout=6)
+                        assert not errors, errors
+            finally:
+                stop(out, master)
+
+        for q17 in (False, True):
+            run_case(q17)
+    finally:
+        run(exe, "test-cleanup", *provision)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -1625,12 +2712,21 @@ def main():
     if args.only in ("f01-link", "all"): f01_confirmed_link(args.exe)
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
     if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
+    if args.only in ("profile-crob-latch", "all"):
+        profile_crob_latch(args.exe)
     if args.only in ("profile-analog-wire", "all"): profile_analog_wire(args.exe)
     if args.only in ("profile-analog-unsol", "all"): profile_analog_unsolicited(args.exe)
     if args.only in ("profile-analog-confirm", "all"): profile_analog_confirm_wire(args.exe)
     if args.only in ("profile-g41-wire", "all"): profile_g41_wire(args.exe)
     if args.only in ("profile-g41-negative", "all"): profile_g41_negative_wire(args.exe)
     if args.only in ("profile-g41-timeout", "all"): profile_g41_timeout_wire(args.exe)
+    if args.only in ("profile-g41-sa4", "all"): profile_g41_sa(args.exe, "method4")
+    if args.only in ("profile-g41-sa68", "all"): profile_g41_sa(args.exe, "method68")
+    if args.only in ("profile-g41-bounds", "all"): profile_g41_bounds_wire(args.exe)
+    if args.only in ("profile-crob-interlock-transition", "all"):
+        profile_crob_interlock_transition(args.exe)
+    if args.only in ("profile-crob-two-output", "all"):
+        profile_crob_two_output(args.exe)
     if args.only in ("compat", "all"): compatibility(args.exe)
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")
