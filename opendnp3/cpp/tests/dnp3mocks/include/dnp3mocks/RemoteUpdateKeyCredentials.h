@@ -19,12 +19,13 @@ template<size_t N> wseq_t W(std::array<uint8_t, N>& a) { return {a.data(), a.siz
 struct RemoteCredentials final : IUpdateKeyCredentials
 {
     std::array<UpdateKeyUser, 16> users{};
+    const uint16_t associationNumber;
     uint64_t utc = 1700000000000ULL;
     bool trustedTime = true, failWrite = false;
     size_t writes = 0;
     size_t attempts = 0, failOnWrite = 0;
     bool uncertainWrite = false;
-    RemoteCredentials()
+    explicit RemoteCredentials(uint16_t association = 7) : associationNumber(association)
     {
         const uint8_t common[] = {'C','o','m','m','o','n',0};
         std::copy(std::begin(common), std::end(common), users[0].name.begin());
@@ -37,12 +38,12 @@ struct RemoteCredentials final : IUpdateKeyCredentials
             users[n].active = true;
             users[n].role = n == 0 ? 0 : 1;
             users[n].expiresUnixMs = utc + 864000000;
-            users[n].updateKey.fill(static_cast<uint8_t>(n + 1));
+            users[n].updateKey.fill(static_cast<uint8_t>(n + 1 + 2 * (association - 7)));
         }
     }
     bool ReadUpdateKey(uint16_t association, uint16_t user, uint8_t* out, size_t size, uint64_t& duration) override
     {
-        if (association != 7 || !user || user > users.size() || size != 32 || !users[user-1].active) return false;
+        if (association != associationNumber || !user || user > users.size() || size != 32 || !users[user-1].active) return false;
         std::copy(users[user-1].updateKey.begin(), users[user-1].updateKey.end(), out);
         duration = users[user-1].expiresUnixMs - utc;
         return true;
@@ -50,13 +51,13 @@ struct RemoteCredentials final : IUpdateKeyCredentials
     bool TrustedUnixTimeMs(uint64_t& value) override { value = utc; return trustedTime; }
     bool ReadUser(uint16_t association, size_t slot, UpdateKeyUser& value) override
     {
-        if (association != 7 || slot >= users.size()) return false;
+        if (association != associationNumber || slot >= users.size()) return false;
         value = users[slot];
         return true;
     }
     bool WriteUser(uint16_t association, size_t slot, const UpdateKeyUser& value) override
     {
-        if (failWrite || association != 7 || slot >= users.size()) return false;
+        if (failWrite || association != associationNumber || slot >= users.size()) return false;
         const bool fail = ++attempts == failOnWrite;
         if (fail && !uncertainWrite) return false;
         users[slot] = value;
@@ -66,9 +67,11 @@ struct RemoteCredentials final : IUpdateKeyCredentials
 };
 struct RemotePolicy final : IAuthenticationAuthorization
 {
+    explicit RemotePolicy(uint16_t association = 7) : associationNumber(association) {}
+    const uint16_t associationNumber;
     bool allow = true;
     bool IsAuthorized(uint16_t association, uint16_t, uint8_t, const uint8_t*, size_t) const override
-    { return association == 7 && allow; }
+    { return association == associationNumber && allow; }
 };
 // Test-only authority. Production Master interfaces expose no Certification Key.
 struct RemoteAuthority : IUpdateKeyTrust, IUpdateKeySource
@@ -124,14 +127,16 @@ struct RemoteAuthority : IUpdateKeyTrust, IUpdateKeySource
 };
 AuthenticationConfig RemoteSettings(const std::shared_ptr<RemoteCredentials>& credentials,
                                     const std::shared_ptr<RemotePolicy>& policy,
-                                    const std::shared_ptr<RemoteAuthority>& authority, size_t capacity)
+                                    const std::shared_ptr<RemoteAuthority>& authority, size_t capacity,
+                                    std::shared_ptr<IUserCertificatePolicy> certificates = {})
 {
     AuthenticationConfig config;
-    config.association = 7;
+    config.association = credentials->associationNumber;
     config.credentials = credentials;
     config.authorization = policy;
     config.remoteUpdateKeys = true;
     config.allowMethod68 = authority->method68;
+    config.userCertificatePolicy = std::move(certificates);
     config.userCapacity = static_cast<uint16_t>(capacity);
     config.outstationName[0] = 'B';
     config.outstationNameSize = 1;

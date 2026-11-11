@@ -16,6 +16,9 @@
 #include <catch.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <limits>
 #include <vector>
 #include "app/parsing/APDUParser.h"
 
@@ -222,6 +225,242 @@ void Unsolicited(unsigned group, unsigned variation, bool narrow, bool timed,
     REQUIRE(t.application->confirms.size() == 2);
     CheckFrame("probe", Request(t, "C2 01 3C 02 06"), "C2 81 80 00");
 }
+
+void BinaryEvents(unsigned group, OutstationTestObject& station, uint16_t index, int value,
+                  uint8_t flags, uint64_t time, TimestampQuality quality)
+{
+    station.Transaction([&](IUpdateHandler& db) {
+        const auto stamp = DNPTime(time, quality);
+        if (group == 2) db.Update(Binary(value != 0, Flags(flags), stamp), index, EventMode::Force);
+        else db.Update(DoubleBitBinary(static_cast<DoubleBit>(value), Flags(flags), stamp), index, EventMode::Force);
+    });
+}
+
+void EventBatch(unsigned group)
+{
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(260);
+    config.params.prefer8BitEventQualifiers = true;
+    OutstationTestObject t(config, Points(group, 1, {{7, 0, 1}, {255, 0, 1}, {256, 0, 1}}));
+    t.LowerLayerUp();
+    const bool analog = group == 32;
+    const auto queue = [&](uint16_t index, bool on) {
+        if (analog) Update(t, group, {{index, on ? 257 : -2, 1}}, true);
+        else BinaryEvents(group, t, index, on, 1, 0, TimestampQuality::INVALID);
+    };
+    for (unsigned i = 0; i < 256; ++i)
+        queue(i == 255 ? 255 : 7, i % 2 != 0);
+    queue(256, true);
+
+    const std::string object = analog ? "20" : group == 2 ? "02" : "04";
+    const char* off = analog ? "01 FE FF FF FF" : "01";
+    const char* on = analog ? "01 01 01 00 00" : group == 2 ? "81" : "41";
+    std::string golden = "E0 81 80 00 " + object + " 01 17 FF";
+    for (unsigned i = 0; i < 255; ++i)
+        golden += std::string(" 07 ") + (i % 2 ? on : off);
+    golden += " " + object + " 01 17 01 FF " + on;
+    golden += " " + object + " 01 28 01 00 00 01 " + on;
+    const auto request = "C0 01 " + object + " 01 06";
+    const auto reply = Request(t, request.c_str());
+    REQUIRE(reply == golden);
+    Observe("wire_matches", reply == golden);
+    MockSOEHandler soe;
+    Decode(reply, soe);
+    Observe("typed_delivery_count", soe.TotalReceived());
+    REQUIRE(soe.TotalReceived() == 257);
+    t.SendToOutstation("C1 00");
+    REQUIRE(t.application->confirms.empty());
+    t.SendToOutstation("C0 00");
+    Observe("matching_confirms", t.application->confirms.size());
+    REQUIRE(t.application->confirms.size() == 1);
+    CheckFrame("probe", Request(t, ("C1 01 " + object + " 01 06").c_str()), "C1 81 80 00");
+}
+
+void AnalogEventBoundaries(unsigned variation, bool narrow)
+{
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    config.params.prefer8BitEventQualifiers = narrow;
+    const uint16_t last = narrow ? 255 : 256;
+    OutstationTestObject t(config, Points(32, variation, {{7, 0, 1}, {8, 0, 1}, {last, 0, 1}}));
+    t.LowerLayerUp();
+    const bool timed = variation == 4;
+    const auto maxFloat = std::numeric_limits<float>::max();
+    const auto minSubnormal = std::numeric_limits<float>::denorm_min();
+    const uint64_t maxTime = 0xFFFFFFFFFFFFULL;
+    t.Transaction([&](IUpdateHandler& db) {
+        db.Update(Analog(timed ? -32768.0 : -0.0, Flags(0x03), DNPTime(0)), 7, EventMode::Force);
+        db.Update(Analog(timed ? 0.0 : narrow ? -1.5 : -minSubnormal, Flags(0x11), DNPTime(sampleTime)),
+                  8, EventMode::Force);
+        db.Update(Analog(timed ? 40000.0 : maxFloat, Flags(0x09), DNPTime(maxTime)), last, EventMode::Force);
+    });
+
+    const std::string object = timed ? "20 04" : "20 05";
+    const std::string first = timed ? "03 00 80 00 00 00 00 00 00" : "03 00 00 00 80";
+    const std::string middle = timed ? "11 00 00 06 05 04 03 02 01" : narrow ? "11 00 00 C0 BF" : "11 01 00 00 80";
+    const std::string end = timed ? "29 FF 7F FF FF FF FF FF FF" : "09 FF FF 7F 7F";
+    const auto golden = "E0 81 80 00 " + object + (narrow ? " 17 03 07 " : " 28 03 00 07 00 ")
+        + first + (narrow ? " 08 " : " 08 00 ") + middle + (narrow ? " FF " : " 00 01 ") + end;
+    const auto reply = Request(t, ("C0 01 " + object + " 06").c_str());
+    CheckFrame("reply", reply, golden.c_str());
+    MockSOEHandler soe;
+    Decode(reply, soe);
+    const auto& received = soe.analogSOE;
+    REQUIRE(received.size() == 3);
+    REQUIRE(received.at(7).meas.value == (timed ? -32768.0 : 0.0));
+    REQUIRE(std::signbit(received.at(7).meas.value));
+    REQUIRE(received.at(8).meas.value == (timed ? 0.0 : narrow ? -1.5 : -minSubnormal));
+    REQUIRE(received.at(last).meas.value == (timed ? 32767.0 : maxFloat));
+    REQUIRE(received.at(7).meas.flags.value == 0x03);
+    REQUIRE(received.at(8).meas.flags.value == 0x11);
+    REQUIRE(received.at(last).meas.flags.value == (timed ? 0x29 : 0x09));
+    REQUIRE(received.at(7).meas.time.value == 0);
+    REQUIRE(received.at(8).meas.time.value == (timed ? sampleTime : 0));
+    REQUIRE(received.at(last).meas.time.value == (timed ? maxTime : 0));
+    for (const auto& entry : received)
+        REQUIRE(entry.second.info.tsquality == (timed ? TimestampQuality::SYNCHRONIZED : TimestampQuality::INVALID));
+    Observe("typed_delivery_count", soe.TotalReceived());
+    t.SendToOutstation("C0 00");
+    CheckFrame("probe", Request(t, ("C1 01 " + object + " 06").c_str()), "C1 81 80 00");
+}
+
+void BinaryAbsoluteBoundaries(unsigned group, bool narrow)
+{
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    config.params.prefer8BitEventQualifiers = narrow;
+    const uint16_t last = narrow ? 255 : 256;
+    OutstationTestObject t(config, Points(group, 2, {{7, 0, 1}, {8, 0, 1}, {last, 0, 1}}));
+    t.LowerLayerUp();
+    const bool doubleBit = group == 4;
+    BinaryEvents(group, t, 7, doubleBit ? 2 : 1, 0x23, 0, TimestampQuality::SYNCHRONIZED);
+    BinaryEvents(group, t, 8, doubleBit ? 3 : 0, 0x14, sampleTime, TimestampQuality::SYNCHRONIZED);
+    BinaryEvents(group, t, last, 1, 0x09, 0xFFFFFFFFFFFFULL, TimestampQuality::SYNCHRONIZED);
+    const std::string object = doubleBit ? "04" : "02";
+    const auto middle = doubleBit ? "D4" : "14";
+    const auto end = doubleBit ? "49" : "89";
+    const auto prefix = narrow ? "17 03 07 A3 00 00 00 00 00 00 08 " : "28 03 00 07 00 A3 00 00 00 00 00 00 08 00 ";
+    const auto golden = "E0 81 80 00 " + object + " 02 " + prefix + middle
+        + " 06 05 04 03 02 01 " + (narrow ? "FF " : "00 01 ") + end + " FF FF FF FF FF FF";
+    const auto reply = Request(t, ("C0 01 " + object + " 02 06").c_str());
+    CheckFrame("reply", reply, golden.c_str());
+    MockSOEHandler soe;
+    Decode(reply, soe);
+    const auto check = [&](const auto& received) {
+        REQUIRE(received.size() == 3);
+        REQUIRE(received.at(7).meas.time.value == 0);
+        REQUIRE(received.at(8).meas.time.value == sampleTime);
+        REQUIRE(received.at(last).meas.time.value == 0xFFFFFFFFFFFFULL);
+        REQUIRE(received.at(7).meas.flags.value == 0xA3);
+        REQUIRE(received.at(8).meas.flags.value == (doubleBit ? 0xD4 : 0x14));
+        REQUIRE(received.at(last).meas.flags.value == (doubleBit ? 0x49 : 0x89));
+        for (const auto& entry : received) REQUIRE(entry.second.info.tsquality == TimestampQuality::SYNCHRONIZED);
+    };
+    if (doubleBit) check(soe.doubleBinarySOE);
+    else check(soe.binarySOE);
+    Observe("typed_delivery_count", soe.TotalReceived());
+    t.SendToOutstation("C0 00");
+    CheckFrame("probe", Request(t, ("C1 01 " + object + " 02 06").c_str()), "C1 81 80 00");
+}
+
+void BinaryRelativeBoundaries(unsigned group, bool fragmented)
+{
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    config.params.prefer8BitEventQualifiers = true;
+    if (fragmented) config.params.maxTxFragSize = 23;
+    OutstationTestObject t(config, Points(group, 3, {{7, 0, 1}, {8, 0, 1}, {9, 0, 1},
+                                                    {10, 0, 1}, {11, 0, 1}, {12, 0, 1}}));
+    t.LowerLayerUp();
+    const auto synced = TimestampQuality::SYNCHRONIZED;
+    const auto unsynced = TimestampQuality::UNSYNCHRONIZED;
+    const auto on = group == 2 ? 1 : 2;
+    BinaryEvents(group, t, 7, on, 1, sampleTime, synced);
+    BinaryEvents(group, t, 8, on, 1, sampleTime + 1, synced);
+    const std::string object = group == 2 ? "02" : "04";
+    const auto request = "C0 01 " + object + " 03 06";
+    if (fragmented)
+    {
+        const auto first = "A0 81 82 00 33 01 07 01 06 05 04 03 02 01 " + object + " 03 17 01 07 81 00 00";
+        const auto second = "61 81 80 00 33 01 07 01 07 05 04 03 02 01 " + object + " 03 17 01 08 81 00 00";
+        CheckFrame("first", Request(t, request.c_str()), first.c_str());
+        CheckFrame("second", Request(t, "C0 00"), second.c_str());
+        t.SendToOutstation("C1 00");
+    }
+    else
+    {
+        BinaryEvents(group, t, 9, on, 1, sampleTime + 65535, synced);
+        BinaryEvents(group, t, 10, on, 1, sampleTime + 65536, synced);
+        BinaryEvents(group, t, 11, on, 1, sampleTime - 1, synced);
+        BinaryEvents(group, t, 12, on, 1, 0xFFFFFFFFFFFFULL, unsynced);
+        const auto golden = "E0 81 80 00 33 01 07 01 06 05 04 03 02 01 " + object
+            + " 03 17 03 07 81 00 00 08 81 01 00 09 81 FF FF"
+            + " 33 01 07 01 06 05 05 03 02 01 " + object + " 03 17 01 0A 81 00 00"
+            + " 33 01 07 01 05 05 04 03 02 01 " + object + " 03 17 01 0B 81 00 00"
+            + " 33 02 07 01 FF FF FF FF FF FF " + object + " 03 17 01 0C 81 00 00";
+        const auto reply = Request(t, request.c_str());
+        CheckFrame("reply", reply, golden.c_str());
+        MockSOEHandler soe;
+        Decode(reply, soe);
+        const auto check = [&](const auto& received) {
+            const uint64_t times[] = {sampleTime, sampleTime + 1, sampleTime + 65535, sampleTime + 65536,
+                                      sampleTime - 1, 0xFFFFFFFFFFFFULL};
+            for (uint16_t index = 7; index <= 12; ++index)
+            {
+                const auto& record = received.at(index);
+                REQUIRE(record.meas.time.value == times[index - 7]);
+                REQUIRE(record.meas.time.quality == (index == 12 ? unsynced : synced));
+            }
+        };
+        if (group == 2) check(soe.binarySOE);
+        else check(soe.doubleBinarySOE);
+        Observe("typed_delivery_count", soe.TotalReceived());
+        REQUIRE(soe.TotalReceived() == 6);
+        t.SendToOutstation("C0 00");
+    }
+    CheckFrame("probe", Request(t, ("C2 01 " + object + " 03 06").c_str()), "C2 81 80 00");
+}
+
+void EventClassAssignment(unsigned group, unsigned qualifier, bool repeated)
+{
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    const bool high = qualifier == 1;
+    const uint16_t first = high ? 257 : 7;
+    const uint16_t last = first + 1;
+    const bool analog = group == 32;
+    const std::string targetGroup = analog ? "1E" : "03";
+    const std::string eventGroup = analog ? "20" : "04";
+    OutstationTestObject t(config, Points(group, 1, {{first, 0, 1}, {last, 0, 1}}));
+    t.application->supportsAssignClass = true;
+    t.LowerLayerUp();
+    Update(t, group, {{first, 2, 1}}, true);
+    const std::string target = targetGroup + (high ? " 00 01 01 01 02 01" : qualifier == 0 ? " 00 00 07 08" : " 00 06");
+    const std::string request = "C0 16 3C 03 06 " + target + (repeated ? " " + target : "");
+    CheckFrame("assignment", Request(t, request.c_str()), "C0 81 82 00");
+    const auto& assignments = t.application->classAssignments;
+    REQUIRE(assignments.size() == (repeated ? 2 : 1));
+    Observe("assignments", assignments.size());
+    const auto type = analog ? AssignClassType::AnalogInput : AssignClassType::DoubleBinaryInput;
+    for (const auto& assignment : assignments)
+        REQUIRE(assignment == std::make_tuple(type, PointClass::Class2, first, last));
+    Update(t, group, {{first, 1, 1}, {last, 2, 1}}, true);
+    const auto firstIndex = high ? " 01 01 " : " 07 00 ";
+    const auto lastIndex = high ? " 02 01 " : " 08 00 ";
+    const auto old = "E1 81 84 00 " + eventGroup + " 01 28 01 00" + firstIndex + (analog ? "01 02 00 00 00" : "81");
+    CheckFrame("class1", Request(t, "C1 01 3C 02 06"), old.c_str());
+    t.SendToOutstation("C1 00");
+    const auto fresh = "E2 81 80 00 " + eventGroup + " 01 28 02 00" + firstIndex
+        + (analog ? "01 01 00 00 00" : "41") + lastIndex + (analog ? "01 02 00 00 00" : "81");
+    CheckFrame("class2", Request(t, "C2 01 3C 03 06"), fresh.c_str());
+    t.SendToOutstation("C2 00");
+    CheckFrame("probe", Request(t, "C3 01 3C 02 06 3C 03 06"), "C3 81 80 00");
+    CheckFrame("target_without_class", Request(t, ("C4 16 " + target).c_str()), "C4 81 80 04");
+    CheckFrame("dangling_class", Request(t, "C5 16 3C 03 06"), "C5 81 80 04");
+    CheckFrame("invalid_range", Request(t, ("C6 16 3C 03 06 " + targetGroup + " 00 00 08 07").c_str()), "C6 81 80 04");
+    CheckFrame("invalid_count", Request(t, ("C7 16 3C 03 06 " + targetGroup + " 00 07 01").c_str()), "C7 81 80 05");
+    REQUIRE(assignments.size() == (repeated ? 2 : 1));
+}
 template<class T>
 void CheckCtoPoints(const std::map<uint16_t, MockSOEHandler::Record<T>>& points,
                     uint16_t last, TimestampQuality quality)
@@ -355,6 +594,55 @@ void DelayMeasure()
     REQUIRE(delay == 0);
     Observe("restart_calls", t.application->coldRestartCalls + t.application->warmRestartCalls);
     REQUIRE(t.application->coldRestartCalls + t.application->warmRestartCalls == 0);
+}
+
+void RestartResponse(bool coarse, RestartType type)
+{
+    OutstationTestObject station(OutstationConfig{});
+    const auto mode = coarse ? RestartMode::SUPPORTED_DELAY_COARSE : RestartMode::SUPPORTED_DELAY_FINE;
+    station.application->coldRestartSupport = mode;
+    station.application->warmRestartSupport = mode;
+    station.application->coldRestartTimeDelay = 0x1234;
+    station.application->warmRestartTimeDelay = 0x1234;
+    station.LowerLayerUp();
+
+    MasterTestFixture master(NoStartupTasks());
+    master.context->OnLowerLayerUp();
+    CallbackQueue<RestartOperationResult> completed;
+    master.context->Restart(type, completed.Callback());
+    master.exe->run_many();
+    const auto request = master.lower->PopWriteAsHex();
+    const bool cold = type == RestartType::COLD;
+    CheckFrame("request", request, cold ? "C0 0D" : "C0 0E");
+    master.context->OnTxReady();
+    const auto response = Request(station, request.c_str());
+    CheckFrame("reply", response, coarse ? "C0 81 80 00 34 01 07 01 34 12" : "C0 81 80 00 34 02 07 01 34 12");
+    master.SendToMaster(response);
+    REQUIRE(station.application->coldRestartCalls == (cold ? 1 : 0));
+    REQUIRE(station.application->warmRestartCalls == (cold ? 0 : 1));
+    Observe("restart_calls", station.application->coldRestartCalls + station.application->warmRestartCalls);
+    REQUIRE(completed.responses.size() == 1);
+    const auto& result = completed.responses.front();
+    REQUIRE(result.summary == TaskCompletion::SUCCESS);
+    Observe("delay_ms", std::chrono::duration_cast<std::chrono::milliseconds>(result.restartTime.value).count());
+    REQUIRE(result.restartTime == (coarse ? TimeDuration::Seconds(0x1234) : TimeDuration::Milliseconds(0x1234)));
+}
+
+void InvalidRestartResponse(const char* objects)
+{
+    MasterTestFixture master(NoStartupTasks());
+    master.context->OnLowerLayerUp();
+    CallbackQueue<RestartOperationResult> completed;
+    master.context->Restart(RestartType::COLD, completed.Callback());
+    master.exe->run_many();
+    CheckFrame("request", master.lower->PopWriteAsHex(), "C0 0D");
+    master.context->OnTxReady();
+    master.SendToMaster(std::string("C0 81 00 00 ") + objects);
+    REQUIRE(completed.responses.size() == 1);
+    const auto& result = completed.responses.front();
+    Observe("rejected", result.summary == TaskCompletion::FAILURE_BAD_RESPONSE);
+    REQUIRE(result.summary == TaskCompletion::FAILURE_BAD_RESPONSE);
+    REQUIRE(master.lower->PopWriteAsHex().empty());
 }
 
 void SecurityStatistics(const char* response, const char* truncated, uint16_t index)

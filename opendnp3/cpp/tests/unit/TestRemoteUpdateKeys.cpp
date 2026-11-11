@@ -8,6 +8,8 @@
 #include "dnp3mocks/MockTaskCallback.h"
 #include "dnp3mocks/RemoteUpdateKeyCredentials.h"
 #include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
+#include "dnp3mocks/UserIdentityCertificate.h"
+#include "crypto/UserCertificate.h"
 #include "utils/BufferHelpers.h"
 
 #include <ser4cpp/util/HexConversions.h>
@@ -48,21 +50,36 @@ public:
 namespace
 {
 using namespace remote_update_test;
-MasterParams RemoteMasterSettings(AuthenticationConfig config, uint32_t replyTimeoutMs = 2000)
+MasterParams RemoteMasterSettings(AuthenticationConfig config, uint32_t replyTimeoutMs = 2000,
+                                  bool managementStartup = false)
 {
     auto p = NoStartupTasks();
     config.updateKeyTrust.reset(); // The Master never receives BC.
     config.replyTimeoutMs = replyTimeoutMs;
     p.authentication = config;
     p.ignoreRestartIIN = true;
+    if (managementStartup)
+    {
+        p.ignoreRestartIIN = false;
+        p.startupAuthenticationUser = 2;
+        p.startupIntegrityClassMask = ClassField::AllClasses();
+        p.unsolClassMask = ClassField(PointClass::Class1);
+    }
     return p;
 }
-OutstationConfig RemoteOutSettings(const AuthenticationConfig& config, uint32_t replyTimeoutMs = 2000)
+OutstationConfig RemoteOutSettings(const AuthenticationConfig& config, uint32_t replyTimeoutMs = 2000,
+                                   bool secureStartup = false, uint32_t certificateIntervalMs = 0)
 {
     OutstationConfig c;
     c.params.authentication = config;
     c.params.authentication.replyTimeoutMs = replyTimeoutMs;
-    c.params.allowUnsolicited = false;
+    c.params.authentication.userCertificateRecheckIntervalMs = certificateIntervalMs;
+    c.params.allowUnsolicited = secureStartup;
+    if (secureStartup)
+    {
+        c.params.unsolClassMask = ClassField::AllEventClasses();
+        c.params.unsolConfirmTimeout = TimeDuration::Milliseconds(100);
+    }
     c.eventBufferConfig.maxSecurityStatEvents = 32;
     return c;
 }
@@ -79,19 +96,25 @@ struct RemotePair
     bool dropStatus = false, dropAll = false;
     int finalFault = -1, replyFault = -1;
     std::string originalFinal;
-    static std::shared_ptr<RemoteCredentials> Credentials(bool common)
+    static std::shared_ptr<RemoteCredentials> Credentials(bool common, bool managementStartup, uint16_t association)
     {
-        auto value = std::make_shared<RemoteCredentials>();
+        auto value = std::make_shared<RemoteCredentials>(association);
         if (!common) value->users[0] = UpdateKeyUser();
+        if (managementStartup) value->users[1].role = 2;
         return value;
     }
     RemotePair(size_t capacity = 2, bool common = true,
                std::shared_ptr<RemoteAuthority> authority_ = std::make_shared<RemoteAuthority>(),
-               uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000)
-        : masterCredentials(Credentials(common)), outCredentials(Credentials(common)),
+               uint32_t masterTimeoutMs = 2000, uint32_t outstationTimeoutMs = 2000,
+               std::shared_ptr<IUserCertificatePolicy> certificates = {}, bool secureStartup = false,
+               uint32_t certificateIntervalMs = 0, bool managementStartup = false, uint16_t association = 7)
+        : masterCredentials(Credentials(common, managementStartup, association)),
+          outCredentials(Credentials(common, managementStartup, association)), policy(std::make_shared<RemotePolicy>(association)),
           authority(std::move(authority_)),
-          master(RemoteMasterSettings(RemoteSettings(masterCredentials, policy, authority, capacity), masterTimeoutMs), Addresses()),
-          out(RemoteOutSettings(RemoteSettings(outCredentials, policy, authority, capacity), outstationTimeoutMs))
+          master(RemoteMasterSettings(RemoteSettings(masterCredentials, policy, authority, capacity, certificates),
+                                      masterTimeoutMs, managementStartup), Addresses()),
+          out(RemoteOutSettings(RemoteSettings(outCredentials, policy, authority, capacity, certificates),
+                                outstationTimeoutMs, secureStartup, certificateIntervalMs))
     {
         out.application->currentTime = DNPTime(1700000000000ULL);
         out.LowerLayerUp();
@@ -365,6 +388,459 @@ TEST_CASE("RemoteUpdateKeys - Method 68 native mutual proof installs the key and
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
 }
 
+TEST_CASE("G120V8 - signed ID certificate drives a native Method 68 exchange",
+          "[remote-update-keys][user-certificate]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy, true);
+    REQUIRE(pair.outWire.front() == "F0 82 80 00");
+    REQUIRE(std::find(pair.masterWire.begin(), pair.masterWire.end(), "D0 00") != pair.masterWire.end());
+    auto completed = pair.Start(identity.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].certificateRevision == 1);
+    REQUIRE(pair.masterCredentials->users[1].certificateRevision == 1);
+    REQUIRE(pair.outCredentials->users[1].updateKey == authority->nextKey);
+    REQUIRE(pair.masterCredentials->users[1].updateKey == authority->nextKey);
+    REQUIRE(std::any_of(pair.masterWire.begin(), pair.masterWire.end(), [](const std::string& wire) {
+        return wire.find(" 20 78 08 5B 01 ") == 2;
+    }));
+    const auto writes = pair.outCredentials->writes;
+    completed = pair.Start(identity.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->writes == writes);
+}
+
+TEST_CASE("Secure startup NULL retries with its original sequence and requires the matching plain FC0",
+          "[remote-update-keys][sa-startup-null]")
+{
+    auto credentials = std::make_shared<RemoteCredentials>();
+    auto policy = std::make_shared<RemotePolicy>();
+    auto asymmetric = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*asymmetric->material);
+    OutstationTestObject out(RemoteOutSettings(RemoteSettings(credentials, policy, asymmetric, 2, identity.policy), 2000, true));
+    out.LowerLayerUp();
+    REQUIRE(out.lower->PopWriteAsHex() == "F0 82 80 00");
+    out.OnTxReady();
+    out.SendToOutstation("D1 00");
+    REQUIRE(out.application->confirms.empty());
+    REQUIRE(out.lower->NumWrites() == 0);
+    out.AdvanceTime(TimeDuration::Milliseconds(100));
+    REQUIRE(out.lower->PopWriteAsHex() == "F0 82 80 00");
+    out.OnTxReady();
+    out.SendToOutstation("D0 00");
+    REQUIRE(out.application->confirms.size() == 1);
+    out.SendToOutstation("D0 00");
+    REQUIRE(out.application->confirms.size() == 1);
+    out.AdvanceTime(TimeDuration::Milliseconds(100));
+    REQUIRE(out.lower->NumWrites() == 0);
+}
+
+TEST_CASE("G120V8 - persisted certificate-bound Common fails closed until trusted time",
+          "[remote-update-keys][user-certificate]")
+{
+    auto credentials = std::make_shared<RemoteCredentials>();
+    auto policy = std::make_shared<RemotePolicy>();
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    auto& common = credentials->users[0];
+    common.method = 68;
+    common.publicKey = authority->material->userPublic;
+    common.publicKeySize = static_cast<uint16_t>(authority->material->userPublicSize);
+    common.haveStatusSequence = true;
+    common.certificateRevision = 1;
+    credentials->trustedTime = false;
+    AuthenticationSession sessions(SessionKeys::Role::OUTSTATION,
+        RemoteSettings(credentials, policy, authority, 2, identity.policy));
+    REQUIRE(sessions.Load(0));
+    REQUIRE(sessions.Find(1)->UpdateKey(0).is_empty());
+    REQUIRE_FALSE(sessions.remote->Authorize(1, 1, 0));
+    credentials->trustedTime = true;
+    sessions.remote->Tick(1);
+    REQUIRE(sessions.Find(1)->UpdateKey(1).length() == 32);
+    REQUIRE(sessions.remote->Authorize(1, 1, 1));
+}
+
+TEST_CASE("G120V8 - Attribute Certificate changes or deletes only its enrolled holder",
+          "[remote-update-keys][user-attribute-certificate]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    const uint8_t operation = GENERATE(2, 3);
+    SignedAttribute attribute(*authority->material, identity, 2, 2, operation);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy);
+    auto completed = pair.Start(attribute.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->writes == 0);
+    completed = pair.Start(identity.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].identity.serial.back() == 2);
+    REQUIRE(pair.Out().remote->Authorize(2, 3, 0));
+    authority->nextKey.fill(0xA6);
+    completed = pair.Start(attribute.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    const auto& receiver = pair.outCredentials->users[1];
+    REQUIRE(receiver.certificateRevision == 2);
+    REQUIRE(receiver.statusSequence == 2);
+    REQUIRE(receiver.active == (operation == 3));
+    REQUIRE(pair.masterCredentials->users[1].active == receiver.active);
+    REQUIRE(receiver.identity.serial.back() == 2);
+    REQUIRE_FALSE(pair.Out().remote->Authorize(2, 3, 0));
+    if (operation == 3)
+    {
+        REQUIRE(receiver.updateKey == authority->nextKey);
+        REQUIRE(receiver.attribute.serial.back() == 2);
+        REQUIRE(receiver.roleMask == 5);
+        REQUIRE(pair.Out().remote->Authorize(2, 1, 0));
+        REQUIRE(pair.Out().remote->Authorize(2, 22, 0));
+    }
+    else
+    {
+        REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, 0));
+        REQUIRE(pair.Out().Find(2)->UpdateKey(0).is_empty());
+    }
+}
+
+TEST_CASE("G120V8 - receiver rejects unbound or invalid Attribute Certificates without touching its last key",
+          "[remote-update-keys][user-attribute-certificate]")
+{
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    SignedAttribute attribute(*authority->material, identity, fault == 9 ? 1 : 2, fault == 8 ? 1 : 2,
+        fault == 2 ? 1 : 3, fault == 1 ? 3 : 2, fault == 3, fault == 4, fault == 5 ? "other" : "rtu-1");
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy);
+    if (fault != 0)
+    {
+        auto completed = pair.Start(identity.Request(authority));
+        pair.Pump();
+        REQUIRE(completed->results.size() == 1);
+        REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    }
+    if (fault == 6) attribute.der.back() ^= 1;
+    if (fault == 7) identity.policy->attributeTrust.revocationList = attribute.revokedList;
+    if (fault == 10) attribute.der.pop_back();
+    if (fault == 11) identity.policy->attributeTrust.revocationList.clear();
+    const auto saved = pair.outCredentials->users[1];
+    const auto writes = pair.outCredentials->writes;
+    std::array<uint8_t, 2048> wire{};
+    APDURequest request(W(wire));
+    request.ConfigureHeader(FunctionCode::AUTH_REQUEST, 9);
+    Group120Var8 object(68, 2, {attribute.der.data(), attribute.der.size()});
+    auto writer = request.GetWriter();
+    REQUIRE(writer.WriteFreeFormat(&object, 1));
+    pair.out.SendToOutstation(HexConversions::to_hex(request.ToRSeq()));
+    REQUIRE(pair.out.lower->NumWrites() == 1);
+    HexSequence reply(pair.out.lower->PopWriteAsHex());
+    pair.out.OnTxReady();
+    const auto parsed = APDUHeaderParser::ParseResponse(reply.ToRSeq());
+    REQUIRE(parsed.success);
+    REQUIRE(parsed.header.function == FunctionCode::AUTH_RESPONSE);
+    Group120Var7 error;
+    REQUIRE(error.Read(parsed.objects.skip(6)));
+    REQUIRE(error.errorCode == (fault == 6 ? 9 : 10));
+    REQUIRE(pair.outCredentials->writes == writes);
+    REQUIRE(pair.outCredentials->users[1].updateKey == saved.updateKey);
+    REQUIRE(pair.outCredentials->users[1].certificateRevision == saved.certificateRevision);
+    REQUIRE(pair.outCredentials->users[1].roleMask == saved.roleMask);
+}
+
+TEST_CASE("G120V8 - periodic ACRL failure suspends only the enrolled user and revocation survives restart",
+          "[remote-update-keys][user-attribute-certificate]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    SignedAttribute attribute(*authority->material, identity);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy, false, 100);
+    auto run = [&](const UpdateKeyRequest& request) {
+        const auto completed = pair.Start(request);
+        pair.Pump();
+        REQUIRE(completed->results.size() == 1);
+        REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    };
+    run(identity.Request(authority));
+    authority->nextKey.fill(0xAC);
+    run(attribute.Request(authority));
+    REQUIRE(pair.Out().remote->Authorize(2, 1, 0));
+    const auto valid = identity.policy->attributeTrust.revocationList;
+    identity.policy->attributeTrust.revocationList.clear();
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(99));
+    REQUIRE(pair.Out().remote->Authorize(2, 1, 99));
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(1));
+    REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, 100));
+    REQUIRE(pair.Out().Find(2)->UpdateKey(100).is_empty());
+    REQUIRE(pair.Out().Find(1)->UpdateKey(100).length() == 32);
+    REQUIRE_FALSE(pair.outCredentials->users[1].attribute.revoked);
+    REQUIRE(pair.outCredentials->users[1].updateKey == authority->nextKey);
+    identity.policy->attributeTrust.revocationList = valid;
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(100));
+    REQUIRE(pair.Out().remote->Authorize(2, 1, 200));
+    identity.policy->attributeTrust.revocationList = attribute.revokedList;
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(100));
+    REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, 300));
+    REQUIRE(pair.outCredentials->users[1].attribute.revoked);
+    identity.policy->attributeTrust.revocationList = valid;
+    pair.out.LowerLayerDown();
+    pair.out.LowerLayerUp();
+    REQUIRE(pair.Out().Find(1)->UpdateKey(300).length() == 32);
+    REQUIRE(pair.Out().Find(2)->UpdateKey(300).is_empty());
+    REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, 300));
+}
+
+TEST_CASE("G120V8 - interrupted Attribute proof keeps the last active key and roles across restart",
+          "[remote-update-keys][user-attribute-certificate]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    SignedAttribute attribute(*authority->material, identity);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy);
+    auto completed = pair.Start(identity.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    const auto old = pair.outCredentials->users[1].updateKey;
+    authority->nextKey.fill(0xB1);
+    pair.finalFault = 7;
+    completed = pair.Start(attribute.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    const auto& receiver = pair.outCredentials->users[1];
+    REQUIRE(receiver.pending);
+    REQUIRE(receiver.pendingAttribute.expiresUnixMs != 0);
+    REQUIRE(receiver.attribute.expiresUnixMs == 0);
+    REQUIRE(receiver.updateKey == old);
+    const auto config = RemoteSettings(pair.outCredentials, pair.policy, authority, 2, identity.policy);
+    OutstationTestObject restarted(RemoteOutSettings(config));
+    restarted.LowerLayerUp();
+    auto& recovered = RemoteUpdateKeyTestAccess::Sessions(restarted.context);
+    REQUIRE(recovered.Find(2)->UpdateKey(0).equals(R(old)));
+    REQUIRE(recovered.remote->Authorize(2, 3, 0));
+    REQUIRE_FALSE(recovered.remote->Authorize(2, 22, 0));
+    const auto writes = pair.outCredentials->writes;
+    REQUIRE_FALSE(pair.originalFinal.empty());
+    restarted.SendToOutstation(pair.originalFinal);
+    REQUIRE(restarted.lower->NumWrites() == 0);
+    REQUIRE(pair.outCredentials->writes == writes);
+    crypto::UserCertificate rejected;
+    REQUIRE(crypto::VerifyUserAttribute(*identity.policy, 8, {attribute.der.data(), attribute.der.size()},
+        uint64_t(SignedIdentity::epoch) * 1000, rejected) == crypto::CertificateResult::INVALID_DATA);
+}
+
+TEST_CASE("G120V8 - relative ID and Attribute expiry survive reconnect and cannot restart from zero",
+          "[remote-update-keys][table-a8]")
+{
+    const bool attribute = GENERATE(false, true);
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material, 1, 1, 3, !attribute);
+    SignedAttribute change(*authority->material, identity, 2, 2, 3, 2, true);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy);
+    pair.masterCredentials->trustedTime = false;
+    pair.outCredentials->trustedTime = false;
+    auto run = [&](const UpdateKeyRequest& request) {
+        const auto completed = pair.Start(request);
+        pair.Pump();
+        REQUIRE(completed->results.size() == 1);
+        return completed->results.front();
+    };
+    REQUIRE(run(identity.Request(authority)) != TaskCompletion::SUCCESS);
+    identity.policy->pkiTime = uint64_t(SignedIdentity::epoch) * 1000;
+    REQUIRE(run(identity.Request(authority)) == TaskCompletion::SUCCESS);
+    if (attribute)
+    {
+        authority->nextKey.fill(0xB3);
+        REQUIRE(run(change.Request(authority)) == TaskCompletion::SUCCESS);
+    }
+    REQUIRE(pair.outCredentials->users[1].expiresUnixMs == 0);
+    REQUIRE(pair.Out().remote->Authorize(2, 1, 0));
+    const uint64_t deadline = attribute ? 119000 : 590000;
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(deadline - 1));
+    pair.out.LowerLayerDown();
+    pair.out.LowerLayerUp();
+    REQUIRE(pair.Out().remote->Authorize(2, 1, deadline - 1));
+    REQUIRE(pair.Out().Find(2)->UpdateKey(deadline - 1).length() == 32);
+    REQUIRE_FALSE(pair.Out().Find(2)->Ready(deadline - 1));
+
+    auto settings = RemoteSettings(pair.outCredentials, pair.policy, authority, 2, identity.policy);
+    AuthenticationSession restarted(SessionKeys::Role::OUTSTATION, settings);
+    REQUIRE(restarted.Load(0));
+    REQUIRE_FALSE(restarted.remote->Authorize(2, 1, 0));
+    REQUIRE(restarted.Find(2)->UpdateKey(0).is_empty());
+
+    pair.out.AdvanceTime(TimeDuration::Milliseconds(1));
+    pair.Out().remote->Tick(deadline);
+    REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, deadline));
+    REQUIRE(pair.Out().Find(2)->UpdateKey(deadline).is_empty());
+    REQUIRE_FALSE(pair.outCredentials->users[1].active);
+    REQUIRE(pair.Out().Find(1)->UpdateKey(deadline).length() == 32);
+}
+
+TEST_CASE("Remote SA startup uses the enrolled management user for restart clear and enable unsolicited",
+          "[remote-update-keys][sa-startup]")
+{
+    auto authority = std::make_shared<RemoteAuthority>();
+    RemotePair pair(2, true, authority, 2000, 2000, {}, true, 0, true);
+    REQUIRE(pair.outWire.front() == "F0 82 80 00");
+    const HexSequence initialStatus(pair.outWire.at(1));
+    const auto status = APDUHeaderParser::ParseResponse(initialStatus.ToRSeq());
+    REQUIRE(status.success);
+    Group120Var5 value;
+    REQUIRE(value.Read(status.objects.skip(6)));
+    REQUIRE(value.keyStatus == 2); // NOT_INIT
+    REQUIRE(value.hmacValue.is_empty());
+    const auto find = [&](const std::string& suffix) {
+        return std::find_if(pair.masterWire.begin(), pair.masterWire.end(), [&](const std::string& packet) {
+            return packet.size() >= suffix.size() + 3 && packet.compare(3, suffix.size(), suffix) == 0;
+        });
+    };
+    const auto keys = find("20 78 06");
+    const auto clear = find("02 50 01 00 07 07 00");
+    const auto integrity = find("01 3C");
+    const auto enable = find("14 3C 02 06");
+    REQUIRE(keys != pair.masterWire.end());
+    REQUIRE(clear != pair.masterWire.end());
+    REQUIRE(integrity != pair.masterWire.end());
+    REQUIRE(enable != pair.masterWire.end());
+    REQUIRE(keys < clear);
+    REQUIRE(clear < integrity);
+    REQUIRE(integrity < enable);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::AUTHORIZATION_FAILURES) == 0);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::SUCCESSFUL_AUTHENTICATIONS) >= 2);
+    const auto readResponse = std::find_if(pair.outWire.rbegin(), pair.outWire.rend(), [](const std::string& packet) {
+        return packet.size() >= 11 && packet.compare(3, 8, "81 00 00") == 0;
+    });
+    REQUIRE(readResponse != pair.outWire.rend());
+}
+
+TEST_CASE("G0V210 - each native SA association reports its own statistic count", "[device-attributes]")
+{
+    auto authority = std::make_shared<RemoteAuthority>();
+    RemotePair first(2, true, authority);
+    RemotePair second(2, true, authority, 2000, 2000, {}, false, 0, false, 8);
+    for (auto* association : {&first, &second})
+    {
+        const auto before = association->outWire.size();
+        association->master.context->Scan([](HeaderWriter& writer) {
+            return writer.WriteRangeHeader<ser4cpp::UInt8>(QualifierCode::UINT8_START_STOP, GroupVariationID(0, 210), 0, 0);
+        }, association->master.meas, TaskConfig::Default());
+        association->master.exe->run_many();
+        association->Pump();
+        REQUIRE(std::any_of(association->outWire.begin() + before, association->outWire.end(),
+            [](const std::string& packet) { return packet.find("00 D2 00 00 00 02 01 12") != std::string::npos; }));
+    }
+}
+
+TEST_CASE("G120V8 - secure synchronization reevaluates both signed windows and never extends a relative deadline",
+          "[remote-update-keys][table-a8]")
+{
+    const auto mode = GENERATE(0, 1, 2);
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material, 1, 1, 3, mode == 1);
+    SignedAttribute change(*authority->material, identity, 2, 2, 3, 2, mode == 2);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy);
+    pair.masterCredentials->trustedTime = false;
+    pair.outCredentials->trustedTime = false;
+    const uint64_t epoch = uint64_t(SignedIdentity::epoch) * 1000;
+    identity.policy->pkiTime = epoch;
+    auto completed = pair.Start(identity.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    if (mode != 1)
+    {
+        authority->nextKey.fill(0xB4);
+        completed = pair.Start(change.Request(authority));
+        pair.Pump();
+        REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    }
+    constexpr uint64_t elapsed = 200000;
+    if (mode == 0) pair.out.AdvanceTime(TimeDuration::Milliseconds(elapsed));
+    pair.outCredentials->utc = epoch;
+    pair.outCredentials->trustedTime = true;
+    pair.Out().remote->Tick(mode == 0 ? elapsed : 0);
+    if (mode == 0)
+    {
+        // Signed AC duration is 720 seconds. After 200 seconds, UTC would
+        // give 600 more, so the persisted cap must retain just 520.
+        REQUIRE(pair.outCredentials->users[1].expiresUnixMs == epoch + 520000);
+        REQUIRE(pair.Out().remote->Authorize(2, 1, 719999));
+        pair.outCredentials->utc = epoch - 1000;
+        pair.Out().remote->Tick(720000);
+        REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, 720000));
+    }
+    else REQUIRE_FALSE(pair.Out().remote->Authorize(2, 1, 0));
+    REQUIRE_FALSE(pair.outCredentials->users[1].active);
+}
+
+TEST_CASE("G120V8 - rejects invalid trust, ownership, expiry, revocation and DER",
+          "[remote-update-keys][user-certificate]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+    SignedIdentity identity(*authority->material, 1, 1, 3, fault == 4, fault == 5);
+    if (fault == 0) identity.der.back() ^= 1; // Signature bytes.
+    if (fault == 1) identity.der.push_back(0);
+    if (fault == 2) identity.der.pop_back();
+    if (fault == 3) identity.policy->trust.areaOfResponsibility = "different";
+    if (fault == 6) identity.policy->trust.revocationList.clear();
+    if (fault == 7) identity.policy->subject.clear();
+    if (fault == 10) identity.der.resize(MAX_USER_CERTIFICATE_SIZE + 1);
+    crypto::UserCertificate parsed;
+    REQUIRE(crypto::VerifyUserIdentity(*identity.policy, fault == 8 ? 8 : 7,
+        {identity.der.data(), identity.der.size()}, (uint64_t(SignedIdentity::epoch) + (fault == 9 ? 3600 : 0)) * 1000,
+        parsed)
+        == (fault == 0 ? crypto::CertificateResult::INVALID_SIGNATURE : crypto::CertificateResult::INVALID_DATA));
+}
+
+TEST_CASE("G120V8 - receiver rejects replay and malformed requests without changing credentials",
+          "[remote-update-keys][user-certificate]")
+{
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    SignedIdentity identity(*authority->material);
+    RemotePair pair(2, true, authority, 2000, 2000, identity.policy);
+    auto completed = pair.Start(identity.Request(authority));
+    pair.Pump();
+    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
+    const auto writes = pair.outCredentials->writes;
+    const auto fault = GENERATE(0, 1, 2, 3, 4, 5);
+    std::array<uint8_t, 8192> bytes{};
+    APDURequest request(W(bytes));
+    request.ConfigureHeader(FunctionCode::AUTH_REQUEST, 9);
+    auto writer = request.GetWriter();
+    const Group120Var8 object(fault == 1 ? 67 : 68, fault == 2 ? 2 : 1,
+                              {identity.der.data(), identity.der.size()});
+    REQUIRE(writer.WriteFreeFormat(&object, 1));
+    if (fault == 3) REQUIRE(writer.WriteFreeFormat(&object, 1));
+    if (fault == 5) bytes[8] = 4; // Bypass the writer's rejection of symmetric V8.
+    auto apdu = request.ToRSeq();
+    if (fault == 4) apdu = apdu.take(apdu.length() - 1);
+    pair.out.SendToOutstation(HexConversions::to_hex(apdu));
+    if (fault <= 2)
+    {
+        REQUIRE(pair.out.lower->NumWrites() == 1);
+        HexSequence response(pair.out.lower->PopWriteAsHex());
+        pair.out.OnTxReady();
+        const auto parsed = APDUHeaderParser::ParseResponse(response.ToRSeq());
+        REQUIRE(parsed.success);
+        REQUIRE(parsed.header.function == FunctionCode::AUTH_RESPONSE);
+        Group120Var7 error;
+        REQUIRE(error.Read(parsed.objects.skip(6)));
+        REQUIRE(error.errorCode == (fault == 1 ? 8 : 10));
+    }
+    else REQUIRE(pair.out.lower->NumWrites() == 0);
+    REQUIRE(pair.outCredentials->writes == writes);
+    REQUIRE(pair.outCredentials->users[1].updateKey == authority->nextKey);
+}
+
 TEST_CASE("RemoteUpdateKeys - Method 68 remains disabled without explicit configuration", "[remote-update-keys][remote-update-runtime]")
 {
     RemotePair pair;
@@ -517,6 +993,34 @@ TEST_CASE("RemoteUpdateKeys - Windows credential journal recovers committed stat
     REQUIRE(loaded.updateKey == fixture.users[1].updateKey);
     REQUIRE(storage.WriteUser(7, 1, loaded)); // Next verified commit upgrades the record.
     REQUIRE(storage.ReadUser(7, 1, loaded));
+    auto authority = std::make_shared<AsymmetricAuthority>();
+    auto certified = loaded;
+    certified.method = 68;
+    certified.publicKey = authority->material->userPublic;
+    certified.publicKeySize = static_cast<uint16_t>(authority->material->userPublicSize);
+    certified.haveStatusSequence = true;
+    certified.statusSequence = 123;
+    certified.certificateRevision = 5;
+    certified.certificateSubject.fill(0xAB);
+    REQUIRE(storage.WriteUser(7, 1, certified));
+    REQUIRE(storage.ReadUser(7, 1, loaded));
+    REQUIRE(loaded.certificateRevision == certified.certificateRevision);
+    REQUIRE(loaded.certificateSubject == certified.certificateSubject);
+    REQUIRE(loaded.statusSequence == certified.statusSequence);
+    REQUIRE(loaded.updateKey == certified.updateKey);
+    certified.identity.serial.back() = 3;
+    certified.identity.issuer.fill(0xCD);
+    certified.identity.beginsUnixMs = now - 2000;
+    certified.identity.expiresUnixMs = now + 2000;
+    certified.attribute = certified.identity;
+    certified.attribute.revoked = true;
+    certified.roleMask = 5;
+    REQUIRE(storage.WriteUser(7, 1, certified));
+    REQUIRE(storage.ReadUser(7, 1, loaded));
+    REQUIRE(crypto::SameCertificate(loaded.identity, certified.identity));
+    REQUIRE(loaded.identity.expiresUnixMs == certified.identity.expiresUnixMs);
+    REQUIRE(loaded.attribute.revoked);
+    REQUIRE(loaded.roleMask == 5);
     // Restore the v1 commit marker before testing its missing referenced record.
     REQUIRE(CredWriteW(&previous, 0));
     crypto::Clear({legacy.data(), legacy.size()});
@@ -940,7 +1444,8 @@ TEST_CASE("RemoteUpdateKeys - SCS wrap remains rejected across authority-key cha
     REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
 }
 
-TEST_CASE("RemoteUpdateKeys - SCS and tombstones cannot be reset by changing certification methods", "[remote-update-keys][remote-update-runtime]")
+TEST_CASE("RemoteUpdateKeys - a Method 68 association rejects Method 4 without changing keys or SCS",
+          "[remote-update-keys][remote-update-runtime]")
 {
     auto authority = std::make_shared<AsymmetricAuthority>();
     RemotePair pair(3, true, authority);
@@ -952,17 +1457,60 @@ TEST_CASE("RemoteUpdateKeys - SCS and tombstones cannot be reset by changing cer
     REQUIRE(completed->results.size() == 1);
     REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
     REQUIRE(pair.outCredentials->users[1].statusSequence == 5);
-    authority->nextKey.fill(0x77);
-    auto newer4 = authority->RemoteAuthority::Status(3, 6, "A");
+    const auto key = pair.outCredentials->users[1].updateKey;
+    const auto writes = pair.outCredentials->writes;
+    const auto newer4 = authority->RemoteAuthority::Status(3, 6, "A");
+    const auto transmissions = pair.masterWire.size();
     completed = pair.Start(newer4); pair.Pump();
-    REQUIRE(completed->results.front() == TaskCompletion::SUCCESS);
-    completed = pair.Start(status68); pair.Pump();
     REQUIRE(completed->results.size() == 1);
     REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
-    REQUIRE(pair.outCredentials->users[1].statusSequence == 6);
-    REQUIRE(pair.outCredentials->users[1].method == 4);
-    REQUIRE(pair.outCredentials->users[1].updateKey == authority->nextKey);
-    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 2);
+    REQUIRE(pair.masterWire.size() == transmissions);
+
+    const uint8_t name = 'A';
+    std::array<uint8_t, 32> challenge{};
+    challenge.fill(0x5A);
+    const Group120Var10 status(4, 3, 6, newer4.role, newer4.expiryDays, {&name, 1}, {},
+                               {newer4.certification.data(), newer4.certificationSize});
+    const Group120Var11 request(4, {&name, 1}, R(challenge));
+    const auto inject = [&](const auto& object, uint8_t sequence) {
+        std::array<uint8_t, 128> bytes{};
+        APDURequest apdu(W(bytes));
+        apdu.ConfigureHeader(FunctionCode::AUTH_REQUEST, sequence);
+        auto writer = apdu.GetWriter();
+        REQUIRE(writer.WriteFreeFormat(&object, 1));
+        pair.out.SendToOutstation(HexConversions::to_hex(apdu.ToRSeq()));
+        REQUIRE(pair.out.lower->NumWrites() == 1);
+        HexSequence response(pair.out.lower->PopWriteAsHex());
+        pair.out.OnTxReady();
+        const auto parsed = APDUHeaderParser::ParseResponse(response.ToRSeq());
+        REQUIRE(parsed.success);
+        REQUIRE(parsed.header.function == FunctionCode::AUTH_RESPONSE);
+        REQUIRE(parsed.header.control.SEQ == sequence);
+        Group120Var7 error;
+        REQUIRE(error.Read(parsed.objects.skip(6)));
+        REQUIRE(error.errorCode == 8);
+    };
+    inject(status, 9);
+    inject(request, 10);
+    REQUIRE(pair.outCredentials->writes == writes);
+    REQUIRE(pair.outCredentials->users[1].statusSequence == 5);
+    REQUIRE(pair.outCredentials->users[1].method == 68);
+    REQUIRE(pair.outCredentials->users[1].updateKey == key);
+    REQUIRE(pair.Out().statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 1);
+
+    completed = pair.Start(status68); pair.Pump();
+    // The two wrong-method Errors can exhaust the peer's Error budget.
+    // Replay must still fail when the Master can observe only its own timeout.
+    for (size_t n = 0; n < 3 && completed->results.empty(); ++n)
+    {
+        pair.master.exe->advance_time(std::chrono::milliseconds(2000));
+        pair.master.exe->run_many();
+        pair.Pump();
+    }
+    REQUIRE(completed->results.size() == 1);
+    REQUIRE(completed->results.front() != TaskCompletion::SUCCESS);
+    REQUIRE(pair.outCredentials->users[1].statusSequence == 5);
+    REQUIRE(pair.outCredentials->users[1].updateKey == key);
 }
 
 TEST_CASE("RemoteUpdateKeys - a different certification method cannot evict a deleted identity's replay watermark", "[remote-update-keys][remote-update-runtime]")

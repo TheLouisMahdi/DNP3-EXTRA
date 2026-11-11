@@ -6,6 +6,7 @@
 #include "auth/AuthenticationSession.h"
 #include "auth/AuthenticationError.h"
 #include "crypto/CryptoProvider.h"
+#include "crypto/UserCertificate.h"
 
 #include <algorithm>
 #include <cstring>
@@ -23,6 +24,7 @@ namespace
     class Objects final : public IAPDUHandler
     {
     public:
+        Group120Var8 identity;
         Group120Var10 status;
         Group120Var11 request;
         Group120Var12 reply;
@@ -37,7 +39,7 @@ namespace
             if (qc != QualifierCode::FREE_FORMAT) return false;
             // Native whitelist runs before callbacks, on its own parser pass.
             if (n == 0) changeHeader = gv == GroupVariation::Group120Var13;
-            return n == 0 ? (gv == GroupVariation::Group120Var10 || gv == GroupVariation::Group120Var11
+            return n == 0 ? (gv == GroupVariation::Group120Var8 || gv == GroupVariation::Group120Var10 || gv == GroupVariation::Group120Var11
                 || gv == GroupVariation::Group120Var12 || gv == GroupVariation::Group120Var13
                 || gv == GroupVariation::Group120Var15 || gv == GroupVariation::Group120Var7)
                 : (n == 1 && changeHeader && (gv == GroupVariation::Group120Var15 || gv == GroupVariation::Group120Var14));
@@ -49,6 +51,7 @@ namespace
             if (!first) first = variation; else second = variation;
             return IINField::Empty();
         }
+        IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var8>& v) override { return Accept(v, identity, 8); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var10>& v) override { return Accept(v, status, 10); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var11>& v) override { return Accept(v, request, 11); }
         IINField ProcessHeader(const FreeFormatHeader&, const ICollection<Group120Var12>& v) override { return Accept(v, reply, 12); }
@@ -68,7 +71,7 @@ namespace
     uint64_t RemainingDeadline(uint64_t expiry, uint64_t utc, uint64_t monotonic)
     {
         if (expiry <= utc || expiry - utc > std::numeric_limits<uint64_t>::max() - monotonic) return 0;
-        return monotonic + expiry - utc;
+        return monotonic + (expiry - utc);
     }
 }
 
@@ -79,7 +82,7 @@ RemoteUpdateKeys::RemoteUpdateKeys(AuthenticationSession& owner_, SessionKeys::R
 RemoteUpdateKeys::~RemoteUpdateKeys() { ClearExchange(); }
 bool RemoteUpdateKeys::MethodAllowed(uint8_t method) const
 {
-    return method == 4 || (method == 68 && owner.config.allowMethod68);
+    return method == (owner.config.allowMethod68 ? 68 : 4);
 }
 
 bool RemoteUpdateKeys::Load(uint64_t now)
@@ -92,6 +95,10 @@ bool RemoteUpdateKeys::Load(uint64_t now)
     for (auto& entry : users) entry = UpdateKeyUser();
     expires.fill(0);
     pendingExpires.fill(0);
+    identityDeadlines.fill(0);
+    pendingIdentityDeadlines.fill(0);
+    certificateUsable.fill(true);
+    lastCertificateCheck = now;
     const auto& config = owner.config;
     if (!credentials || config.keyWrapAlgorithm != 2 || config.userCapacity < 2
         || config.userCapacity > MAX_AUTHENTICATION_USERS || config.maxUpdateKeyRetries > 10
@@ -107,6 +114,7 @@ bool RemoteUpdateKeys::Load(uint64_t now)
     {
         haveTime = credentials->TrustedUnixTimeMs(utc);
         haveTrustedTime = haveTime;
+        secureClockAvailable = haveTime;
         for (size_t n = 0; n < owner.Size(); ++n)
         {
             UpdateKeyUser value;
@@ -115,18 +123,32 @@ bool RemoteUpdateKeys::Load(uint64_t now)
             if (!updatekeys::ValidName(Name(value)) || value.user != n + 1
                 || updatekeys::IsCommon(Name(value)) != (value.user == 1)
                 || !updatekeys::ValidRole(value.role) || !updatekeys::ValidRole(value.pendingRole)
-                || !MethodAllowed(value.method) || value.publicKeySize > value.publicKey.size()
+                // Stored keys and replay state may predate the selected remote method.
+                || (value.method != 4 && value.method != 68) || value.publicKeySize > value.publicKey.size()
+                || value.certificateRevision > 256
+                || (value.certificateRevision < 256
+                    && (!config.userCertificatePolicy || value.method != 68 || !value.haveStatusSequence))
                 || (value.method == 4 ? value.publicKeySize != 0
                     : !crypto::ValidateMethod68PublicKey({value.publicKey.data(), value.publicKeySize}, false))) return false;
             for (size_t j = 0; j < n; ++j)
                 if (Name(users[j]).equals(Name(value)) || (users[j].active && value.active
                     && crypto::ConstantTimeEqual(Read(users[j].updateKey), Read(value.updateKey)))) return false;
             users[n] = value;
+            if (value.identity.expiresUnixMs)
+            {
+                certificateUsable[n] = haveTime && value.expiresUnixMs && CheckActiveBindings(n, {utc, true});
+                if (haveTime && value.expiresUnixMs)
+                    identityDeadlines[n] = RemainingDeadline(value.identity.expiresUnixMs, utc, now);
+            }
+            if (haveTime && value.pendingExpiresUnixMs && value.pendingIdentity.expiresUnixMs)
+                pendingIdentityDeadlines[n] = RemainingDeadline(value.pendingIdentity.expiresUnixMs, utc, now);
             expires[n] = haveTime ? RemainingDeadline(value.expiresUnixMs, utc, now) : 0;
             pendingExpires[n] = haveTime ? RemainingDeadline(value.pendingExpiresUnixMs, utc, now) : 0;
-            // 7.5.5.7 permits only Common until trusted time is available.
-            if (!haveTime && value.user == 1 && value.active) expires[n] = std::numeric_limits<uint64_t>::max();
-            if (value.active && expires[n] > now
+            // The legacy Common exception cannot bypass the stricter
+            // validity policy of a certificate-bound credential.
+            if (!haveTime && value.user == 1 && value.active && value.certificateRevision == 256)
+                expires[n] = std::numeric_limits<uint64_t>::max();
+            if (users[n].active && certificateUsable[n] && expires[n] > now
                 && owner.At(n)->Configure(Read(value.updateKey), expires[n], now) != SessionKeys::Result::OK) return false;
         }
     }
@@ -163,17 +185,19 @@ bool RemoteUpdateKeys::Authorize(uint16_t number, uint8_t function, uint64_t now
     if (!loaded || clockFailed || !number || number > owner.Size()) return false;
     const auto n = number - 1;
     const auto& value = users[n];
-    if (!value.active || now >= expires[n]) return false;
+    if (!value.active || !certificateUsable[n] || now >= expires[n]) return false;
     // Table 7-12 capability gate for native operations. The explicit application
     // policy additionally restricts points/content. Native file/code/security
     // configuration APIs do not exist: do not grant a coarse file permission
     // that would let SECAUD write or RBACMNT read. Private roles require policy.
-    if (value.role >= 32768) return true;
+    if (value.role >= 32768 && !value.roleMask) return true;
+    const uint8_t roles = value.roleMask ? value.roleMask
+        : (value.role <= 6 ? static_cast<uint8_t>(1u << value.role) : 0);
     if (function == 0) return true; // Native application CONFIRM, after exact-owner authentication.
-    if (function == 1 || function == 23) return value.role != 4; // Monitoring/delay measurement.
-    if (function >= 3 && function <= 12) return value.role == 1; // Controls/counter freezing.
+    if (function == 1 || function == 23) return (roles & ~(1u << 4)) != 0; // Monitoring/delay measurement.
+    if (function >= 3 && function <= 12) return (roles & (1u << 1)) != 0; // Controls/counter freezing.
     if (function == 2 || function == 13 || function == 14 || (function >= 20 && function <= 22)
-        || function == 24 || function == 31) return value.role == 2 || value.role == 3 || value.role == 6;
+        || function == 24 || function == 31) return (roles & ((1u << 2) | (1u << 3) | (1u << 6))) != 0;
     return false; // Unsupported file/code operations and separately certified authority procedures.
 }
 void RemoteUpdateKeys::ClearExchange()
@@ -185,10 +209,13 @@ void RemoteUpdateKeys::ClearExchange()
     crypto::Clear(Write(signature));
     signatureSize = 0;
     operation = UpdateKeyRequest();
+    certificateRevision = 256;
+    certificateBinding = {};
     phase = Phase::IDLE;
     cipherSize = 0;
     deadline = 0;
     requestedExpiryUnix = requestedExpiry = 0;
+    requestedIdentityDeadline = 0;
     retries = 0;
     user = 0;
     transmitted = everTransmitted = changed = confirmationReady = false;
@@ -253,29 +280,48 @@ void RemoteUpdateKeys::Tick(uint64_t now)
     }
     lastTime = now;
     if (clockFailed) return;
-    if (!haveTrustedTime)
+    const auto interval = owner.config.userCertificateRecheckIntervalMs;
+    const bool recheck = interval && now - lastCertificateCheck >= interval;
+    if (!haveTrustedTime || recheck || owner.config.userCertificatePolicy)
     {
-        uint64_t utc = 0;
-        try { haveTrustedTime = credentials->TrustedUnixTimeMs(utc); } catch (...) {}
-        if (haveTrustedTime)
+        crypto::CertificateTime time{};
+        const auto haveTime = ReadCertificateTime(time);
+        const bool acquired = haveTime && time.secure && !haveTrustedTime;
+        const bool synchronized = haveTime && time.secure && !secureClockAvailable;
+        secureClockAvailable = haveTime && time.secure;
+        if (acquired)
+        {
+            haveTrustedTime = true;
             for (size_t n = 0; n < owner.Size(); ++n)
             {
-                expires[n] = RemainingDeadline(users[n].expiresUnixMs, utc, now);
-                pendingExpires[n] = RemainingDeadline(users[n].pendingExpiresUnixMs, utc, now);
+                if (!users[n].pendingIdentity.expiresUnixMs)
+                    pendingExpires[n] = RemainingDeadline(users[n].pendingExpiresUnixMs, time.utc, now);
+                if (users[n].identity.expiresUnixMs) continue;
+                expires[n] = RemainingDeadline(users[n].expiresUnixMs, time.utc, now);
                 if (users[n].active && now < expires[n])
                 {
                     owner.At(n)->ReplaceUpdateKey(Read(users[n].updateKey), expires[n], now);
                     invalidated |= 1u << n;
                 }
             }
+        }
+        if (haveTime && time.secure && owner.config.userCertificatePolicy)
+            ReevaluateCertificateTimes(now, time.utc);
+        if (synchronized || recheck) RefreshBindings(now, haveTime ? &time : nullptr);
     }
     // The native Master response timer owns retries/completion. A periodic
     // session service must not consume its timeout before that timer fires.
     if (role == SessionKeys::Role::OUTSTATION && Busy() && now >= deadline) Expire();
     for (size_t n = 0; n < owner.Size(); ++n)
-        if (haveTrustedTime && users[n].active && now >= expires[n])
+        if (users[n].active && (haveTrustedTime || expires[n]) && now >= expires[n])
         {
-            users[n].active = false;
+            if (users[n].identity.expiresUnixMs)
+            {
+                auto expired = users[n];
+                expired.active = false;
+                Commit(n, expired);
+            }
+            else users[n].active = false;
             owner.At(n)->Revoke();
             invalidated |= 1u << n;
         }
@@ -305,6 +351,7 @@ bool RemoteUpdateKeys::Install(ser4cpp::rseq_t key, uint64_t now)
     auto next = users[slot];
     const auto expiry = next.pending ? pendingExpires[slot] : expires[slot];
     if (now >= expiry) return false;
+    if (!next.pending && !certificateUsable[slot]) return false;
     if (!changed) return next.active && !next.pending; // V15-only verification does not replace Session Keys.
     if (changed)
     {
@@ -317,7 +364,19 @@ bool RemoteUpdateKeys::Install(ser4cpp::rseq_t key, uint64_t now)
     if (next.pending)
     {
         if (!changed) return false;
+        if (next.pendingIdentity.expiresUnixMs || next.pendingAttribute.expiresUnixMs)
+        {
+            crypto::CertificateTime time{};
+            if (!ReadCertificateTime(time) || now >= pendingIdentityDeadlines[slot]
+                || !VerifyBinding(next.pendingIdentity, false, time)
+                || (next.pendingAttribute.expiresUnixMs && !VerifyBinding(next.pendingAttribute, true, time))) return false;
+            next.identity = next.pendingIdentity;
+            next.attribute = next.pendingAttribute;
+            next.pendingIdentity = {};
+            next.pendingAttribute = {};
+        }
         next.role = next.pendingRole;
+        next.roleMask = next.pendingRoleMask;
         next.expiresUnixMs = next.pendingExpiresUnixMs;
         next.pending = false;
     }
@@ -326,16 +385,215 @@ bool RemoteUpdateKeys::Install(ser4cpp::rseq_t key, uint64_t now)
     crypto::Clear(Write(next.pendingUpdateKey));
     if (!Commit(slot, next)) return false;
     expires[slot] = expiry;
+    if (pendingIdentityDeadlines[slot] && next.identity.expiresUnixMs && !next.pending)
+    {
+        identityDeadlines[slot] = pendingIdentityDeadlines[slot];
+        pendingIdentityDeadlines[slot] = 0;
+    }
+    certificateUsable[slot] = true;
     if (owner.At(slot)->ReplaceUpdateKey(Read(next.updateKey), expiry, now) != SessionKeys::Result::OK) return false;
     invalidated |= 1u << slot;
     return true;
 }
 
-bool RemoteUpdateKeys::Begin(const UpdateKeyRequest& value, uint64_t now)
+bool RemoteUpdateKeys::ReadCertificateTime(crypto::CertificateTime& time) const
+{
+    try
+    {
+        time.secure = credentials->TrustedUnixTimeMs(time.utc);
+        return time.secure || (owner.config.userCertificatePolicy
+            && owner.config.userCertificatePolicy->ReadPKIValidationTime(owner.config.association, time.utc));
+    }
+    catch (...) { return false; }
+}
+
+crypto::CertificateResult RemoteUpdateKeys::VerifyCertificate(uint8_t type, ser4cpp::rseq_t der, crypto::CertificateTime& time,
+                                                              crypto::UserCertificate& certificate)
+{
+    try
+    {
+        if (owner.config.userCertificatePolicy && ReadCertificateTime(time))
+        {
+            if (type == 1)
+                return crypto::VerifyUserIdentity(*owner.config.userCertificatePolicy, owner.config.association,
+                                                  der, time, certificate);
+            if (type == 2)
+                return crypto::VerifyUserAttribute(*owner.config.userCertificatePolicy, owner.config.association,
+                                                   der, time, certificate);
+        }
+    }
+    catch (...) {} // Provider failures never grant access.
+    return crypto::CertificateResult::INVALID_DATA;
+}
+
+crypto::CertificateBindingResult RemoteUpdateKeys::CheckBinding(const UserCertificateBinding& binding, bool attribute,
+                                                               const crypto::CertificateTime& time) const
+{
+    try
+    {
+        if (owner.config.userCertificatePolicy)
+            return crypto::CheckUserCertificateBinding(*owner.config.userCertificatePolicy, owner.config.association,
+                                                       binding, attribute, time);
+    }
+    catch (...) {}
+    return crypto::CertificateBindingResult::INVALID;
+}
+
+bool RemoteUpdateKeys::VerifyBinding(const UserCertificateBinding& binding, bool attribute,
+                                    const crypto::CertificateTime& time) const
+{
+    return CheckBinding(binding, attribute, time) == crypto::CertificateBindingResult::VALID;
+}
+
+bool RemoteUpdateKeys::CheckActiveBindings(size_t index, const crypto::CertificateTime& time)
+{
+    auto value = users[index];
+    using Check = crypto::CertificateBindingResult;
+    const auto id = CheckBinding(value.identity, false, time);
+    const auto ac = value.attribute.expiresUnixMs ? CheckBinding(value.attribute, true, time) : Check::VALID;
+    const bool revokeID = id == Check::REVOKED && !value.identity.revoked;
+    const bool revokeAC = ac == Check::REVOKED && !value.attribute.revoked;
+    if (revokeID || revokeAC)
+    {
+        value.identity.revoked |= revokeID;
+        value.attribute.revoked |= revokeAC;
+        Commit(index, value);
+    }
+    return id == Check::VALID && ac == Check::VALID;
+}
+
+void RemoteUpdateKeys::RefreshBindings(uint64_t now, const crypto::CertificateTime* time)
+{
+    lastCertificateCheck = now;
+    for (size_t i = 0; i < owner.Size(); ++i)
+    {
+        const auto& value = users[i];
+        if (!value.active || !value.identity.expiresUnixMs) continue;
+        const bool usable = time && now < expires[i] && CheckActiveBindings(i, *time);
+        if (certificateUsable[i] == usable) continue;
+        certificateUsable[i] = usable;
+        if (!usable)
+        {
+            owner.At(i)->Revoke();
+            invalidated |= 1u << i;
+        }
+        else if (now < expires[i])
+        {
+            if (owner.At(i)->ReplaceUpdateKey(Read(value.updateKey), expires[i], now) == SessionKeys::Result::OK)
+                invalidated |= 1u << i;
+            else
+                certificateUsable[i] = false;
+        }
+    }
+}
+
+void RemoteUpdateKeys::ReevaluateCertificateTimes(uint64_t now, uint64_t utc)
+{
+    for (size_t i = 0; i < owner.Size(); ++i)
+    {
+        const auto& userRecord = users[i];
+        if (!(userRecord.active && userRecord.identity.expiresUnixMs)
+            && !(userRecord.pending && userRecord.pendingIdentity.expiresUnixMs)) continue;
+        auto record = userRecord;
+        bool save = false;
+        auto bound = [&](UserCertificateBinding& id, const UserCertificateBinding& attribute,
+                         uint64_t& unixExpiry, uint64_t& deadline, uint64_t& idDeadline) {
+            const bool relative = unixExpiry == 0;
+            if (relative && !deadline) return false; // A previous process's monotonic deadline is unavailable.
+            const auto end = attribute.expiresUnixMs ? std::min(id.expiresUnixMs, attribute.expiresUnixMs)
+                                                     : id.expiresUnixMs;
+            const auto start = std::max(id.beginsUnixMs, attribute.beginsUnixMs);
+            const auto absolute = utc >= start ? RemainingDeadline(relative ? end : std::min(unixExpiry, end), utc, now) : 0;
+            if (!absolute || (deadline && deadline <= now))
+            {
+                deadline = 0;
+                return false;
+            }
+            deadline = deadline ? std::min(deadline, absolute) : absolute;
+            const auto absoluteID = RemainingDeadline(id.expiresUnixMs, utc, now);
+            idDeadline = idDeadline ? std::min(idDeadline, absoluteID) : absoluteID;
+            if (relative)
+            {
+                // Both sums are bounded by the signed absolute ends above.
+                unixExpiry = utc + (deadline - now);
+                id.expiresUnixMs = utc + (idDeadline - now);
+                save = true;
+            }
+            return true;
+        };
+        if (record.active && record.identity.expiresUnixMs
+            && !bound(record.identity, record.attribute, record.expiresUnixMs, expires[i], identityDeadlines[i]))
+        {
+            record.active = false;
+            owner.At(i)->Revoke();
+            invalidated |= 1u << i;
+            save = true;
+        }
+        if (record.pending && record.pendingIdentity.expiresUnixMs
+            && (record.pendingExpiresUnixMs || pendingExpires[i])
+            && !bound(record.pendingIdentity, record.pendingAttribute, record.pendingExpiresUnixMs,
+                      pendingExpires[i], pendingIdentityDeadlines[i]))
+        {
+            record.pendingExpiresUnixMs = 0;
+            record.havePendingKey = false;
+            crypto::Clear(Write(record.pendingUpdateKey));
+            save = true;
+        }
+        if (save) Commit(i, record);
+    }
+}
+
+void RemoteUpdateKeys::RecheckCertificates(uint64_t now)
+{
+    if (!loaded || !owner.config.userCertificatePolicy) return;
+    Tick(now);
+    if (clockFailed) return;
+    crypto::CertificateTime time{};
+    RefreshBindings(now, ReadCertificateTime(time) ? &time : nullptr);
+}
+
+bool RemoteUpdateKeys::ResolveAttributeHolder(crypto::UserCertificate& certificate, const crypto::CertificateTime& time,
+                                             uint64_t now) const
+{
+    const UpdateKeyUser* holder = nullptr;
+    for (size_t i = 0; i < owner.Size(); ++i)
+    {
+        const auto& record = users[i];
+        if (!record.identity.expiresUnixMs || !crypto::SameCertificate(record.identity, certificate.holder)) continue;
+        if (holder || now >= identityDeadlines[i]) return false;
+        holder = &record;
+    }
+    if (!holder || holder->method != 68 || !VerifyBinding(holder->identity, false, time)) return false;
+    auto& status = certificate.status;
+    const bool retransmission = holder->certification == status.certification;
+    if (holder->pending && (!holder->pendingAttribute.expiresUnixMs || !retransmission)) return false;
+    if (holder->statusOperation == 2 && !(status.operation == 2 && retransmission)) return false;
+    certificate.subject = holder->certificateSubject;
+    certificate.holder = holder->identity;
+    certificate.expiresUnixMs = std::min(certificate.expiresUnixMs, holder->identity.expiresUnixMs);
+    status.name = holder->name;
+    status.nameSize = holder->nameSize;
+    status.publicKey = holder->publicKey;
+    status.publicKeySize = holder->publicKeySize;
+    return true;
+}
+
+bool RemoteUpdateKeys::Begin(const UpdateKeyRequest& request, uint64_t now)
 {
     Tick(now);
     if (!loaded || clockFailed || role != SessionKeys::Role::MASTER || Busy() || !credentials
-        || !updatekeys::ValidName({value.name.data(), value.nameSize})
+        || request.certificateRoleMask) return false;
+    const bool usesCertificate = !request.certificate.empty();
+    crypto::UserCertificate identity;
+    crypto::CertificateTime time{};
+    if (usesCertificate && (request.method != 68 || !MethodAllowed(68) || request.verifyOnly
+        || request.certificationSize || request.nameSize || request.publicKeySize || request.operation
+        || VerifyCertificate(request.certificateType, {request.certificate.data(), request.certificate.size()}, time, identity)
+            != crypto::CertificateResult::VALID || (request.certificateType == 2 && !ResolveAttributeHolder(identity, time, now))))
+        return false;
+    if (usesCertificate) identity.status.source = request.source;
+    const auto& value = usesCertificate ? identity.status : request;
+    if (!updatekeys::ValidName({value.name.data(), value.nameSize})
         || !MethodAllowed(value.method) || (value.method == 68 && value.nameSize > 126)
         || value.publicKeySize > value.publicKey.size() || value.certificationSize > value.certification.size()
         || (!value.certificationSize && value.operation != 0)
@@ -346,20 +604,52 @@ bool RemoteUpdateKeys::Begin(const UpdateKeyRequest& value, uint64_t now)
         || (value.certificationSize && (value.operation < 1 || value.operation > 3 || !updatekeys::ValidRole(value.role)))
         || (!value.verifyOnly && value.operation != 2 && !value.source)) return false;
     operation = value;
+    slot = Find({value.name.data(), value.nameSize});
+    if (usesCertificate)
+    {
+        const auto* previousBinding = slot == owner.Size() ? nullptr
+            : (value.certificateType == 1 ? &users[slot].identity : &users[slot].attribute);
+        if ((slot < owner.Size() && users[slot].certificateRevision < 256
+             && (users[slot].certificateSubject != identity.subject
+                 || value.statusSequence <= users[slot].statusSequence
+                 || identity.revision <= users[slot].certificateRevision))
+            || (previousBinding && previousBinding->revoked && crypto::SameCertificate(*previousBinding, identity.binding))
+            || (value.operation == 2 && slot == owner.Size()))
+        {
+            ClearExchange();
+            return false;
+        }
+        operation.certificate = request.certificate;
+        certificateRevision = identity.revision;
+        certificateSubject = identity.subject;
+        certificateIssuer = identity.issuer;
+        certificateBinding = identity.binding;
+    }
+    else if (value.certificationSize && slot < owner.Size() && users[slot].certificateRevision < 256)
+    {
+        ClearExchange();
+        return false;
+    }
     if (value.certificationSize && value.operation != 2)
     {
-        uint64_t utc = 0;
-        bool trusted = false;
-        try { trusted = credentials->TrustedUnixTimeMs(utc); } catch (...) {}
-        const uint64_t lifetime = uint64_t(value.expiryDays) * 86400000;
-        if (!trusted || utc > std::numeric_limits<uint64_t>::max() - lifetime
+        if (!usesCertificate && (!ReadCertificateTime(time) || !time.secure)) { ClearExchange(); return false; }
+        const auto start = time.secure ? time.utc : identity.binding.beginsUnixMs;
+        const auto end = time.secure ? identity.expiresUnixMs : identity.binding.expiresUnixMs;
+        const uint64_t lifetime = usesCertificate ? end - start : uint64_t(value.expiryDays) * 86400000;
+        if ((time.secure && time.utc > std::numeric_limits<uint64_t>::max() - lifetime)
             || now > std::numeric_limits<uint64_t>::max() - lifetime) { ClearExchange(); return false; }
-        requestedExpiryUnix = utc + lifetime;
+        requestedExpiryUnix = time.secure ? time.utc + lifetime : 0;
         requestedExpiry = now + lifetime;
+        if (usesCertificate)
+        {
+            requestedIdentityDeadline = value.certificateType == 1 ? requestedExpiry : identityDeadlines[slot];
+            requestedExpiry = std::min(requestedExpiry, requestedIdentityDeadline);
+            if (time.secure) requestedExpiryUnix = time.utc + (requestedExpiry - now);
+        }
     }
-    slot = Find({value.name.data(), value.nameSize});
     if (!value.certificationSize && slot == owner.Size()) { ClearExchange(); return false; }
     if (!value.certificationSize && users[slot].method != value.method) { ClearExchange(); return false; }
+    if (!value.certificationSize && !users[slot].pending && !certificateUsable[slot]) { ClearExchange(); return false; }
     phase = value.certificationSize ? Phase::STATUS : Phase::REPLY;
     deadline = now + owner.config.replyTimeoutMs;
     if (crypto::GenerateUpdateKeyChallenge(Write(masterChallenge)) != crypto::Result::OK) { ClearExchange(); return false; }
@@ -381,6 +671,9 @@ bool RemoteUpdateKeys::Build(APDURequest& request, uint8_t sequence, uint64_t no
     appSequence = sequence;
     auto writer = request.GetWriter();
     const ser4cpp::rseq_t name(operation.name.data(), operation.nameSize);
+    if (phase == Phase::STATUS && !operation.certificate.empty())
+        return WriteObject(writer, Group120Var8(operation.method, operation.certificateType,
+            {operation.certificate.data(), operation.certificate.size()}));
     if (phase == Phase::STATUS)
         return WriteObject(writer, Group120Var10(operation.method, operation.operation, operation.statusSequence, operation.role,
             operation.expiryDays, name, {operation.publicKey.data(), operation.publicKeySize}, {operation.certification.data(), operation.certificationSize}));
@@ -409,7 +702,9 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
     {
         if (header.function != FunctionCode::AUTH_RESPONSE || !ValidAuthenticationError(value.error)
             || value.error.associationId != owner.config.association || value.error.userNum != user
-            || value.error.seqNum != (phase == Phase::STATUS ? operation.statusSequence : ksq)) return Result::IGNORED;
+            || (value.error.seqNum != (phase == Phase::STATUS ? operation.statusSequence : ksq)
+                && !(phase == Phase::STATUS && !operation.certificate.empty()
+                     && !value.error.seqNum && value.error.errorCode >= 8 && value.error.errorCode <= 10))) return Result::IGNORED;
         Failure();
         owner.statistics.Increment(SecurityStatistic::ERROR_MESSAGES_RECEIVED);
         if (owner.config.errorObserver)
@@ -422,7 +717,8 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
     }
     if (phase == Phase::STATUS)
     {
-        if (header.function != FunctionCode::RESPONSE || !objects.is_empty()) return Result::IGNORED;
+        const auto expected = operation.certificate.empty() ? FunctionCode::RESPONSE : FunctionCode::AUTH_RESPONSE;
+        if (header.function != expected || !objects.is_empty()) return Result::IGNORED;
         if (header.IIN.HasRequestError()) { Failure(); return Result::FAILED; }
         if (operation.operation == 2)
         {
@@ -432,6 +728,20 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
                 record.active = record.pending = record.havePendingKey = false;
                 record.statusSequence = operation.statusSequence;
                 record.haveStatusSequence = true;
+                if (!operation.certificate.empty())
+                {
+                    record.method = operation.method;
+                    record.publicKey = operation.publicKey;
+                    record.publicKeySize = operation.publicKeySize;
+                    record.certificateRevision = certificateRevision;
+                    record.certificateSubject = certificateSubject;
+                    record.certificationKeyFingerprint = certificateIssuer;
+                    record.statusOperation = operation.operation;
+                    record.certification = operation.certification;
+                    record.certificationSize = operation.certificationSize;
+                    record.pendingIdentity = {};
+                    record.pendingAttribute = {};
+                }
                 crypto::Clear(Write(record.updateKey));
                 crypto::Clear(Write(record.pendingUpdateKey));
                 if (!Commit(slot, record)) { Failure(); return Result::FAILED; }
@@ -503,8 +813,18 @@ RemoteUpdateKeys::Result RemoteUpdateKeys::Response(const APDUResponseHeader& he
             record.certificationSize = operation.certificationSize;
             record.pending = true;
             record.pendingRole = operation.role;
+            record.pendingRoleMask = operation.certificateRoleMask;
             record.pendingExpiresUnixMs = requestedExpiryUnix;
             pendingExpires[slot] = requestedExpiry;
+            pendingIdentityDeadlines[slot] = requestedIdentityDeadline;
+            if (!operation.certificate.empty())
+            {
+                record.certificateRevision = certificateRevision;
+                record.certificateSubject = certificateSubject;
+                record.certificationKeyFingerprint = certificateIssuer;
+                record.pendingIdentity = operation.certificateType == 1 ? certificateBinding : record.identity;
+                record.pendingAttribute = operation.certificateType == 2 ? certificateBinding : UserCertificateBinding{};
+            }
         }
         if (!Commit(slot, record)) { Failure(); return Result::FAILED; }
         phase = Phase::CONFIRM;
@@ -627,6 +947,105 @@ bool RemoteUpdateKeys::Error(uint8_t code, uint32_t sequence, uint16_t errorUser
     return true;
 }
 
+bool RemoteUpdateKeys::ReceiveCertificate(const Group120Var8& object, uint8_t sequence, uint64_t now,
+                                       ser4cpp::wseq_t output, size_t& size, IINField iin)
+{
+    if (object.keyChangeMethod != 68 || !MethodAllowed(68))
+        return Error(8, 0, 0, sequence, output, size, iin);
+    if (object.certificateType != 1 && object.certificateType != 2)
+        return Error(10, 0, 0, sequence, output, size, iin);
+    crypto::UserCertificate identity;
+    crypto::CertificateTime time{};
+    const auto verified = VerifyCertificate(object.certificateType, object.certificate, time, identity);
+    if (verified != crypto::CertificateResult::VALID)
+        return Error(verified == crypto::CertificateResult::INVALID_SIGNATURE ? 9 : 10, 0, 0,
+                     sequence, output, size, iin);
+    if (object.certificateType == 2 && !ResolveAttributeHolder(identity, time, now))
+        return Error(10, identity.status.statusSequence, 0, sequence, output, size, iin);
+    const auto& status = identity.status;
+    const ser4cpp::rseq_t name(status.name.data(), status.nameSize);
+    auto index = Find(name);
+    if (index == owner.Size() && status.operation == 1)
+    {
+        const size_t first = updatekeys::IsCommon(name) ? 0 : 1;
+        const size_t end = updatekeys::IsCommon(name) ? 1 : owner.Size();
+        for (size_t n = first; n < end; ++n)
+            if (!users[n].nameSize) { index = n; break; }
+    }
+    if (index == owner.Size()) return Error(10, status.statusSequence, 0, sequence, output, size, iin);
+
+    const auto& previous = users[index];
+    const auto& previousBinding = object.certificateType == 1 ? previous.identity : previous.attribute;
+    if (previousBinding.revoked && crypto::SameCertificate(previousBinding, identity.binding))
+        return Error(10, status.statusSequence, 0, sequence, output, size, iin);
+    const bool duplicate = previous.certificateRevision == identity.revision
+        && previous.statusSequence == status.statusSequence && previous.certification == status.certification
+        && previous.certificateSubject == identity.subject && previous.certificationKeyFingerprint == identity.issuer
+        && (previous.pending || previous.statusOperation == 2);
+    if (duplicate && previous.pending && now >= pendingExpires[index])
+        return Error(10, status.statusSequence, 0, sequence, output, size, iin);
+    if (!duplicate)
+    {
+        const auto start = time.secure ? time.utc : identity.binding.beginsUnixMs;
+        const auto end = time.secure ? identity.expiresUnixMs : identity.binding.expiresUnixMs;
+        const auto remaining = end - start;
+        if ((previous.haveStatusSequence && status.statusSequence <= previous.statusSequence)
+            || (previous.certificateRevision < 256 && (identity.revision <= previous.certificateRevision
+                || previous.certificateSubject != identity.subject))
+            || (status.operation == 1 ? previous.active : !previous.nameSize)
+            || remaining > std::numeric_limits<uint64_t>::max() - now)
+            return Error(10, status.statusSequence, 0, sequence, output, size, iin);
+        auto next = previous;
+        next.name = status.name;
+        next.nameSize = status.nameSize;
+        next.user = static_cast<uint16_t>(index + 1);
+        next.method = 68;
+        next.publicKey = status.publicKey;
+        next.publicKeySize = status.publicKeySize;
+        next.haveStatusSequence = true;
+        next.statusSequence = status.statusSequence;
+        next.statusOperation = status.operation;
+        next.statusExpiryDays = 0;
+        next.certification = status.certification;
+        next.certificationSize = status.certificationSize;
+        next.certificationKeyFingerprint = identity.issuer;
+        next.certificateRevision = identity.revision;
+        next.certificateSubject = identity.subject;
+        next.pending = status.operation != 2;
+        next.pendingRole = status.role;
+        next.pendingRoleMask = status.certificateRoleMask;
+        const auto idDeadline = object.certificateType == 1 ? now + remaining : identityDeadlines[index];
+        const auto roleDeadline = std::min(now + remaining, idDeadline);
+        next.pendingExpiresUnixMs = time.secure ? time.utc + (roleDeadline - now) : 0;
+        next.pendingIdentity = object.certificateType == 1 ? identity.binding : identity.holder;
+        next.pendingAttribute = object.certificateType == 2 ? identity.binding : UserCertificateBinding{};
+        if (!next.pending)
+        {
+            next.active = next.havePendingKey = false;
+            crypto::Clear(Write(next.updateKey));
+            crypto::Clear(Write(next.pendingUpdateKey));
+            next.pendingIdentity = {};
+            next.pendingAttribute = {};
+        }
+        if (!Commit(index, next)) return false;
+        if (Busy() && user == next.user) Failure();
+        pendingExpires[index] = next.pending ? roleDeadline : 0;
+        pendingIdentityDeadlines[index] = next.pending ? idDeadline : 0;
+        if (!next.pending)
+        {
+            if (completedUser == next.user) completedRequestSize = completedResponseSize = 0;
+            owner.At(index)->Revoke();
+            invalidated |= 1u << index;
+        }
+    }
+    APDUResponse response(output);
+    response.SetFunction(FunctionCode::AUTH_RESPONSE);
+    response.SetControl(AppControlField(true, true, false, false, sequence));
+    response.SetIIN(iin);
+    size = response.Size();
+    return true;
+}
+
 bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects, uint64_t now,
                               ser4cpp::wseq_t output, size_t& size, IINField iin, DNPTime time)
 {
@@ -637,10 +1056,12 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
         || !static_cast<uint8_t*>(output) || output.length() < 4) return false;
     Objects value;
     if (APDUParser::Parse(objects, value, nullptr) != ParseResult::OK || value.Errors().Any()) return false;
+    if (value.first == 8 && !value.second)
+        return ReceiveCertificate(value.identity, header.control.SEQ, now, output, size, iin);
     // Retransmitting an already verified, byte-identical change can repeat its
     // confirmation, but cannot reinstall credentials or increment statistics.
     if (completedRequestSize && now < completedUntil && completedUser && completedUser <= owner.Size()
-        && users[completedUser - 1].active && now < expires[completedUser - 1]
+        && users[completedUser - 1].active && certificateUsable[completedUser - 1] && now < expires[completedUser - 1]
         && objects.equals({completedRequest.data(), completedRequestSize})
         && header.control.SEQ == (completedResponse[0] & 15) && output.length() >= completedResponseSize)
     {
@@ -655,6 +1076,8 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
         std::array<uint8_t, 32> certifier{};
         if (!VerifyCertification(status, Write(certifier))) return Error(10, status.seqNum, 0, header.control.SEQ, output, size, iin);
         auto index = Find(status.userName);
+        if (index < owner.Size() && users[index].certificateRevision < 256)
+            return Error(10, status.seqNum, 0, header.control.SEQ, output, size, iin);
         if (index < owner.Size() && users[index].haveStatusSequence && status.seqNum == users[index].statusSequence
             && users[index].statusOperation == status.operation && users[index].pendingRole == status.userRole
             && users[index].statusExpiryDays == status.userRoleExpiryDays
@@ -756,7 +1179,8 @@ bool RemoteUpdateKeys::Request(const APDUHeader& header, ser4cpp::rseq_t objects
         }
         const auto index = Find(value.request.userName);
         if (index >= owner.Size() || value.request.challengeData.length() != 32
-            || now >= (users[index].pending ? pendingExpires[index] : expires[index]))
+            || now >= (users[index].pending ? pendingExpires[index] : expires[index])
+            || (!users[index].pending && !certificateUsable[index]))
             return Error(11, 0, 0, header.control.SEQ, output, size, iin);
         if (users[index].method != value.request.keyChangeMethod) return Error(8, 0, 0, header.control.SEQ, output, size, iin);
         if (!owner.At(index)->NextUpdateKeySequence(ksq)) return false;

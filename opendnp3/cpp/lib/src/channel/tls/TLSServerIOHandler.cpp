@@ -34,7 +34,7 @@ void TLSServerIOHandler::Server::AcceptStream(uint64_t /*sessionid*/,
                                               const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
                                               std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream)
 {
-    this->callback(TLSStreamChannel::Create(executor, stream));
+    this->callback(TLSStreamChannel::Create(executor, stream, GetTLSConfig()));
 }
 
 TLSServerIOHandler::TLSServerIOHandler(const Logger& logger,

@@ -194,15 +194,32 @@ The Windows x64 release archive includes the executable, its OpenSSL runtime
 DLLs, this guide, process driver, licenses and REVISION.txt. Extract it before
 launching both terminals. Provision credentials and certificates separately.
 
-### Optional TLS handshake CRL checks
+### Host Method 68 certificate trust
+
+Use `--auth method68 --credentials <Credential-Manager-prefix> --sa-trust <manifest> --trust-system-time`
+with credentials and an enrolled Common user provisioned for the association.
+The manifest uses one `key=value` per line and resolves relative file paths from
+its own directory. Required fields are `policy=IEC62351-8`, `association`, `aor`,
+`outstation-name`, `user-capacity` (2–16), `ca`, `crl`, and at least one
+`user=<DNP-name>|<DER-subject-Name>` mapping. To enable Attribute Certificates,
+provide `aa`, `aa-ca`, `aa-crl`, and `acrl` together. Certificate and list files
+use DER. Set `recheck-ms` to enable periodic user certificate checks.
+
+The Outstation requires `rsa-private-ref`, a Credential Manager target.
+For Master certificate relay, set `rsa-public` to the independently provisioned
+Outstation RSA SPKI in DER. Append `|<user-private-key-reference>` to the user mapping
+for Change or Add. The Master command is `ruk-certificate id|attribute <DER-file>`.
+Set the transmit and receive fragment sizes to fit the full certificate object.
+The SA trust manifest and TLS certificate options are independently provisioned.
+
+### TLS certificate revocation
 
 Supply `--crl <issuer-crls.pem>` to each TLS role together with its CA bundle.
-When configured, OpenSSL checks the peer certificate chain against the issuer
-CRLs. An unreadable CRL prevents channel creation; missing, expired or revoked
-issuer CRLs should cause the TLS handshake to fail closed. The CRL bundle is
-loaded at TLS context creation; changes require a new context. Existing
-connections are not rechecked. Periodic renewal, revocation interval and
-already-open connection handling remain product decisions (SEC-T1-15).
+When configured, TLS loads the issuer lists for each handshake and rechecks
+established peers every 12 hours by default. Set `--crl-check-hours <hours>` to
+change that interval. A new handshake requires a valid list and rejects revoked
+peers. An established connection closes when a valid list confirms revocation;
+an unreadable, invalid or expired list alone leaves it open.
 
 For the selected revocation lifecycle and scoped evidence, see SEC-T1-15 in the
 [canonical workbook](../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
@@ -256,9 +273,11 @@ Points start inhibited. At the Outstation console, use
 and OPERATE rechecks it before actuation. Latch points retain their state.
 Two-output points use the configured pulse duration.
 
-The Device Profile selects Pulse On = Sometimes. D-07 in the workbook
-defines the selected Activation behavior. The diagnostic point options
-above simulate Complementary points only.
+For the D-07 Activation behavior, configure a simulated point with
+`--rtu-crob-activation <index>:<pulse-ms>`. The Master command
+`crob <index> pulse [sbo|direct|noack] [request-on-ms]` sends Pulse On
+(`0x01`) with count one. The Outstation uses the configured pulse duration
+and checks the same interlock as Complementary controls.
 
 The selected RTU default for analog events is G32V5 (float32 without time);
 generic diagnostics retain G32V7. In RTU mode, the unselected G41V4

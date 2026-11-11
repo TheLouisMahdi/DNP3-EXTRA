@@ -4,6 +4,7 @@
 #include "mocks/QueuedChannelListener.h"
 #include "dnp3mocks/RemoteUpdateKeyCredentials.h"
 #include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
+#include "dnp3mocks/UserIdentityCertificate.h"
 
 #include <opendnp3/DNP3Manager.h>
 #include <opendnp3/auth/SecurityStatistic.h>
@@ -246,8 +247,26 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     auto mc = std::make_shared<RemoteCredentials>();
     auto oc = std::make_shared<RemoteCredentials>();
     auto policy = std::make_shared<RemotePolicy>();
-    const bool asymmetric = GENERATE(false, true);
+    enum class AuthorityMode { SYMMETRIC, ASYMMETRIC, CERTIFICATE, RELATIVE_CERTIFICATE };
+    const auto mode = GENERATE(AuthorityMode::SYMMETRIC, AuthorityMode::ASYMMETRIC,
+                               AuthorityMode::CERTIFICATE, AuthorityMode::RELATIVE_CERTIFICATE);
+    const bool relative = mode == AuthorityMode::RELATIVE_CERTIFICATE;
+    const bool asymmetric = mode != AuthorityMode::SYMMETRIC;
     std::shared_ptr<RemoteAuthority> authority = asymmetric ? std::make_shared<AsymmetricAuthority>() : std::make_shared<RemoteAuthority>();
+    std::unique_ptr<SignedIdentity> identity;
+    std::unique_ptr<SignedAttribute> attribute;
+    if (mode == AuthorityMode::CERTIFICATE || relative)
+    {
+        identity.reset(new SignedIdentity(*std::static_pointer_cast<AsymmetricAuthority>(authority)->material,
+                                          1, 1, 3, false, false, 6000));
+        attribute.reset(new SignedAttribute(*std::static_pointer_cast<AsymmetricAuthority>(authority)->material, *identity));
+        if (relative)
+        {
+            oc->trustedTime = false;
+            identity->policy->pkiTime = uint64_t(SignedIdentity::epoch) * 1000;
+        }
+    }
+    std::shared_ptr<IUserCertificatePolicy> certificates = identity ? identity->policy : nullptr;
     auto listener = std::make_shared<QueuedChannelListener>();
     auto trace = std::make_shared<AuthenticationTrace>();
     auto commands = std::make_shared<TcpCommands>();
@@ -260,8 +279,8 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     OutstationStackConfig outConfig(DatabaseConfig{});
     outConfig.link.LocalAddr = 10;
     outConfig.link.RemoteAddr = 1;
-    outConfig.outstation.params.authentication = RemoteSettings(oc, policy, authority, 2);
-    outConfig.outstation.params.allowUnsolicited = false;
+    outConfig.outstation.params.authentication = RemoteSettings(oc, policy, authority, 2, certificates);
+    outConfig.outstation.params.allowUnsolicited = true;
     MasterStackConfig masterConfig;
     masterConfig.link.LocalAddr = 1;
     masterConfig.link.RemoteAddr = 10;
@@ -269,8 +288,15 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     masterConfig.master.startupIntegrityClassMask = ClassField::None();
     masterConfig.master.unsolClassMask = ClassField::None();
     masterConfig.master.ignoreRestartIIN = true;
-    masterConfig.master.authentication = RemoteSettings(mc, policy, authority, 2);
+    masterConfig.master.authentication = RemoteSettings(mc, policy, authority, 2, certificates);
     masterConfig.master.authentication.updateKeyTrust.reset();
+    if (identity)
+    {
+        REQUIRE(identity->der.size() > 4096);
+        REQUIRE(identity->der.size() <= MAX_USER_CERTIFICATE_SIZE);
+        masterConfig.master.maxTxFragSize = MAX_USER_CERTIFICATE_SIZE + 10;
+        outConfig.outstation.params.maxRxFragSize = MAX_USER_CERTIFICATE_SIZE + 10;
+    }
     auto outstation = server->AddOutstation("remote-sa-outstation", commands, DefaultOutstationApplication::Create(), outConfig);
     auto master = client->AddMaster("remote-sa-master", NullSOEHandler::Create(), DefaultMasterApplication::Create(), masterConfig);
     REQUIRE(outstation);
@@ -278,7 +304,7 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     REQUIRE(outstation->Enable());
     REQUIRE(master->Enable());
     REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
-    auto request = authority->Status(3, 1, "A");
+    auto request = identity ? identity->Request(authority) : authority->Status(3, 1, "A");
     request.source = authority;
     auto completion = std::make_shared<ScanResult>();
     auto future = completion->result.get_future();
@@ -288,6 +314,8 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     REQUIRE(future.get() == TaskCompletion::SUCCESS);
     REQUIRE(mc->users[1].updateKey == authority->nextKey);
     REQUIRE(oc->users[1].updateKey == authority->nextKey);
+    if (identity) REQUIRE(oc->users[1].certificateRevision == 1);
+    if (relative) REQUIRE(oc->users[1].expiresUnixMs == 0);
     auto control = [&]() {
         auto completion = std::make_shared<std::promise<TaskCompletion>>();
         auto result = completion->get_future();
@@ -309,15 +337,52 @@ TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native
     REQUIRE(commands->operated.load() == 2);
     // Recreate the Outstation: durable credentials, not cached Session Keys,
     // must establish the fresh sessions after restart.
-    server->Shutdown();
-    REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
-    server = manager.AddTCPServer("remote-sa-restarted-server", levels::NORMAL, ServerAcceptMode::CloseExisting,
-        IPEndpoint::Localhost(port), nullptr);
-    outstation = server->AddOutstation("remote-sa-restarted-outstation", commands, DefaultOutstationApplication::Create(), outConfig);
-    REQUIRE(outstation->Enable());
-    REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
-    control();
-    REQUIRE(commands->operated.load() == 3);
+    const auto restart = [&]() {
+        server->Shutdown();
+        REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
+        server = manager.AddTCPServer("remote-sa-restarted-server", levels::NORMAL, ServerAcceptMode::CloseExisting,
+            IPEndpoint::Localhost(port), nullptr);
+        outstation = server->AddOutstation("remote-sa-restarted-outstation", commands, DefaultOutstationApplication::Create(), outConfig);
+        REQUIRE(outstation->Enable());
+        REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    };
+    if (!relative)
+    {
+        restart();
+        control();
+        REQUIRE(commands->operated.load() == 3);
+    }
+    if (identity)
+    {
+        authority->nextKey.fill(0xA7);
+        auto completed = std::make_shared<ScanResult>();
+        auto result = completed->result.get_future();
+        REQUIRE(master->ChangeUpdateKey(attribute->Request(authority), TaskConfig::With(completed)));
+        REQUIRE(result.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+        REQUIRE(result.get() == TaskCompletion::SUCCESS);
+        REQUIRE(oc->users[1].identity.serial.back() == 2);
+        REQUIRE(oc->users[1].attribute.serial.back() == 2);
+        REQUIRE(oc->users[1].certificateRevision == 2);
+        REQUIRE(oc->users[1].roleMask == 5);
+        REQUIRE(oc->users[1].updateKey == authority->nextKey);
+        REQUIRE(mc->users[1].updateKey == authority->nextKey);
+        if (relative) REQUIRE(oc->users[1].expiresUnixMs == 0);
+        auto denied = std::make_shared<std::promise<TaskCompletion>>();
+        auto resultDenied = denied->get_future();
+        auto config = TaskConfig::Default();
+        config.authenticationUser = 2;
+        master->SelectAndOperate(ControlRelayOutputBlock(OperationType::LATCH_ON), 0,
+            [denied](const ICommandTaskResult& value) { denied->set_value(value.summary); }, config);
+        REQUIRE(resultDenied.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+        REQUIRE(resultDenied.get() != TaskCompletion::SUCCESS);
+        REQUIRE(commands->operated.load() == (relative ? 2 : 3));
+        if (relative)
+        {
+            restart();
+            REQUIRE_FALSE(outstation->GetAuthenticationStatus().users[1].ready);
+            REQUIRE(oc->users[1].updateKey == authority->nextKey);
+        }
+    }
     manager.Shutdown();
 }
 

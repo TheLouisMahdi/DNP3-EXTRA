@@ -14,7 +14,9 @@ struct Options
 {
     std::string role, host = "127.0.0.1", auth = "compat", profile, credentials;
     std::string ca, cert, key, peerName, tlsVersion = "both", ciphers, suites, directory, crl;
+    std::string saTrustManifest;
     uint16_t port = 20000, local = 0, remote = 0, association = 7, user = 2;
+    uint16_t crlCheckHours = 0;
     uint32_t responseMs = 2000, replyMs = 2000, renewalMs = 900000, messageCount = 1000;
     uint32_t rxFragmentBytes = opendnp3::DEFAULT_MAX_APDU_SIZE;
     uint32_t txFragmentBytes = opendnp3::DEFAULT_MAX_APDU_SIZE;
@@ -30,11 +32,13 @@ struct Options
     bool rtuIoProfile = false;
     std::bitset<10> rtuCrobLatches;
     std::bitset<10> rtuCrobTwoOutputs;
-    std::array<uint32_t, 10> rtuCrobTwoOutputPulseMs{};
+    std::bitset<10> rtuCrobActivation;
+    std::array<uint32_t, 10> rtuCrobPulseMs{};
     bool expiredTestCertificate = false, selfSignedTestCertificate = false;
 };
 Options ParseOptions(int argc, char** argv);
 opendnp3::AuthenticationConfig Authentication(const Options& options, bool master);
+opendnp3::UpdateKeyRequest CertificateRequest(const Options& options, const std::string& type, const std::string& path);
 opendnp3::UpdateKeyRequest AuthorizedRequest(const Options& options, const std::string& operation,
                                             const std::string& name, uint32_t scs, uint16_t role, uint16_t days);
 void PrintUsers(const Options& options, bool master);

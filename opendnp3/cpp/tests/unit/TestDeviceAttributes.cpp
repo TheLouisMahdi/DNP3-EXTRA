@@ -256,6 +256,28 @@ TEST_CASE("DeviceAttributes - exact unsigned values and borrowed UINT conversion
     REQUIRE(number == 18);
 }
 
+TEST_CASE("DeviceAttributes - Master receives selected unsigned attributes in both qualifier forms",
+          "[device-attributes]")
+{
+    for (const auto qualifier : {QualifierCode::UINT8_START_STOP, QualifierCode::UINT8_CNT_UINT8_INDEX})
+    {
+        const std::string selector = qualifier == QualifierCode::UINT8_START_STOP ? "00 00 00" : "17 01 00";
+        MasterAttributes master;
+        REQUIRE(master.Parse("00 D1 " + selector + " 02 01 05 00 D2 " + selector + " 02 01 12") == ParseResult::OK);
+        REQUIRE(master.soe.attributes.size() == 2);
+        for (const auto& sample : master.soe.attributes)
+        {
+            REQUIRE(sample.header.qualifier == qualifier);
+            REQUIRE(sample.set == 0);
+            REQUIRE(sample.type == 2);
+        }
+        REQUIRE(master.soe.attributes[0].header.gv == GroupVariation::Group0Var209);
+        REQUIRE(master.soe.attributes[1].header.gv == GroupVariation::Group0Var210);
+        REQUIRE(master.soe.Unsigned(0) == 5);
+        REQUIRE(master.soe.Unsigned(1) == 18);
+    }
+}
+
 TEST_CASE("DeviceAttributes - Master list parsing preserves properties including extended length", "[device-attributes]")
 {
     for (const auto header : {"00 00 00", "17 01 00"})

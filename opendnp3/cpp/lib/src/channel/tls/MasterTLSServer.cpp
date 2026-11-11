@@ -97,7 +97,7 @@ void MasterTLSServer::AcceptStream(uint64_t sessionid,
                                    const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
                                    std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream)
 {
-    auto channel = TLSStreamChannel::Create(executor->fork(), stream); // run the link session in a new strand
+    auto channel = TLSStreamChannel::Create(executor->fork(), stream, GetTLSConfig()); // link session in a new strand
 
     auto create = [&]() -> std::shared_ptr<LinkSession> {
         return LinkSession::Create(this->logger.detach(SessionIdToString(sessionid)), sessionid, this->manager,

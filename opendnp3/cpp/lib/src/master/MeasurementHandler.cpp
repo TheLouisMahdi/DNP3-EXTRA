@@ -24,6 +24,65 @@
 
 namespace opendnp3
 {
+namespace
+{
+// Validate relative timestamps during the parser's first pass so a malformed
+// fragment cannot deliver earlier objects or cause an application CONFIRM.
+class RelativeTimeCheck final : public IAPDUHandler
+{
+public:
+    bool valid = true;
+
+    bool IsAllowed(uint32_t, GroupVariation, QualifierCode) override { return true; }
+
+private:
+    static constexpr uint64_t maxTime = 0xFFFFFFFFFFFFULL;
+    uint64_t base = 0;
+    bool haveBase = false;
+
+    template<class T> IINField ReadBase(const ICollection<T>& values)
+    {
+        T value;
+        haveBase = values.ReadOnlyValue(value);
+        if (haveBase) base = value.time.value;
+        return IINField::Empty();
+    }
+
+    IINField ProcessHeader(const CountHeader&, const ICollection<Group51Var1>& values) override
+    {
+        return ReadBase(values);
+    }
+
+    IINField ProcessHeader(const CountHeader&, const ICollection<Group51Var2>& values) override
+    {
+        return ReadBase(values);
+    }
+
+    template<class T> void CheckOffsets(const ICollection<Indexed<T>>& values)
+    {
+        if (!haveBase)
+        {
+            valid = false;
+            return;
+        }
+        values.ForeachItem([&](const Indexed<T>& item) {
+            if (item.value.time.value > maxTime - base) valid = false;
+        });
+    }
+
+    IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<Binary>>& values) override
+    {
+        if (header.enumeration == GroupVariation::Group2Var3) CheckOffsets(values);
+        return IINField::Empty();
+    }
+
+    IINField ProcessHeader(const PrefixHeader& header, const ICollection<Indexed<DoubleBitBinary>>& values) override
+    {
+        if (header.enumeration == GroupVariation::Group4Var3) CheckOffsets(values);
+        return IINField::Empty();
+    }
+};
+}
 
 ParseResult MeasurementHandler::ProcessMeasurements(ResponseInfo info,
                                                     const ser4cpp::rseq_t& objects,
@@ -31,7 +90,16 @@ ParseResult MeasurementHandler::ProcessMeasurements(ResponseInfo info,
                                                     ISOEHandler* pHandler)
 {
     MeasurementHandler handler(info, logger, pHandler);
-    return APDUParser::Parse(objects, handler, &logger);
+    RelativeTimeCheck time;
+    const auto settings = ParserSettings::Default();
+    const auto result = APDUParser::ParseSinglePass(objects, &logger, &time, &handler, settings);
+    if (result != ParseResult::OK) return result;
+    if (!time.valid)
+    {
+        SIMPLE_LOG_BLOCK(logger, flags::WARN, "Relative time requires a preceding CTO and a 48-bit absolute time");
+        return ParseResult::INVALID_OBJECT;
+    }
+    return APDUParser::ParseSinglePass(objects, nullptr, &handler, nullptr, settings);
 }
 
 MeasurementHandler::MeasurementHandler(ResponseInfo info, const Logger& logger, ISOEHandler* pSOEHandler)
@@ -56,6 +124,10 @@ bool MeasurementHandler::IsAllowed(uint32_t, GroupVariation gv, QualifierCode qc
     // Table 12-63 response qualifiers. Keep request parsing and other types unchanged.
     const bool prefix = qc == QualifierCode::UINT8_CNT_UINT8_INDEX || qc == QualifierCode::UINT16_CNT_UINT16_INDEX;
     const auto id = GroupVariationSpec::to_type(gv);
+    const auto group = id >> 8;
+    const bool range = qc == QualifierCode::UINT8_START_STOP || qc == QualifierCode::UINT16_START_STOP;
+    if (group == 1 || group == 3) return range && (id & 0xFF) != 0;
+    if (group == 2 || group == 4) return prefix && (id & 0xFF) != 0;
     if ((id >> 8) == 13 || (id >> 8) == 43)
         return prefix && (id & 0xFF) != 0;
     switch (gv)

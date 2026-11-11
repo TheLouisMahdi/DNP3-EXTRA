@@ -10,6 +10,7 @@
 namespace opendnp3
 {
 class IUpdateKeyTrust;
+class IUserCertificatePolicy;
 // Credential retrieval and authorization are separate trust boundaries. Implementations
 // must be thread safe, must not log secrets, and must return false on unavailable data.
 class IAuthenticationCredentials
@@ -87,7 +88,13 @@ struct AuthenticationConfig
     // Remote Update Keys are opt-in. Requires IUpdateKeyCredentials, AES-256,
     // and a provisioned association-local Outstation identity.
     bool remoteUpdateKeys = false;
-    bool allowMethod68 = false; // Optional RSA-OAEP2048/SHA256 + DSA2048/256; no fallback.
+    // Select Method 68 for this association's remote Update Key exchanges.
+    // Otherwise select Method 4. Previously provisioned keys remain usable for SA.
+    bool allowMethod68 = false;
+    std::shared_ptr<IUserCertificatePolicy> userCertificatePolicy;
+    /// Optional local recheck cadence for enrolled SA users (separate from TLS).
+    /// Zero leaves checks at enrollment, key installation and reconnect.
+    uint32_t userCertificateRecheckIntervalMs = 0;
     uint8_t maxUpdateKeyRetries = 2; // Bounded retransmissions per remote-key stage, maximum 10.
     uint16_t userCapacity = 2; // 2..16 when remoteUpdateKeys is enabled.
     std::array<uint8_t, 128> outstationName{};

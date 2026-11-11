@@ -19,16 +19,50 @@
  */
 
 #include "channel/tls/TLSStreamChannel.h"
+#include "channel/tls/SSLContext.h"
 
+#include <chrono>
 #include <utility>
 
 namespace opendnp3
 {
 
 TLSStreamChannel::TLSStreamChannel(const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
-                                   std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream)
-    : IAsyncChannel(executor), stream(std::move(stream))
+                                   std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream,
+                                   const TLSConfig& config, std::chrono::steady_clock::duration interval)
+    : IAsyncChannel(executor), stream(std::move(stream)), config(config), interval(interval)
 {
+}
+
+std::shared_ptr<IAsyncChannel> TLSStreamChannel::Create(
+    const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
+    const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>>& stream, const TLSConfig& config)
+{
+    return Create(executor, stream, config, std::chrono::hours(config.crlCheckIntervalHours));
+}
+
+std::shared_ptr<IAsyncChannel> TLSStreamChannel::Create(
+    const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
+    const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>>& stream, const TLSConfig& config,
+    std::chrono::steady_clock::duration interval)
+{
+    auto channel = std::make_shared<TLSStreamChannel>(executor, stream, config, interval);
+    if (!config.crlFilePath.empty() && interval > std::chrono::steady_clock::duration::zero()) channel->ScheduleCRLCheck();
+    return channel;
+}
+
+void TLSStreamChannel::ScheduleCRLCheck()
+{
+    const std::weak_ptr<TLSStreamChannel> weak = std::static_pointer_cast<TLSStreamChannel>(shared_from_this());
+    revocationTimer = executor->start(interval, [weak]() {
+        if (auto channel = weak.lock())
+        {
+            if (SSLContext::PeerIsRevoked(channel->stream->native_handle(), channel->config))
+                channel->Shutdown();
+            else
+                channel->ScheduleCRLCheck();
+        }
+    });
 }
 
 void TLSStreamChannel::BeginReadImpl(ser4cpp::wseq_t dest)
@@ -47,6 +81,7 @@ void TLSStreamChannel::BeginWriteImpl(const ser4cpp::rseq_t& data)
 
 void TLSStreamChannel::ShutdownImpl()
 {
+    revocationTimer.cancel();
     // Don't bother with a TLS shutdown. Just shutdown the socket.
     std::error_code ec;
     stream->lowest_layer().shutdown(asio::socket_base::shutdown_both, ec);

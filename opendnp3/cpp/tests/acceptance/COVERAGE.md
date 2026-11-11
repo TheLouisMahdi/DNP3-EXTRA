@@ -1,38 +1,38 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 258 Host scenarios have executable bindings (457 vectors). 183 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 274 Host scenarios have executable bindings (485 vectors). 167 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
 | Requirement | Executable suffixes | Pending Host suffixes | External suffixes |
 | --- | --- | --- | --- |
-| PROFILE-003 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD` | `AS00`, `AS01`, `AS06` | — |
+| PROFILE-003 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD`, `AS06` | `AS00`, `AS01` | — |
 | PROFILE-004 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-005 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-006 | `R06Q28`, `R07Q28`, `R08Q28`, `DEFAULT`, `NEG` | — | — |
-| PROFILE-007 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `BATCH` | — |
-| PROFILE-008 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `VALUE` | — |
-| PROFILE-009 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `CTO` | — |
-| PROFILE-010 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD` | `AS00`, `AS01`, `AS06` | — |
+| PROFILE-007 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `BATCH` | — | — |
+| PROFILE-008 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `VALUE` | — | — |
+| PROFILE-009 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `CTO` | — | — |
+| PROFILE-010 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD`, `AS00`, `AS01`, `AS06` | — | — |
 | PROFILE-011 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-012 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-013 | `R06Q28`, `R07Q28`, `R08Q28`, `DEFAULT`, `NEG` | — | — |
-| PROFILE-014 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `BATCH` | — |
-| PROFILE-015 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `VALUE` | — |
-| PROFILE-016 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `CTO` | — |
+| PROFILE-014 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `BATCH` | — | — |
+| PROFILE-015 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `VALUE` | — | — |
+| PROFILE-016 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `CTO` | — | — |
 | PROFILE-017 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD` | — | — |
 | PROFILE-018 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
-| PROFILE-020 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD` | `AS00`, `AS01`, `AS06` | — |
+| PROFILE-020 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD`, `AS00`, `AS01`, `AS06` | — | — |
 | PROFILE-021 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-022 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-023 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-024 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-025 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-026 | `R06Q28`, `R07Q28`, `R08Q28`, `DEFAULT`, `NEG` | — | — |
-| PROFILE-027 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `BATCH` | — |
+| PROFILE-027 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `BATCH` | — | — |
 | PROFILE-028 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | — | — |
-| PROFILE-029 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `VALUE` | — |
-| PROFILE-030 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG` | `VALUE` | — |
+| PROFILE-029 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `VALUE` | — | — |
+| PROFILE-030 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `VALUE` | — | — |
 | PROFILE-031 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD` | — | — |
 | PROFILE-032 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-033 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |

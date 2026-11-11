@@ -363,7 +363,7 @@ void CommandResult(const std::string& label, const ICommandTaskResult& result)
 class SimulatedCommands final : public SimpleCommandHandler
 {
     using SteadyClock = std::chrono::steady_clock;
-    enum class Drive { INACTIVE, CLOSE, TRIP };
+    enum class Drive { INACTIVE, CLOSE, TRIP, ACTIVATE };
     struct PulseState
     {
         Drive drive = Drive::INACTIVE;
@@ -373,7 +373,8 @@ class SimulatedCommands final : public SimpleCommandHandler
     const bool rtuIoProfile;
     const std::bitset<10> rtuCrobLatches;
     const std::bitset<10> rtuCrobTwoOutputs;
-    const std::array<uint32_t, 10> rtuCrobTwoOutputPulseMs;
+    const std::bitset<10> rtuCrobActivation;
+    const std::array<uint32_t, 10> rtuCrobPulseMs;
     const bool testOnly;
     std::bitset<10> crobInterlockPermits;
     std::mutex crobInterlockMutex;
@@ -383,6 +384,13 @@ class SimulatedCommands final : public SimpleCommandHandler
     std::thread crobPulseWorker;
     bool shuttingDown = false;
     size_t inFlightActuations = 0;
+
+    static const char* DriveName(Drive drive)
+    {
+        if (drive == Drive::CLOSE) return "close";
+        if (drive == Drive::TRIP) return "trip";
+        return "activation";
+    }
 
     SteadyClock::time_point PulseNowLocked() const
     {
@@ -413,8 +421,7 @@ class SimulatedCommands final : public SimpleCommandHandler
             auto nextDeadline = SteadyClock::time_point::max();
             for (size_t index = 0; index < crobPulseStates.size(); ++index)
             {
-                if (rtuCrobTwoOutputs.test(index) &&
-                    crobPulseStates[index].drive != Drive::INACTIVE)
+                if (crobPulseStates[index].drive != Drive::INACTIVE)
                     nextDeadline = std::min(nextDeadline, crobPulseStates[index].deadline);
             }
 
@@ -424,29 +431,18 @@ class SimulatedCommands final : public SimpleCommandHandler
                 continue;
             }
 
-            if (testOnly)
-            {
-                crobPulseChanged.wait(lock);
-                if (shuttingDown)
-                    break;
-            }
-            else
-            {
-                const auto wakeAt = nextDeadline - crobTestClockOffset;
-                if (crobPulseChanged.wait_until(lock, wakeAt) != std::cv_status::timeout)
-                    continue;
-            }
-
             const auto now = PulseNowLocked();
             if (nextDeadline > now)
+            {
+                if (testOnly) crobPulseChanged.wait(lock);
+                else crobPulseChanged.wait_until(lock, nextDeadline - crobTestClockOffset);
                 continue;
+            }
             std::vector<std::pair<uint16_t, Drive>> expired;
             for (size_t index = 0; index < crobPulseStates.size(); ++index)
             {
                 auto& state = crobPulseStates[index];
-                if (rtuCrobTwoOutputs.test(index) &&
-                    state.drive != Drive::INACTIVE &&
-                    state.deadline <= now)
+                if (state.drive != Drive::INACTIVE && state.deadline <= now)
                 {
                     expired.emplace_back(static_cast<uint16_t>(index), state.drive);
                     state.drive = Drive::INACTIVE;
@@ -457,7 +453,7 @@ class SimulatedCommands final : public SimpleCommandHandler
             for (const auto& item : expired)
                 Console::Print("CROB-PULSE",
                     "expired point=" + std::to_string(item.first) +
-                    " drive=" + (item.second == Drive::CLOSE ? "close" : "trip"));
+                    " drive=" + DriveName(item.second));
             lock.lock();
         }
     }
@@ -475,11 +471,13 @@ class SimulatedCommands final : public SimpleCommandHandler
 
         const bool latch = rtuCrobLatches.test(index);
         const bool twoOutput = rtuCrobTwoOutputs.test(index);
-        if ((!latch && !twoOutput) || value.count != 1 ||
-            (value.rawCode != 0x41 && value.rawCode != 0x81))
+        const bool activation = rtuCrobActivation.test(index);
+        const bool permittedCode = activation ? value.rawCode == 0x01
+            : (latch || twoOutput) && (value.rawCode == 0x41 || value.rawCode == 0x81);
+        if (!permittedCode || value.count != 1)
             return CommandStatus::NOT_SUPPORTED;
 
-        if (twoOutput && crobPulseStates[index].drive != Drive::INACTIVE)
+        if ((twoOutput || activation) && crobPulseStates[index].drive != Drive::INACTIVE)
             return CommandStatus::ALREADY_ACTIVE;
 
         return crobInterlockPermits.test(index)
@@ -494,10 +492,11 @@ public:
           rtuIoProfile(options.rtuIoProfile),
           rtuCrobLatches(options.rtuCrobLatches),
           rtuCrobTwoOutputs(options.rtuCrobTwoOutputs),
-          rtuCrobTwoOutputPulseMs(options.rtuCrobTwoOutputPulseMs),
+          rtuCrobActivation(options.rtuCrobActivation),
+          rtuCrobPulseMs(options.rtuCrobPulseMs),
           testOnly(options.testOnly)
     {
-        if (rtuCrobTwoOutputs.any())
+        if (rtuCrobTwoOutputs.any() || rtuCrobActivation.any())
             crobPulseWorker = std::thread(&SimulatedCommands::RunPulseTimer, this);
     }
 
@@ -507,7 +506,7 @@ public:
     {
         if (!rtuIoProfile ||
             index >= rtuCrobLatches.size() ||
-            (!rtuCrobLatches.test(index) && !rtuCrobTwoOutputs.test(index)))
+            (!rtuCrobLatches.test(index) && !rtuCrobTwoOutputs.test(index) && !rtuCrobActivation.test(index)))
             return false;
 
         std::lock_guard<std::mutex> lock(crobInterlockMutex);
@@ -519,7 +518,7 @@ public:
 
     bool AdvancePulseClock(uint32_t milliseconds)
     {
-        if (!testOnly || !rtuCrobTwoOutputs.any() || !milliseconds)
+        if (!testOnly || !(rtuCrobTwoOutputs.any() || rtuCrobActivation.any()) || !milliseconds)
             return false;
 
         int64_t totalMilliseconds = 0;
@@ -555,8 +554,12 @@ public:
                 Console::Print("CROB-CONFIG",
                     "point=" + std::to_string(index) +
                     " model=complementary-two-output pulse-ms=" +
-                    std::to_string(rtuCrobTwoOutputPulseMs[index]) +
+                    std::to_string(rtuCrobPulseMs[index]) +
                     " close=inactive trip=inactive");
+            if (rtuCrobActivation.test(index))
+                Console::Print("CROB-CONFIG", "point=" + std::to_string(index) +
+                    " model=activation pulse-ms=" + std::to_string(rtuCrobPulseMs[index]) +
+                    " activation=inactive");
         }
     }
 
@@ -565,8 +568,8 @@ public:
         struct DiagnosticState
         {
             uint16_t index;
-            bool latch;
             bool twoOutput;
+            bool activation;
             bool permitted;
             Drive drive;
         };
@@ -578,11 +581,11 @@ public:
             executionCount = executions.load();
             for (size_t index = 0; index < rtuCrobLatches.size(); ++index)
             {
-                if (rtuCrobLatches.test(index) || rtuCrobTwoOutputs.test(index))
+                if (rtuCrobLatches.test(index) || rtuCrobTwoOutputs.test(index) || rtuCrobActivation.test(index))
                     states[count++] = {
                         static_cast<uint16_t>(index),
-                        rtuCrobLatches.test(index),
                         rtuCrobTwoOutputs.test(index),
+                        rtuCrobActivation.test(index),
                         crobInterlockPermits.test(index),
                         crobPulseStates[index].drive
                     };
@@ -593,10 +596,14 @@ public:
         {
             const auto& state = states[n];
             const auto prefix = "point=" + std::to_string(state.index) +
-                " model=" + (state.twoOutput ? "complementary-two-output"
-                                               : "complementary-latch") +
+                " model=" + (state.activation ? "activation" :
+                    state.twoOutput ? "complementary-two-output" : "complementary-latch") +
                 " interlock=" + (state.permitted ? "allowed" : "blocked");
-            if (state.twoOutput)
+            if (state.activation)
+                Console::Print("CROB-STATE", prefix + " activation=" +
+                    (state.drive == Drive::ACTIVATE ? "active" : "inactive") +
+                    " executed=" + std::to_string(executionCount));
+            else if (state.twoOutput)
                 Console::Print("CROB-STATE",
                     prefix + " close=" +
                     (state.drive == Drive::CLOSE ? "active" : "inactive") +
@@ -634,7 +641,7 @@ public:
         for (const auto& item : stopped)
             Console::Print("CROB-PULSE",
                 "shutdown=inactive point=" + std::to_string(item.first) +
-                " drive=" + (item.second == Drive::CLOSE ? "close" : "trip"));
+                " drive=" + DriveName(item.second));
     }
     template<class T> CommandStatus SelectValue(const T&, uint16_t index)
     { return index < 10 ? CommandStatus::SUCCESS : CommandStatus::OUT_OF_RANGE; }
@@ -670,7 +677,6 @@ public:
     CommandStatus OperateValue(const ControlRelayOutputBlock& value,
                                uint16_t index, IUpdateHandler& handler)
     {
-        bool twoOutput = false;
         Drive drive = Drive::INACTIVE;
         uint32_t executionCount = 0;
         {
@@ -680,28 +686,27 @@ public:
                 return result;
 
             ++inFlightActuations;
-            twoOutput = rtuCrobTwoOutputs.test(index);
-            if (twoOutput)
+            if (rtuCrobTwoOutputs.test(index) || rtuCrobActivation.test(index))
             {
-                drive = value.tcc == TripCloseCode::CLOSE
+                drive = rtuCrobActivation.test(index) ? Drive::ACTIVATE : value.tcc == TripCloseCode::CLOSE
                     ? Drive::CLOSE : Drive::TRIP;
                 auto& state = crobPulseStates[index];
                 state.drive = drive;
                 state.deadline = PulseNowLocked() +
-                    std::chrono::milliseconds(rtuCrobTwoOutputPulseMs[index]);
+                    std::chrono::milliseconds(rtuCrobPulseMs[index]);
                 executionCount = ++executions;
             }
         }
         ActuationLease lease{*this};
 
-        if (twoOutput)
+        if (drive != Drive::INACTIVE)
         {
             crobPulseChanged.notify_all();
             Console::Print("CROB-PULSE",
                 "started point=" + std::to_string(index) +
-                " drive=" + (drive == Drive::CLOSE ? "close" : "trip") +
+                " drive=" + DriveName(drive) +
                 " configured-ms=" +
-                std::to_string(rtuCrobTwoOutputPulseMs[index]) +
+                std::to_string(rtuCrobPulseMs[index]) +
                 " request-on-ms=" + std::to_string(value.onTimeMS) +
                 " request-off-ms=" + std::to_string(value.offTimeMS) +
                 " executed=" + std::to_string(executionCount));
@@ -784,6 +789,7 @@ std::shared_ptr<IChannel> MakeChannel(DNP3Manager& manager, const diagnostic::Op
         TLSConfig config(o.ca, o.cert, o.key, false, false, o.tlsVersion != "1.3", o.tlsVersion != "1.2", o.ciphers);
         config.peerName = o.peerName; config.cipherSuites = o.suites;
         config.crlFilePath = o.crl;
+        if (o.crlCheckHours) config.crlCheckIntervalHours = o.crlCheckHours;
         if (master) return manager.AddTLSClient("cli-master", logs, ChannelRetry::Default(), {IPEndpoint(o.host, o.port)}, "0.0.0.0", config, observer);
         return manager.AddTLSServer("cli-outstation", logs, ServerAcceptMode::CloseExisting, IPEndpoint(o.host, o.port), config, observer);
 #else
@@ -806,8 +812,10 @@ void Help(bool master, bool rtuIoProfile)
     {
         Console::Print("HELP", "read <g> <v> [start stop] | scan integrity|class0|class1|class2|class3 | attr 209|210|254|255");
         Console::Print("HELP", "crob <index> on|off [sbo|direct|noack] | analog <v:1..4> <index> <value> [sbo|direct|noack]");
+        if (rtuIoProfile) Console::Print("HELP", "crob <index> pulse [sbo|direct|noack] [request-on-ms]");
         Console::Print("HELP", "user <number> | ruk add|change|delete <Common|operator|engineer|guest> <scs> <role> <expiry-days>");
         Console::Print("HELP", "ruk verify|change-key <name> | stats | events | assign <group> <class:0..3> <start> <stop>");
+        Console::Print("HELP", "ruk-certificate id|attribute <DER-file>");
         Console::Print("HELP", "unsol on|off | restart cold|warm | time (G50V1 READ)");
     }
     else Console::Print("HELP", std::string("set binary|double|analog")
@@ -918,14 +926,17 @@ int RunMaster(diagnostic::Options o)
             }
             else if (Is(w, {"stats"})) master->ScanRange(GroupVariationID(121, 1), 0, 17, soe, task);
             else if (Is(w, {"events"})) master->ScanAllObjects(GroupVariationID(122, 0), soe, task);
-            else if (w[0] == "crob" && (w.size() == 3 || w.size() == 4))
+            else if (w[0] == "crob" && (w.size() == 3 || w.size() == 4 || w.size() == 5))
             {
-                if (w[2] != "on" && w[2] != "off") throw std::runtime_error("Expected on/off");
+                const bool pulse = w[2] == "pulse" && o.rtuIoProfile;
+                if ((!pulse && w[2] != "on" && w[2] != "off") || (!pulse && w.size() == 5))
+                    throw std::runtime_error("Expected on/off or RTU pulse");
                 const auto index = static_cast<uint16_t>(RequiredNumber(w[1], 65535));
                 const bool on = w[2] == "on";
+                const auto onTime = w.size() == 5 ? RequiredNumber(w[4], UINT32_MAX) : 100;
                 const auto command = o.rtuIoProfile
                     ? ControlRelayOutputBlock(OperationType::PULSE_ON,
-                                              on ? TripCloseCode::CLOSE : TripCloseCode::TRIP, false, 1, 100, 0)
+                        pulse ? TripCloseCode::NUL : on ? TripCloseCode::CLOSE : TripCloseCode::TRIP, false, 1, onTime, 0)
                     : ControlRelayOutputBlock(on ? OperationType::LATCH_ON : OperationType::LATCH_OFF);
                 const auto mode = w.size() == 3 ? std::string("sbo") : w[3];
                 if (mode == "noack")
@@ -971,6 +982,11 @@ int RunMaster(diagnostic::Options o)
                     Console::Print("ERROR", "FC6 noack rejected locally");
                     continue;
                 }
+            }
+            else if (w[0] == "ruk-certificate" && w.size() == 3)
+            {
+                if (!master->ChangeUpdateKey(diagnostic::CertificateRequest(o, w[1], w[2]), task))
+                    throw std::runtime_error("Certificate relay task rejected locally");
             }
             else if (w[0] == "ruk" && (w.size() == 3 || w.size() == 6))
             {

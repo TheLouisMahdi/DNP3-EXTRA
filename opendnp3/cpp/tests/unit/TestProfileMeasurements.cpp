@@ -242,6 +242,54 @@ TEST_CASE("ProfileMeasurements - valid relative events retain native fragmented 
     REQUIRE(master.lower->PopWriteAsHex() == "C1 00");
 }
 
+TEST_CASE("ProfileMeasurements - binary responses reject request-only qualifiers and wildcard variations",
+          "[profile-measurements]")
+{
+    for (const auto* object : {"01 02 06", "03 02 06", "02 01 06", "04 01 06", "02 00 06", "04 00 06"})
+    {
+        ProfileMeasurements f;
+        REQUIRE(f.Parse(std::string("01 02 00 00 00 81 ") + object) == ParseResult::NOT_ON_WHITELIST);
+        REQUIRE(f.soe.TotalReceived() == 0);
+    }
+}
+
+TEST_CASE("ProfileMeasurements - relative binary time requires a preceding CTO in the same fragment",
+          "[profile-measurements]")
+{
+    for (bool doubleBit : {false, true})
+    {
+        ProfileMeasurements late;
+        const auto relative = Relative(doubleBit);
+        REQUIRE(late.Parse("01 02 00 00 00 81 " + relative + " 33 01 07 01 00 00 00 00 00 00")
+                == ParseResult::INVALID_OBJECT);
+        REQUIRE(late.soe.TotalReceived() == 0);
+        ProfileMeasurements overflow;
+        REQUIRE(overflow.Parse("33 02 07 01 FF FF FF FF FF FF " + relative) == ParseResult::INVALID_OBJECT);
+        REQUIRE(overflow.soe.TotalReceived() == 0);
+        REQUIRE(overflow.Parse("33 02 07 01 FE FF FF FF FF FF " + relative) == ParseResult::OK);
+        REQUIRE(overflow.soe.TotalReceived() == 1);
+        if (doubleBit)
+            CheckTime(overflow.soe.doubleBinarySOE.at(8), 0xFFFFFFFFFFFFULL, TimestampQuality::UNSYNCHRONIZED);
+        else
+            CheckTime(overflow.soe.binarySOE.at(8), 0xFFFFFFFFFFFFULL, TimestampQuality::UNSYNCHRONIZED);
+
+        auto params = NoStartupTasks();
+        params.startupIntegrityClassMask = ClassField::AllClasses();
+        MasterTestFixture master(params);
+        REQUIRE(master.context->OnLowerLayerUp());
+        master.exe->run_many();
+        REQUIRE_FALSE(master.lower->PopWriteAsHex().empty());
+        REQUIRE(master.context->OnTxReady());
+        REQUIRE(master.SendToMaster("A0 81 00 00 33 01 07 01 07 00 00 00 00 00 " + relative));
+        REQUIRE(master.meas->TotalReceived() == 1);
+        REQUIRE(master.lower->PopWriteAsHex() == "C0 00");
+        REQUIRE(master.context->OnTxReady());
+        REQUIRE(master.SendToMaster("61 81 00 00 01 02 00 00 00 81 " + relative));
+        REQUIRE(master.meas->TotalReceived() == 1);
+        REQUIRE(master.lower->HasNoData());
+    }
+}
+
 TEST_CASE("ProfileMeasurements - G34 READ covers defaults, sparse ranges and both response widths", "[profile-deadband]")
 {
     DatabaseConfig db;

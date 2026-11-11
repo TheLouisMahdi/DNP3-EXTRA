@@ -36,8 +36,11 @@ class SSLContext : private Uncopyable
 
 public:
     SSLContext(const Logger& logger, bool server, const TLSConfig& config, std::error_code&);
+    static bool RefreshPeerStore(SSL* ssl, const TLSConfig& config);
+    static bool PeerIsRevoked(SSL* ssl, const TLSConfig& config);
 
     asio::ssl::context value;
+    const TLSConfig config;
 
 private:
     Logger logger;

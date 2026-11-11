@@ -47,6 +47,12 @@ MasterTasks::MasterTasks(const MasterParams& params,
       enableUnsol(GetEnableUnsolTask(context, params, logger, app)),
       timeSynchronization(GetTimeSyncTask(context, params.timeSyncMode, logger, app))
 {
+    for (const auto& task : {std::static_pointer_cast<IMasterTask>(clearRestart),
+                            std::static_pointer_cast<IMasterTask>(assignClass),
+                            enableUnsol, disableUnsol, timeSynchronization})
+    {
+        if (task) task->SetAuthenticationUser(params.startupAuthenticationUser);
+    }
 }
 
 void MasterTasks::Initialize(IMasterScheduler& scheduler, IMasterTaskRunner& runner)
@@ -90,6 +96,11 @@ void MasterTasks::OnRestartDetected()
     this->Demand(this->assignClass);
     this->Demand(this->startupIntegrity);
     this->Demand(this->enableUnsol);
+}
+
+bool MasterTasks::FollowsRestartClear(const IMasterTask& task) const
+{
+    return &task == assignClass.get() || &task == startupIntegrity.get() || &task == enableUnsol.get();
 }
 
 std::shared_ptr<IMasterTask> MasterTasks::GetTimeSyncTask(const std::shared_ptr<TaskContext>& context,

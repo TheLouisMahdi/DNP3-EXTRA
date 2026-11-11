@@ -116,6 +116,7 @@ private:
             replyTimer.cancel();
             monitoringTimer.cancel();
             remoteTimer.cancel();
+            certificateTimer.cancel();
             challenger.SetStatistics(nullptr);
         }
         explicit AuthenticationState(const AuthenticationConfig& config)
@@ -140,8 +141,11 @@ private:
         std::unique_ptr<AuthenticationSession> sessions;
         std::array<uint8_t, SessionKeys::MAX_APDU> wire{}, pendingWire{};
         size_t pendingWireSize = 0;
+        std::array<uint8_t, 8> startupKeyStatusRequest{};
+        bool startupKeyStatusQueued = false;
         bool remoteResponsePending = false;
         exe4cpp::Timer remoteTimer;
+        exe4cpp::Timer certificateTimer;
         std::function<void()> closeTCPConnection;
         uint8_t deferredControlCount = 0;
         uint32_t deferredControlKSQ = 0;
@@ -167,6 +171,7 @@ private:
     void FinalizeControlCounts(uint64_t now);
     void ResetAuthentication();
     void ServiceSecurityStatistics(uint64_t now);
+    void ScheduleCertificateCheck();
     void InvalidateRemoteCredentials();
     void TransmitPendingAuthentication();
     void SendAuthorizationError(uint32_t sequence, uint16_t user, uint8_t appSequence);

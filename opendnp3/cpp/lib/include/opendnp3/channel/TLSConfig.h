@@ -21,6 +21,7 @@
 #ifndef OPENDNP3_TLS_CONFIG_H
 #define OPENDNP3_TLS_CONFIG_H
 
+#include <cstdint>
 #include <string>
 
 namespace opendnp3
@@ -99,6 +100,9 @@ struct TLSConfig
     std::string cipherSuites;
     /// Optional PEM bundle of issuer CRLs. When configured, peer-chain checks fail closed.
     std::string crlFilePath;
+    /// IEEE 1815-2012 §7.8.7.4.3: local CRL evaluation interval in hours.
+    /// A configured CRL bundle requires a nonzero interval.
+    uint16_t crlCheckIntervalHours = 12;
 };
 
 } // namespace opendnp3

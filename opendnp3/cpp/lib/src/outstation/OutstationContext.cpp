@@ -138,6 +138,16 @@ bool OContext::OnLowerLayerUp()
     }
 
     isOnline = true;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions && authentication->sessions->remote)
+    {
+        authentication->sessions->remote->RecheckCertificates(static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count()));
+        InvalidateRemoteCredentials();
+        params.unsolClassMask = ClassField::None(); // Require a new authenticated FC20 after startup.
+        ScheduleCertificateCheck();
+    }
+#endif
     this->shouldCheckForUnsolicited = true;
     this->CheckForTaskStart();
     return true;
@@ -161,8 +171,10 @@ bool OContext::OnLowerLayerDown()
     {
         authentication->sessions->Disconnect();
         authentication->remoteTimer.cancel();
+        authentication->certificateTimer.cancel();
         authentication->remoteResponsePending = false;
         authentication->pendingWireSize = 0;
+        authentication->startupKeyStatusQueued = false;
         authentication->selectUser = 0;
     }
 #endif
@@ -201,6 +213,15 @@ bool OContext::OnTxReady()
     }
 #endif
     this->TransmitPendingAuthentication();
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (this->CanTransmit() && authentication && authentication->startupKeyStatusQueued)
+    {
+        auto& auth = *authentication;
+        auth.startupKeyStatusQueued = false;
+        this->ProcessMessage(Message(this->addresses.Reverse(),
+            {auth.startupKeyStatusRequest.data(), auth.startupKeyStatusRequest.size()}));
+    }
+#endif
     if (!isTransmitting)
         this->CheckForTaskStart();
     return true;
@@ -214,6 +235,23 @@ bool OContext::OnReceive(const Message& message)
         return false;
     }
 
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    // The peer may send its first session-key status request before the
+    // transport releases the startup NULL. Keep at most one exact V4 frame.
+    const auto& wire = message.payload;
+    if (!CanTransmit() && authentication && authentication->sessions && authentication->sessions->remote
+        && !unsol.completedNull && unsolConfirm.active && message.addresses == this->addresses.Reverse()
+        && wire.length() == 8 && (wire[0] & 0xF0) == 0xC0 && wire[1] == 0x20
+        && wire[2] == 120 && wire[3] == 4 && wire[4] == 7 && wire[5] == 1)
+    {
+        if (!authentication->startupKeyStatusQueued)
+        {
+            std::memcpy(authentication->startupKeyStatusRequest.data(), wire, wire.length());
+            authentication->startupKeyStatusQueued = true;
+        }
+        return true;
+    }
+#endif
     this->ProcessMessage(message);
 
     this->CheckForTaskStart();
@@ -385,7 +423,13 @@ void OContext::AbandonSolicitedRead()
 
 void OContext::BeginRetransmitLastUnsolicitedResponse()
 {
-    this->BeginTx(this->addresses.destination, this->unsol.tx.GetLastResponse());
+    const auto data = this->unsol.tx.GetLastResponse();
+    bool plainStartupNull = false;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    plainStartupNull = authentication && authentication->sessions && authentication->sessions->remote
+        && !this->unsol.completedNull && data.length() == 4;
+#endif
+    this->BeginTx(this->addresses.destination, data, plainStartupNull);
 }
 
 void OContext::BeginUnsolTx(APDUResponse& response)
@@ -396,7 +440,14 @@ void OContext::BeginUnsolTx(APDUResponse& response)
     this->unsol.tx.Record(response.GetControl(), data);
     this->unsol.seq.confirmNum = this->unsol.seq.num;
     this->unsol.seq.num.Increment();
-    this->BeginTx(this->addresses.destination, data);
+    bool plainStartupNull = false;
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    // In the remote update modes, the initial NULL carries no Challenge object
+    // (IEEE 1815-2012 7.5.2.3.2(h)).
+    plainStartupNull = authentication && authentication->sessions && authentication->sessions->remote
+        && !this->unsol.completedNull && data.length() == 4;
+#endif
+    this->BeginTx(this->addresses.destination, data, plainStartupNull);
 }
 
 void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse)
@@ -1392,6 +1443,22 @@ void OContext::InvalidateRemoteCredentials()
     }
 #endif
 }
+void OContext::ScheduleCertificateCheck()
+{
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!isOnline || !authentication || !authentication->sessions || !authentication->sessions->remote) return;
+    const auto interval = authentication->sessions->config.userCertificateRecheckIntervalMs;
+    if (!interval) return;
+    authentication->certificateTimer = executor->start(std::chrono::milliseconds(interval), [this]() {
+        const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            executor->get_time().time_since_epoch()).count());
+        ServiceSecurityStatistics(now);
+        CheckForTaskStart();
+        ScheduleCertificateCheck();
+    });
+#endif
+}
+
 void OContext::ServiceSecurityStatistics(uint64_t now)
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -1549,6 +1616,14 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication)
         return false;
+    // ProcessMessage already checked the association and FIR/FIN/CON.
+    // Only the outstanding initial NULL owns a plain unsolicited FC0.
+    if (authentication->sessions && authentication->sessions->remote
+        && header.function == FunctionCode::CONFIRM && header.control.UNS && objects.is_empty())
+    {
+        if (!unsolConfirm.active) return true; // An old confirmation cannot open another exchange.
+        if (!unsol.completedNull) return !unsol.seq.confirmNum.Equals(header.control.SEQ);
+    }
     auto* statistics = authentication->sessions ? &authentication->sessions->statistics : nullptr;
     uint16_t aggressiveUser = 0;
     const bool aggressive = objects.length() >= 2 && objects[0] == 120 && objects[1] == 3
@@ -1557,7 +1632,7 @@ bool OContext::RouteAuthentication(const Message& message, const APDUHeader& hea
     const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count());
     if (authentication->sessions && authentication->sessions->remote && objects.length() >= 2
-        && objects[0] == 120 && (objects[1] == 10 || objects[1] == 11 || objects[1] == 13 || objects[1] == 15))
+        && objects[0] == 120 && (objects[1] == 8 || objects[1] == 10 || objects[1] == 11 || objects[1] == 13 || objects[1] == 15))
     {
         auto& auth = *authentication;
         auto& remote = *auth.sessions->remote;

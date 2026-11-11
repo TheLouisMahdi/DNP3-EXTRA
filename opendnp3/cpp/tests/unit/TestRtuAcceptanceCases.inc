@@ -30,6 +30,43 @@ TEST_CASE("AT-PROFILE-003-DEFAULT", "[rtu-acceptance]")
         StaticRead(1, 2, {{7, 1, 1}, {257, 0, 1}}, {{7, 1, 1}, {257, 0, 1}}, "C0 01 01 00 06", "C0 81 80 00 01 02 01 07 00 07 00 81 01 02 01 01 01 01 01 01", "C1 01", "C1 81 80 00");
 }
 
+TEST_CASE("AT-PROFILE-003-AS06", "[rtu-acceptance]")
+{
+    if (!Selected("V1"))
+        return;
+
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+    DatabaseConfig db;
+    for (const uint16_t index : {7, 257})
+    {
+        db.binary_input[index].clazz = PointClass::Class1;
+        db.binary_input[index].evariation = EventBinaryVariation::Group2Var1;
+    }
+    OutstationTestObject outstation(config, db);
+    outstation.application->supportsAssignClass = true;
+    outstation.LowerLayerUp();
+    Update(outstation, 1, {{7, 1, 1}}, true);
+
+    CheckFrame("assignment", Request(outstation, "C0 16 3C 03 06 01 00 06"), "C0 81 82 00");
+    const auto& assignments = outstation.application->classAssignments;
+    REQUIRE(assignments.size() == 1);
+    REQUIRE(assignments.front()
+            == std::make_tuple(AssignClassType::BinaryInput, PointClass::Class2, 7, 257));
+    Observe("assignments", assignments.size());
+    Observe("assigned_class", static_cast<uint8_t>(std::get<1>(assignments.front())));
+    Observe("assigned_start", std::get<2>(assignments.front()));
+    Observe("assigned_stop", std::get<3>(assignments.front()));
+
+    Update(outstation, 1, {{7, 0, 1}, {257, 1, 1}}, true);
+    CheckFrame("class1", Request(outstation, "C1 01 3C 02 06"), "E1 81 84 00 02 01 28 01 00 07 00 81");
+    outstation.SendToOutstation("C1 00");
+    CheckFrame("class2", Request(outstation, "C2 01 3C 03 06"),
+               "E2 81 80 00 02 01 28 02 00 07 00 01 01 01 81");
+    outstation.SendToOutstation("C2 00");
+    CheckFrame("drained", Request(outstation, "C3 01 3C 02 06 3C 03 06"), "C3 81 80 00");
+}
+
 TEST_CASE("AT-PROFILE-004-RD00", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -114,6 +151,24 @@ TEST_CASE("AT-PROFILE-010-DEFAULT", "[rtu-acceptance]")
         StaticRead(3, 1, {{7, 0, 1}, {257, 1, 1}}, {{7, 0, 1}, {257, 1, 1}}, "C0 01 03 00 06", "C0 81 80 00 03 01 01 07 00 07 00 00 03 01 01 01 01 01 01 01", "C1 01", "C1 81 80 00");
     if (Selected("V2"))
         StaticRead(3, 2, {{7, 0, 1}, {257, 1, 1}}, {{7, 0, 1}, {257, 1, 1}}, "C0 01 03 00 06", "C0 81 80 00 03 02 01 07 00 07 00 01 03 02 01 01 01 01 01 41", "C1 01", "C1 81 80 00");
+}
+
+TEST_CASE("AT-PROFILE-010-AS00", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(4, 0, false);
+    if (Selected("V2")) EventClassAssignment(4, 0, true);
+}
+
+TEST_CASE("AT-PROFILE-010-AS01", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(4, 1, false);
+    if (Selected("V2")) EventClassAssignment(4, 1, true);
+}
+
+TEST_CASE("AT-PROFILE-010-AS06", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(4, 6, false);
+    if (Selected("V2")) EventClassAssignment(4, 6, true);
 }
 
 TEST_CASE("AT-PROFILE-011-RD00", "[rtu-acceptance]")
@@ -262,6 +317,24 @@ TEST_CASE("AT-PROFILE-020-DEFAULT", "[rtu-acceptance]")
         StaticRead(30, 4, {{7, -2, 1}, {257, 0, 1}}, {{7, -2, 1}, {257, 0, 1}}, "C0 01 1E 00 06", "C0 81 80 00 1E 04 01 07 00 07 00 FE FF 1E 04 01 01 01 01 01 00 00", "C1 01", "C1 81 80 00");
     if (Selected("V5"))
         StaticRead(30, 5, {{7, -2, 1}, {257, 0, 1}}, {{7, -2, 1}, {257, 0, 1}}, "C0 01 1E 00 06", "C0 81 80 00 1E 05 01 07 00 07 00 01 00 00 00 C0 1E 05 01 01 01 01 01 01 00 00 00 00", "C1 01", "C1 81 80 00");
+}
+
+TEST_CASE("AT-PROFILE-020-AS00", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(32, 0, false);
+    if (Selected("V2")) EventClassAssignment(32, 0, true);
+}
+
+TEST_CASE("AT-PROFILE-020-AS01", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(32, 1, false);
+    if (Selected("V2")) EventClassAssignment(32, 1, true);
+}
+
+TEST_CASE("AT-PROFILE-020-AS06", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(32, 6, false);
+    if (Selected("V2")) EventClassAssignment(32, 6, true);
 }
 
 TEST_CASE("AT-PROFILE-021-RD00", "[rtu-acceptance]")
@@ -594,6 +667,11 @@ TEST_CASE("AT-PROFILE-007-UQ28", "[rtu-acceptance]")
         Unsolicited(2, 1, false, false, {{7, 1, 1}}, "F1 82 80 00 02 01 28 01 00 07 00 81");
 }
 
+TEST_CASE("AT-PROFILE-007-BATCH", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventBatch(2);
+}
+
 TEST_CASE("AT-PROFILE-008-R06Q17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -642,6 +720,12 @@ TEST_CASE("AT-PROFILE-008-UQ28", "[rtu-acceptance]")
         Unsolicited(2, 2, false, true, {{7, 1, 1}}, "F1 82 80 00 02 02 28 01 00 07 00 81 06 05 04 03 02 01");
 }
 
+TEST_CASE("AT-PROFILE-008-VALUE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) BinaryAbsoluteBoundaries(2, true);
+    if (Selected("V2")) BinaryAbsoluteBoundaries(2, false);
+}
+
 TEST_CASE("AT-PROFILE-009-R06Q17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -688,6 +772,12 @@ TEST_CASE("AT-PROFILE-009-UQ28", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         Unsolicited(2, 3, false, true, {{7, 1, 1}}, "F1 82 80 00 33 01 07 01 06 05 04 03 02 01 02 03 28 01 00 07 00 81 00 00");
+}
+
+TEST_CASE("AT-PROFILE-009-CTO", "[rtu-acceptance]")
+{
+    if (Selected("V1")) BinaryRelativeBoundaries(2, false);
+    if (Selected("V2")) BinaryRelativeBoundaries(2, true);
 }
 
 TEST_CASE("AT-PROFILE-013-R06Q28", "[rtu-acceptance]")
@@ -766,6 +856,11 @@ TEST_CASE("AT-PROFILE-014-UQ28", "[rtu-acceptance]")
         Unsolicited(4, 1, false, false, {{7, 0, 1}}, "F1 82 80 00 04 01 28 01 00 07 00 01");
 }
 
+TEST_CASE("AT-PROFILE-014-BATCH", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventBatch(4);
+}
+
 TEST_CASE("AT-PROFILE-015-R06Q17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -812,6 +907,12 @@ TEST_CASE("AT-PROFILE-015-UQ28", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         Unsolicited(4, 2, false, true, {{7, 0, 1}}, "F1 82 80 00 04 02 28 01 00 07 00 01 06 05 04 03 02 01");
+}
+
+TEST_CASE("AT-PROFILE-015-VALUE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) BinaryAbsoluteBoundaries(4, true);
+    if (Selected("V2")) BinaryAbsoluteBoundaries(4, false);
 }
 
 TEST_CASE("AT-PROFILE-016-R06Q17", "[rtu-acceptance]")
@@ -862,6 +963,12 @@ TEST_CASE("AT-PROFILE-016-UQ28", "[rtu-acceptance]")
         Unsolicited(4, 3, false, true, {{7, 0, 1}}, "F1 82 80 00 33 01 07 01 06 05 04 03 02 01 04 03 28 01 00 07 00 01 00 00");
 }
 
+TEST_CASE("AT-PROFILE-016-CTO", "[rtu-acceptance]")
+{
+    if (Selected("V1")) BinaryRelativeBoundaries(4, false);
+    if (Selected("V2")) BinaryRelativeBoundaries(4, true);
+}
+
 TEST_CASE("AT-PROFILE-026-R06Q28", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -896,6 +1003,11 @@ TEST_CASE("AT-PROFILE-027-R06Q17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         EventRead(32, 1, true, false, {{7, -2, 1}, {8, 0, 1}, {9, 257, 1}}, {{7, -2, 1}, {8, 0, 1}, {9, 257, 1}}, "C0 01 20 01 06", "E0 81 80 00 20 01 17 03 07 01 FE FF FF FF 08 01 00 00 00 00 09 01 01 01 00 00", "C1 01 20 01 06", "C1 81 80 00");
+}
+
+TEST_CASE("AT-PROFILE-027-BATCH", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventBatch(32);
 }
 
 TEST_CASE("AT-PROFILE-027-R06Q28", "[rtu-acceptance]")
@@ -994,6 +1106,12 @@ TEST_CASE("AT-PROFILE-029-R06Q17", "[rtu-acceptance]")
         EventRead(32, 4, true, true, {{7, -2, 1}, {8, 0, 1}, {9, 257, 1}}, {{7, -2, 1}, {8, 0, 1}, {9, 257, 1}}, "C0 01 20 04 06", "E0 81 80 00 20 04 17 03 07 01 FE FF 06 05 04 03 02 01 08 01 00 00 07 05 04 03 02 01 09 01 01 01 08 05 04 03 02 01", "C1 01 20 04 06", "C1 81 80 00");
 }
 
+TEST_CASE("AT-PROFILE-029-VALUE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogEventBoundaries(4, true);
+    if (Selected("V2")) AnalogEventBoundaries(4, false);
+}
+
 TEST_CASE("AT-PROFILE-029-R06Q28", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -1040,6 +1158,12 @@ TEST_CASE("AT-PROFILE-030-R06Q17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         EventRead(32, 5, true, false, {{7, -2, 1}, {8, 0, 1}, {9, 257, 1}}, {{7, -2, 1}, {8, 0, 1}, {9, 257, 1}}, "C0 01 20 05 06", "E0 81 80 00 20 05 17 03 07 01 00 00 00 C0 08 01 00 00 00 00 09 01 00 80 80 43", "C1 01 20 05 06", "C1 81 80 00");
+}
+
+TEST_CASE("AT-PROFILE-030-VALUE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogEventBoundaries(5, true);
+    if (Selected("V2")) AnalogEventBoundaries(5, false);
 }
 
 TEST_CASE("AT-PROFILE-030-R06Q28", "[rtu-acceptance]")
@@ -1120,6 +1244,34 @@ TEST_CASE("AT-PROFILE-038-NEG", "[rtu-acceptance]")
         RejectTime("C0 02 32 01 07 01 06 05 04 03 02 01", "C0 81 80 01", true);
     if (Selected("V7"))
         RejectMeasurement("32 01 07 02 06 05 04 03 02 01 06 05 04 03 02 01");
+}
+
+TEST_CASE("AT-PROFILE-041-RESTART", "[rtu-acceptance]")
+{
+    if (Selected("V1")) RestartResponse(true, RestartType::COLD);
+    if (Selected("V2")) RestartResponse(true, RestartType::WARM);
+}
+
+TEST_CASE("AT-PROFILE-041-NEG", "[rtu-acceptance]")
+{
+    if (Selected("V1")) InvalidRestartResponse("34 01 08 01 00 34 12");
+    if (Selected("V2")) InvalidRestartResponse("34 01 07 00");
+    if (Selected("V3")) InvalidRestartResponse("34 01 07 02 34 12 78 56");
+    if (Selected("V4")) InvalidRestartResponse("34 01 07 01 34");
+}
+
+TEST_CASE("AT-PROFILE-042-RESTART", "[rtu-acceptance]")
+{
+    if (Selected("V1")) RestartResponse(false, RestartType::COLD);
+    if (Selected("V2")) RestartResponse(false, RestartType::WARM);
+}
+
+TEST_CASE("AT-PROFILE-042-NEG", "[rtu-acceptance]")
+{
+    if (Selected("V1")) InvalidRestartResponse("34 02 08 01 00 34 12");
+    if (Selected("V2")) InvalidRestartResponse("34 02 07 00");
+    if (Selected("V3")) InvalidRestartResponse("34 02 07 02 34 12 78 56");
+    if (Selected("V4")) InvalidRestartResponse("34 02 07 01 34");
 }
 
 TEST_CASE("AT-PROFILE-042-DELAY", "[rtu-acceptance]")

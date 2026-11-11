@@ -53,6 +53,9 @@ struct MasterParams
     /// If true, the master will not clear the restart IIN bit in response to detecting it set
     bool ignoreRestartIIN = false;
 
+    /// Enrolled SA user for protected built-in startup and time synchronization tasks.
+    uint16_t startupAuthenticationUser = 1;
+
     /// Bitwise mask used determine which classes are enabled for unsol, if 0 unsol is not enabled
     ClassField unsolClassMask = ClassField::AllEventClasses();
 

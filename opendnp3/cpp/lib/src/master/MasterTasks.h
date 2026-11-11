@@ -47,6 +47,7 @@ public:
     bool DemandIntegrity();
 
     void OnRestartDetected();
+    bool FollowsRestartClear(const IMasterTask& task) const;
 
     void BindTask(const std::shared_ptr<IMasterTask>& task);
 

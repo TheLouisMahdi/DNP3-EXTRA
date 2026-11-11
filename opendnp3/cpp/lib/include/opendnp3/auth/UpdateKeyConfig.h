@@ -5,12 +5,60 @@
 #include "opendnp3/auth/AuthenticationConfig.h"
 
 #include <array>
+#include <string>
+#include <vector>
 
 namespace opendnp3
 {
 // Fixed bounds apply before parsing/copying received identities or credentials.
 constexpr size_t MAX_AUTHENTICATION_USERS = 16;
 constexpr size_t MAX_AUTHENTICATION_NAME = 128;
+constexpr size_t MAX_USER_CERTIFICATE_SIZE = 8192;
+
+// Association-local trust for a directly issuing CA. All values are provisioned
+// out of band. The CRL must cover the issuer and be valid at trusted UTC.
+struct UserCertificateTrust
+{
+    std::vector<uint8_t> authority;
+    std::vector<uint8_t> revocationList;
+    std::string areaOfResponsibility;
+};
+
+// RFC 5755 AA is a non-CA signing certificate. Its issuer's PKC CRL and
+// the AA's attribute-only CRL have different scopes and are not interchangeable.
+struct UserAttributeCertificateTrust
+{
+    std::vector<uint8_t> authority;
+    std::vector<uint8_t> issuer;
+    std::vector<uint8_t> issuerRevocationList;
+    std::vector<uint8_t> revocationList;
+};
+
+class IUserCertificatePolicy
+{
+public:
+    virtual ~IUserCertificatePolicy() = default;
+    virtual bool ReadTrust(uint16_t association, UserCertificateTrust& trust) = 0;
+    virtual bool ReadAttributeTrust(uint16_t, UserAttributeCertificateTrust&) { return false; }
+    // Optional external PKI time evidence for CA/AA and CRL/ACRL validation
+    // while DNP secure time is unavailable. Supply current authenticated UTC
+    // or return false. This never establishes secure DNP time.
+    virtual bool ReadPKIValidationTime(uint16_t, uint64_t&) { return false; }
+    // Map a validated DER subject Name to a configured, unique DNP user name.
+    virtual bool ResolveUser(uint16_t association, const uint8_t* subject, size_t subjectSize,
+                             uint8_t* name, size_t capacity, size_t& size) = 0;
+};
+
+// Durable binding to the previously validated certificate. Serial is a
+// positive, zero-padded, big-endian integer; expiry==0 denotes no binding.
+struct UserCertificateBinding
+{
+    std::array<uint8_t, 32> issuer{};
+    std::array<uint8_t, 20> serial{};
+    uint64_t beginsUnixMs = 0;
+    uint64_t expiresUnixMs = 0;
+    bool revoked = false;
+};
 
 // Durable authority decision and active credential for one association-local
 // identity. Pending role/expiry are deliberately separate from the active role.
@@ -41,8 +89,13 @@ struct UpdateKeyUser
     bool pending = false;
     uint16_t role = 0;
     uint16_t pendingRole = 0;
-    uint64_t expiresUnixMs = 0;
+    uint64_t expiresUnixMs = 0; // For certificate records, zero means a process-local relative expiry.
     uint64_t pendingExpiresUnixMs = 0;
+    uint16_t certificateRevision = 256; // 256 means the identity has no certificate history.
+    std::array<uint8_t, 32> certificateSubject{};
+    UserCertificateBinding identity, pendingIdentity;
+    UserCertificateBinding attribute, pendingAttribute;
+    uint8_t roleMask = 0, pendingRoleMask = 0; // Zero denotes a legacy single DNP role.
     std::array<uint8_t, 32> updateKey{};
     bool havePendingKey = false; // Master crash recovery; never authorizes commands.
     std::array<uint8_t, 32> pendingUpdateKey{};
@@ -114,6 +167,11 @@ struct UpdateKeyRequest
     uint8_t certificationSize = 0;
     bool verifyOnly = false;
     std::shared_ptr<IUpdateKeySource> source;
+    // Optional authority-issued DER ID certificate for FC32/G120V8.
+    // The authenticated certificate supplies identity, role, operation and expiry.
+    std::vector<uint8_t> certificate;
+    uint8_t certificateType = 1; // IEEE A.45.8: 1 = ID, 2 = Attribute.
+    uint8_t certificateRoleMask = 0; // Derived from the signed certificate, never accepted from callers.
 };
 }
 #endif

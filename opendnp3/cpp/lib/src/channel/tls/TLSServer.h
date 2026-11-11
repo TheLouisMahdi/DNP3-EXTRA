@@ -64,6 +64,7 @@ protected:
     virtual void OnShutdown() = 0;
 
     void StartAccept();
+    const TLSConfig& GetTLSConfig() const { return ctx.config; }
 
     Logger logger;
     std::shared_ptr<exe4cpp::StrandExecutor> executor;

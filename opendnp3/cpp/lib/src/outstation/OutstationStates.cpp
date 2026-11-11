@@ -187,6 +187,15 @@ OutstationState& StateUnsolicitedConfirmWait::OnConfirmTimeout(OContext& ctx)
         return *this;
     }
 
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (!ctx.unsol.completedNull && ctx.authentication && ctx.authentication->sessions
+        && ctx.authentication->sessions->remote)
+    {
+        ctx.BeginRetransmitLastUnsolicitedResponse();
+        ctx.RestartUnsolConfirmTimer();
+        return *this;
+    }
+#endif
     if (ctx.unsol.completedNull)
     {
         auto shouldRetry = ctx.unsolRetries.Retry();

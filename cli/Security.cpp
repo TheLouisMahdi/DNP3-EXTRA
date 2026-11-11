@@ -2,7 +2,10 @@
 #include "Security.h"
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <iostream>
+#include <map>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 #ifdef CLI_SA
@@ -133,6 +136,161 @@ public:
     { size_t size = 0; return Read("bc", a, output, capacity, size) && size == capacity; }
     bool ReadAuthorityPublicKey(uint16_t a, uint8_t* p, size_t c, size_t& s) override { return Read("authority-public", a, p, c, s); }
     bool ReadOutstationPrivateKey(uint16_t a, uint8_t* p, size_t c, size_t& s) override { return Read("rsa-private", a, p, c, s); }
+};
+
+std::vector<uint8_t> ReadBounded(const std::string& path, size_t limit)
+{
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    const auto size = input.tellg();
+    if (size <= 0 || static_cast<uint64_t>(size) > limit) return {};
+    std::vector<uint8_t> bytes(static_cast<size_t>(size));
+    input.seekg(0);
+    if (!input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) return {};
+    return bytes;
+}
+
+class HostCertificatePolicy final : public IUserCertificatePolicy, public IUpdateKeyTrust, public IUpdateKeySource
+{
+    struct User
+    {
+        std::string name, keyReference;
+        std::vector<uint8_t> subject;
+    };
+    std::map<std::string, std::string> settings;
+    std::vector<User> users;
+    const uint16_t association;
+    const std::string directory;
+
+    std::string Path(const std::string& value) const
+    {
+        if (value.empty() || value[0] == '/' || value[0] == '\\' || (value.size() >= 2 && value[1] == ':'))
+            return value;
+        return directory + value;
+    }
+    std::vector<uint8_t> File(const char* key, size_t limit) const
+    {
+        return ReadBounded(Path(Value(key)), limit);
+    }
+
+public:
+    explicit HostCertificatePolicy(const Options& options)
+        : association(options.association),
+          directory(options.saTrustManifest.substr(0, options.saTrustManifest.find_last_of("/\\") + 1))
+    {
+        const auto manifest = ReadBounded(options.saTrustManifest, 16384);
+        if (manifest.empty()) throw std::runtime_error("Cannot read SA trust manifest");
+        std::istringstream input(std::string(manifest.begin(), manifest.end()));
+        for (std::string line; std::getline(input, line);)
+        {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            const auto split = line.find('=');
+            if (split == std::string::npos || split == 0 || split + 1 == line.size()
+                || line.find('\0') != std::string::npos) throw std::runtime_error("Invalid SA trust manifest line");
+            const auto key = line.substr(0, split);
+            const auto value = line.substr(split + 1);
+            if (key == "user")
+            {
+                const auto first = value.find('|');
+                if (first == std::string::npos || users.size() >= MAX_AUTHENTICATION_USERS)
+                    throw std::runtime_error("Invalid SA trust manifest user mapping");
+                const auto second = value.find('|', first + 1);
+                auto name = value.substr(0, first);
+                if (name == "Common") name.push_back('\0');
+                if (!updatekeys::ValidName({reinterpret_cast<const uint8_t*>(name.data()), name.size()}))
+                    throw std::runtime_error("Invalid SA trust manifest DNP user name");
+                const auto subject = ReadBounded(Path(value.substr(first + 1, second - first - 1)), MAX_USER_CERTIFICATE_SIZE);
+                if (subject.empty() || std::any_of(users.begin(), users.end(), [&](const User& entry) {
+                        return entry.name == name || entry.subject == subject;
+                    })) throw std::runtime_error("Unreadable or duplicate SA subject mapping");
+                users.push_back({std::move(name), second == std::string::npos ? "" : value.substr(second + 1), subject});
+            }
+            else
+            {
+                const std::string fields[] = {"policy","association","aor","ca","crl","aa","aa-ca","aa-crl","acrl",
+                    "outstation-name","rsa-private-ref","rsa-public","recheck-ms","legacy-authority-public","user-capacity"};
+                if (std::find(std::begin(fields), std::end(fields), key) == std::end(fields)
+                    || !settings.emplace(key, value).second) throw std::runtime_error("Unknown or duplicate SA trust field");
+            }
+        }
+        if (Value("policy") != "IEC62351-8" || Number(Value("association"), 65535) != association
+            || Value("aor").empty() || Value("aor").size() > 64 || users.empty()
+            || Value("ca").empty() || Value("crl").empty())
+            throw std::runtime_error("SA trust manifest requires matching association, IEC62351-8, AoR, CA, CRL and users");
+        const auto& name = Value("outstation-name");
+        if (!updatekeys::ValidName({reinterpret_cast<const uint8_t*>(name.data()), name.size()}))
+            throw std::runtime_error("SA trust manifest requires a valid outstation name");
+        const auto aaFields = !Value("aa").empty() + !Value("aa-ca").empty()
+            + !Value("aa-crl").empty() + !Value("acrl").empty();
+        if (aaFields && aaFields != 4) throw std::runtime_error("SA trust manifest requires all AA and ACRL fields together");
+    }
+
+    std::string Value(const char* key) const
+    {
+        const auto it = settings.find(key);
+        return it == settings.end() ? "" : it->second;
+    }
+    bool ReadTrust(uint16_t a, UserCertificateTrust& out) override
+    {
+        if (a != association) return false;
+        out = {File("ca", MAX_USER_CERTIFICATE_SIZE), File("crl", 1024 * 1024), Value("aor")};
+        return !out.authority.empty() && !out.revocationList.empty();
+    }
+    bool ReadAttributeTrust(uint16_t a, UserAttributeCertificateTrust& out) override
+    {
+        if (a != association) return false;
+        out = {File("aa", MAX_USER_CERTIFICATE_SIZE), File("aa-ca", MAX_USER_CERTIFICATE_SIZE),
+               File("aa-crl", 1024 * 1024), File("acrl", 1024 * 1024)};
+        return !out.authority.empty() && !out.issuer.empty() && !out.issuerRevocationList.empty() && !out.revocationList.empty();
+    }
+    bool ResolveUser(uint16_t a, const uint8_t* subject, size_t length, uint8_t* output, size_t capacity,
+                     size_t& size) override
+    {
+        if (a != association) return false;
+        for (const auto& user : users)
+        {
+            if (user.name.size() <= capacity && user.subject.size() == length
+                && std::equal(user.subject.begin(), user.subject.end(), subject))
+            {
+                size = user.name.size();
+                std::copy(user.name.begin(), user.name.end(), output);
+                return true;
+            }
+        }
+        return false;
+    }
+    bool ReadCertificationKey(uint16_t, uint8_t*, size_t) override { return false; }
+    bool ReadAuthorityPublicKey(uint16_t a, uint8_t* output, size_t capacity, size_t& size) override
+    {
+        const auto publicKey = File("legacy-authority-public", capacity);
+        if (a != association || publicKey.empty()) return false;
+        std::copy(publicKey.begin(), publicKey.end(), output);
+        size = publicKey.size();
+        return true;
+    }
+    bool ReadOutstationPrivateKey(uint16_t a, uint8_t* output, size_t capacity, size_t& size) override
+    {
+        return a == association && LoadSecret(Wide(Value("rsa-private-ref")), output, capacity, size);
+    }
+    bool GetKey(uint16_t, const uint8_t*, size_t, const uint8_t*, const uint8_t*, uint32_t,
+                uint16_t, uint8_t*, uint8_t*, size_t, size_t&) override { return false; }
+    bool GetAsymmetricKey(uint16_t a, const uint8_t* name, size_t length, uint8_t* key, uint8_t* secret,
+                          size_t capacity, size_t& size, uint8_t* publicKey, size_t publicCapacity,
+                          size_t& publicSize) override
+    {
+        if (a != association) return false;
+        for (const auto& user : users)
+        {
+            if (user.name.size() != length || !std::equal(user.name.begin(), user.name.end(), name)) continue;
+            const auto peer = File("rsa-public", publicCapacity);
+            if (peer.empty() || user.keyReference.empty()
+                || !LoadSecret(Wide(user.keyReference), secret, capacity, size)) return false;
+            std::copy(peer.begin(), peer.end(), publicKey);
+            publicSize = peer.size();
+            return crypto::GenerateRandom({key, 32}) == crypto::Result::OK;
+        }
+        return false;
+    }
 };
 // Same executable, private anonymous stdin/stdout pipes. This is an explicit
 // localhost TEST authority, not a production authority transport or wire codec.
@@ -368,18 +526,19 @@ Options ParseOptions(int argc, char** argv)
         else if (option == "--rtu-crob-latch")
         {
             const auto index = Number(value, static_cast<uint32_t>(o.rtuCrobLatches.size() - 1));
-            if (o.rtuCrobTwoOutputs.test(index))
+            if (o.rtuCrobTwoOutputs.test(index) || o.rtuCrobActivation.test(index))
                 throw std::runtime_error("Conflicting CROB models for point");
             if (o.rtuCrobLatches.test(index))
                 throw std::runtime_error("Duplicate --rtu-crob-latch index");
             o.rtuCrobLatches.set(index);
         }
-        else if (option == "--rtu-crob-two-output")
+        else if (option == "--rtu-crob-two-output" || option == "--rtu-crob-activation")
         {
+            const bool activation = option == "--rtu-crob-activation";
             const auto separator = value.find(':');
             if (separator == std::string::npos ||
                 value.find(':', separator + 1) != std::string::npos)
-                throw std::runtime_error("Expected --rtu-crob-two-output <index>:<pulse-ms>");
+                throw std::runtime_error("Expected " + option + " <index>:<pulse-ms>");
             uint32_t index = 0;
             uint32_t pulseMs = 0;
             try
@@ -389,20 +548,28 @@ Options ParseOptions(int argc, char** argv)
             }
             catch (const std::invalid_argument&)
             {
-                throw std::runtime_error("Invalid --rtu-crob-two-output index or pulse duration");
+                throw std::runtime_error("Invalid " + option + " index or pulse duration");
             }
-            if (o.rtuCrobLatches.test(index))
+            if (o.rtuCrobLatches.test(index)
+                || (activation ? o.rtuCrobTwoOutputs.test(index) : o.rtuCrobActivation.test(index)))
                 throw std::runtime_error("Conflicting CROB models for point");
-            if (o.rtuCrobTwoOutputs.test(index))
-                throw std::runtime_error("Duplicate --rtu-crob-two-output index");
-            o.rtuCrobTwoOutputs.set(index);
-            o.rtuCrobTwoOutputPulseMs[index] = pulseMs;
+            auto& points = activation ? o.rtuCrobActivation : o.rtuCrobTwoOutputs;
+            if (points.test(index))
+                throw std::runtime_error("Duplicate " + option + " index");
+            points.set(index);
+            o.rtuCrobPulseMs[index] = pulseMs;
         }
         else if (option == "--auth") o.auth = value;
         else if (option == "--profile") o.profile = value;
         else if (option == "--credentials") o.credentials = value;
+        else if (option == "--sa-trust") o.saTrustManifest = value;
         else if (option == "--ca") o.ca = value;
         else if (option == "--crl") { if (value.empty()) throw std::runtime_error("--crl requires a PEM path"); o.crl = value; }
+        else if (option == "--crl-check-hours")
+        {
+            o.crlCheckHours = static_cast<uint16_t>(Number(value, 65535));
+            if (!o.crlCheckHours) throw std::runtime_error("--crl-check-hours must be at least 1");
+        }
         else if (option == "--cert") o.cert = value;
         else if (option == "--key") o.key = value;
         else if (option == "--peer-name") o.peerName = value;
@@ -417,15 +584,20 @@ Options ParseOptions(int argc, char** argv)
     // the same identity so case changes cannot create a second owner.
     for (auto& ch : o.profile) if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch + ('a' - 'A'));
     if (o.auth != "compat" && o.auth != "method4" && o.auth != "method68") throw std::runtime_error("Unknown authentication mode");
+    if (!o.saTrustManifest.empty() && (o.auth != "method68" || o.credentials.empty() || !o.profile.empty()
+        || (o.role != "master" && o.role != "outstation")))
+        throw std::runtime_error("--sa-trust requires a Method68 master or outstation, --credentials, and no TEST profile");
     // A zero security Reply Timer expires immediately; responseMs is the separate
     // application/task timeout and still cannot be zero.
     if (!o.port || !o.user || !o.responseMs || !o.renewalMs || !o.messageCount) throw std::runtime_error("Zero port/user/timeout/count is unsupported");
     if (!o.profile.empty() && o.host != "127.0.0.1") throw std::runtime_error("TEST credential profiles require localhost 127.0.0.1");
     if (!o.crl.empty() && (!o.tls || (o.role != "master" && o.role != "outstation")))
         throw std::runtime_error("--crl requires a TLS master or outstation");
+    if (o.crlCheckHours && o.crl.empty())
+        throw std::runtime_error("--crl-check-hours requires --crl");
     if (o.rtuIoProfile && o.role != "master" && o.role != "outstation")
         throw std::runtime_error("--rtu-io-profile requires master or outstation");
-    if ((o.rtuCrobLatches.any() || o.rtuCrobTwoOutputs.any()) &&
+    if ((o.rtuCrobLatches.any() || o.rtuCrobTwoOutputs.any() || o.rtuCrobActivation.any()) &&
         (o.role != "outstation" || !o.rtuIoProfile || !o.testOnly || o.auth == "compat"))
         throw std::runtime_error("RTU CROB models require an RTU outstation, --test-only and SA");
     if (o.linkRetries && o.linkConfirmMode == LinkConfirmMode::Never)
@@ -444,7 +616,11 @@ AuthenticationConfig Authentication(const Options& o, bool master)
 #ifdef CLI_SA
     if (!o.trustedTime) throw std::runtime_error("SA requires an explicitly trusted clock: --trust-system-time");
     if (o.profile.empty() && o.credentials.empty()) throw std::runtime_error("SA requires --credentials or a TEST profile");
-    if (o.profile.empty() && o.auth == "method68") throw std::runtime_error("CLI Method68 remote trust provisioning currently requires the explicit TEST profile");
+    if (o.profile.empty() && o.auth == "method68" && o.saTrustManifest.empty())
+        throw std::runtime_error("Method68 requires --sa-trust or the explicit TEST profile");
+    const auto host = o.saTrustManifest.empty() ? nullptr : std::make_shared<HostCertificatePolicy>(o);
+    if (host && !master && host->Value("rsa-private-ref").empty())
+        throw std::runtime_error("SA trust manifest requires rsa-private-ref for the Outstation");
     config.association = o.association; config.renewalIntervalMs = o.renewalMs;
     config.renewalMessageCount = o.messageCount; config.replyTimeoutMs = o.replyMs;
     config.aggressiveTransmit = config.aggressiveReceive = o.aggressive;
@@ -461,14 +637,46 @@ AuthenticationConfig Authentication(const Options& o, bool master)
         o.profile.empty() ? Wide(o.credentials) : Prefix(o, owner), [](uint64_t& now) { now = UTC(); return now != 0; }),
         [lease](WindowsAuthenticationCredentials* value) { delete value; });
     config.authorization = std::make_shared<Policy>(o.association, o.denyControls);
-    config.remoteUpdateKeys = !o.profile.empty(); config.userCapacity = 4;
+    config.remoteUpdateKeys = host || !o.profile.empty(); config.userCapacity = 4;
     config.allowMethod68 = o.auth == "method68";
-    const std::string name = "DNP3-EXTRA-TEST";
+    const std::string name = host ? host->Value("outstation-name") : "DNP3-EXTRA-TEST";
     std::copy(name.begin(), name.end(), config.outstationName.begin()); config.outstationNameSize = static_cast<uint16_t>(name.size());
-    if (!master && config.remoteUpdateKeys) config.updateKeyTrust = std::make_shared<Trust>(o);
+    if (host)
+    {
+        UserCertificateTrust identityTrust;
+        UserAttributeCertificateTrust attributeTrust;
+        if (!host->ReadTrust(o.association, identityTrust)
+            || (!host->Value("aa").empty() && !host->ReadAttributeTrust(o.association, attributeTrust)))
+            throw std::runtime_error("Unreadable or oversized SA trust certificate or revocation list");
+        const auto capacity = Number(host->Value("user-capacity"), MAX_AUTHENTICATION_USERS);
+        if (capacity < 2) throw std::runtime_error("SA trust manifest user-capacity must be at least 2");
+        config.userCapacity = static_cast<uint16_t>(capacity);
+        config.userCertificatePolicy = host;
+        const auto interval = host->Value("recheck-ms");
+        if (!interval.empty()) config.userCertificateRecheckIntervalMs = Number(interval, UINT32_MAX);
+        if (!master) config.updateKeyTrust = host;
+    }
+    else if (!master && config.remoteUpdateKeys) config.updateKeyTrust = std::make_shared<Trust>(o);
     return config;
 #else
     throw std::runtime_error("SA requires a Windows DNP3_SA_CRYPTO build");
+#endif
+}
+UpdateKeyRequest CertificateRequest(const Options& o, const std::string& type, const std::string& path)
+{
+#ifdef CLI_SA
+    if (o.saTrustManifest.empty()) throw std::runtime_error("Certificate relay requires --sa-trust");
+    UpdateKeyRequest request;
+    request.method = 68;
+    if (type == "id") request.certificateType = 1;
+    else if (type == "attribute") request.certificateType = 2;
+    else throw std::runtime_error("Expected id or attribute certificate");
+    request.certificate = ReadBounded(path, MAX_USER_CERTIFICATE_SIZE);
+    if (request.certificate.empty()) throw std::runtime_error("Unreadable or oversized DER certificate");
+    request.source = std::make_shared<HostCertificatePolicy>(o);
+    return request;
+#else
+    throw std::runtime_error("SA is unavailable in this build");
 #endif
 }
 UpdateKeyRequest AuthorizedRequest(const Options& o, const std::string& op, const std::string& text, uint32_t scs, uint16_t role, uint16_t days)

@@ -19,7 +19,9 @@ namespace opendnp3
 namespace
 {
     constexpr uint8_t legacyRecordMagic[] = {'D','N','P','3','U','K','0','1'};
-    constexpr uint8_t recordMagic[] = {'D','N','P','3','U','K','0','2'};
+    constexpr uint8_t previousRecordMagic[] = {'D','N','P','3','U','K','0','2'};
+    constexpr uint8_t identityRecordMagic[] = {'D','N','P','3','U','K','0','3'};
+    constexpr uint8_t recordMagic[] = {'D','N','P','3','U','K','0','4'};
     constexpr uint8_t commitMagic[] = {'D','N','P','3','U','C','0','1'};
     struct Blob
     {
@@ -58,12 +60,33 @@ namespace
         bool missing = false;
         return ReadBlob(target, verify, missing) && crypto::ConstantTimeEqual(blob, verify.Read());
     }
+    constexpr size_t bindingSize = 32 + 20 + 8 + 8 + 1;
+    void EncodeBinding(ser4cpp::wseq_t& dest, const UserCertificateBinding& binding)
+    {
+        dest.copy_from({binding.issuer.data(), binding.issuer.size()});
+        dest.copy_from({binding.serial.data(), binding.serial.size()});
+        ser4cpp::LittleEndian::write(dest, binding.beginsUnixMs, binding.expiresUnixMs, static_cast<uint8_t>(binding.revoked));
+    }
+    bool DecodeBinding(ser4cpp::rseq_t& input, UserCertificateBinding& binding)
+    {
+        std::memcpy(binding.issuer.data(), input, binding.issuer.size()); input.advance(binding.issuer.size());
+        std::memcpy(binding.serial.data(), input, binding.serial.size()); input.advance(binding.serial.size());
+        uint8_t revoked = 0;
+        if (!ser4cpp::LittleEndian::read(input, binding.beginsUnixMs, binding.expiresUnixMs, revoked) || revoked > 1)
+            return false;
+        binding.revoked = revoked != 0;
+        return binding.expiresUnixMs ? binding.beginsUnixMs < binding.expiresUnixMs : !binding.beginsUnixMs && !revoked;
+    }
     bool Encode(const UpdateKeyUser& user, uint16_t association, uint64_t generation, Blob& output)
     {
         if (user.nameSize == 0 || user.nameSize > user.name.size() || user.certificationSize > user.certification.size()
-            || user.publicKeySize > user.publicKey.size() || (user.method != 4 && user.method != 68)) return false;
+            || user.publicKeySize > user.publicKey.size() || (user.method != 4 && user.method != 68)
+            || user.certificateRevision > 256) return false;
         auto dest = output.Write();
-        dest.copy_from({recordMagic, sizeof(recordMagic)});
+        const bool certificate = user.certificateRevision < 256;
+        const bool bindings = certificate && (user.identity.expiresUnixMs || user.pendingIdentity.expiresUnixMs
+            || user.attribute.expiresUnixMs || user.pendingAttribute.expiresUnixMs || user.roleMask || user.pendingRoleMask);
+        dest.copy_from({bindings ? recordMagic : (certificate ? identityRecordMagic : previousRecordMagic), sizeof(recordMagic)});
         const uint8_t flags = (user.active ? 1 : 0) | (user.pending ? 2 : 0)
             | (user.haveStatusSequence ? 4 : 0) | (user.havePendingKey ? 8 : 0);
         ser4cpp::LittleEndian::write(dest, generation, association, user.user, user.nameSize,
@@ -76,6 +99,19 @@ namespace
         dest.copy_from({user.pendingUpdateKey.data(), user.pendingUpdateKey.size()});
         ser4cpp::LittleEndian::write(dest, user.method, user.publicKeySize);
         dest.copy_from({user.publicKey.data(), user.publicKey.size()});
+        if (certificate)
+        {
+            ser4cpp::UInt16::write_to(dest, user.certificateRevision);
+            dest.copy_from({user.certificateSubject.data(), user.certificateSubject.size()});
+        }
+        if (bindings)
+        {
+            EncodeBinding(dest, user.identity);
+            EncodeBinding(dest, user.pendingIdentity);
+            EncodeBinding(dest, user.attribute);
+            EncodeBinding(dest, user.pendingAttribute);
+            ser4cpp::LittleEndian::write(dest, user.roleMask, user.pendingRoleMask);
+        }
         output.size = output.bytes.size() - dest.length();
         return true;
     }
@@ -83,10 +119,17 @@ namespace
     {
         UpdateKeyUser blank;
         blank.nameSize = 1;
+        blank.certificateRevision = 0;
         Blob sizeCheck;
         Encode(blank, association, generation, sizeCheck);
         const bool legacy = input.length() == 291 && input.take(8).equals({legacyRecordMagic, sizeof(legacyRecordMagic)});
-        if (!legacy && (input.length() != sizeCheck.size || !input.take(8).equals({recordMagic, sizeof(recordMagic)}))) return false;
+        const bool previous = input.length() == sizeCheck.size - 34
+            && input.take(8).equals({previousRecordMagic, sizeof(previousRecordMagic)});
+        const bool identity = input.length() == sizeCheck.size
+            && input.take(8).equals({identityRecordMagic, sizeof(identityRecordMagic)});
+        const bool bindings = input.length() == sizeCheck.size + 4 * bindingSize + 2
+            && input.take(8).equals({recordMagic, sizeof(recordMagic)});
+        if (!legacy && !previous && !identity && !bindings) return false;
         input.advance(8);
         uint64_t storedGeneration = 0;
         uint16_t storedAssociation = 0;
@@ -112,7 +155,19 @@ namespace
             ser4cpp::LittleEndian::read(input, user.method, user.publicKeySize);
             if (user.publicKeySize > user.publicKey.size() || (user.method != 4 && user.method != 68)) return false;
             std::memcpy(user.publicKey.data(), input, user.publicKey.size());
+            input.advance(user.publicKey.size());
+            if (!previous)
+            {
+                if (!ser4cpp::UInt16::read_from(input, user.certificateRevision)
+                    || user.certificateRevision > 256) return false;
+                std::memcpy(user.certificateSubject.data(), input, user.certificateSubject.size());
+                input.advance(user.certificateSubject.size());
+            }
         }
+        if (bindings && (!DecodeBinding(input, user.identity) || !DecodeBinding(input, user.pendingIdentity)
+            || !DecodeBinding(input, user.attribute) || !DecodeBinding(input, user.pendingAttribute)
+            || !ser4cpp::LittleEndian::read(input, user.roleMask, user.pendingRoleMask)
+            || user.roleMask > 0x7F || user.pendingRoleMask > 0x7F)) return false;
         return true;
     }
     bool Marker(ser4cpp::rseq_t marker, uint8_t& slot, uint64_t& generation, ser4cpp::rseq_t& hash)

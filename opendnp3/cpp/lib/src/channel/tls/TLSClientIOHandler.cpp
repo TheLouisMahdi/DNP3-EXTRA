@@ -112,7 +112,7 @@ void TLSClientIOHandler::StartConnect(const TimeDuration& delay)
                              this->remotes.GetCurrentEndpoint().address.c_str(),
                              this->remotes.GetCurrentEndpoint().port);
 
-            this->OnNewChannel(TLSStreamChannel::Create(executor, stream));
+            this->OnNewChannel(TLSStreamChannel::Create(executor, stream, this->config));
         }
     };
 

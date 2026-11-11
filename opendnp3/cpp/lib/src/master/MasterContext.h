@@ -276,6 +276,10 @@ private:
         uint16_t responderUser = 0;
         bool wireInFlight = false;
         bool established = false;
+        // Startup NULL confirmation owns its own plain FC0, never a protected response's FC0.
+        int8_t startupNullSequence = -1; // -1 awaiting, -2 authenticated unsolicited data received.
+        int8_t startupConfirmSequence = -1;
+        bool startupConfirmInFlight = false;
         std::function<void()> closeTCPConnection;
         bool peerRestartAllowed = true;
         bool restartIINSet = false, restartRecoveryPending = false;
@@ -314,6 +318,7 @@ private:
     };
     std::shared_ptr<AuthenticationState> authentication; // null only in explicit compatibility mode
     void ResetAuthentication();
+    void ConfirmStartupNull(uint8_t sequence, bool restart);
     bool RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDUResponseHeader& header);
     bool IsAuthenticationReplyValid(uint64_t now);
     void CancelAuthenticationReply(bool rejectedChallenge = false);

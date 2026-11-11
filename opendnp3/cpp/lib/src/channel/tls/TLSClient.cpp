@@ -185,6 +185,12 @@ void TLSClient::HandleConnectResult(const connect_callback_t& callback,
     }
     else
     {
+        if (!SSLContext::RefreshPeerStore(stream->native_handle(), this->ctx.config))
+        {
+            if (!this->canceled)
+                callback(this->executor, stream, std::make_error_code(std::errc::permission_denied));
+            return;
+        }
         auto cb = [self = shared_from_this(), callback, stream](const std::error_code& ec) {
             if (!self->canceled)
             {

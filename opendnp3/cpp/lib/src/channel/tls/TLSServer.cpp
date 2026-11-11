@@ -163,6 +163,11 @@ void TLSServer::StartAccept()
             self->AcceptStream(ID, self->executor, stream);
         };
 
+        if (!SSLContext::RefreshPeerStore(stream->native_handle(), self->ctx.config))
+        {
+            SIMPLE_LOG_BLOCK(self->logger, flags::WARN, "Cannot refresh TLS peer revocation store");
+            return;
+        }
         // Begin the TLS handshake
         stream->async_handshake(asio::ssl::stream_base::server, self->executor->wrap(handshake_cb));
     };

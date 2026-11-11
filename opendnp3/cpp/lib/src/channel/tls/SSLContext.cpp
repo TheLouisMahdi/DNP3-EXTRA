@@ -19,6 +19,8 @@
  */
 
 #include "channel/tls/SSLContext.h"
+#include <openssl/err.h>
+#include <openssl/pem.h>
 #include <openssl/x509v3.h>
 #include <openssl/x509_vfy.h>
 
@@ -29,9 +31,72 @@
 namespace opendnp3
 {
 SSLContext::SSLContext(const Logger& logger, bool server, const TLSConfig& config, std::error_code& ec)
-    : value(server ? asio::ssl::context_base::sslv23_server : asio::ssl::context_base::sslv23_client), logger(logger)
+    : value(server ? asio::ssl::context_base::sslv23_server : asio::ssl::context_base::sslv23_client),
+      config(config), logger(logger)
 {
     this->ApplyConfig(config, server, ec);
+}
+
+namespace
+{
+using PeerStore = std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)>;
+
+bool LoadCRLs(X509_STORE* store, const std::string& path)
+{
+    if (!store) return false;
+    std::unique_ptr<BIO, decltype(&BIO_free)> file(BIO_new_file(path.c_str(), "rb"), BIO_free);
+    auto release = [](STACK_OF(X509_INFO)* info) { sk_X509_INFO_pop_free(info, X509_INFO_free); };
+    auto noPassword = [](char*, int, int, void*) { return 0; };
+    std::unique_ptr<STACK_OF(X509_INFO), decltype(release)> list(
+        file ? PEM_X509_INFO_read_bio(file.get(), nullptr, noPassword, nullptr) : nullptr, release);
+    if (!list) { ERR_clear_error(); return false; }
+    bool loaded = false;
+    for (int i = 0; i < sk_X509_INFO_num(list.get()); ++i)
+    {
+        auto* crl = sk_X509_INFO_value(list.get(), i)->crl;
+        if (!crl || !X509_CRL_get0_lastUpdate(crl) || !X509_CRL_get0_nextUpdate(crl)
+            || X509_cmp_current_time(X509_CRL_get0_lastUpdate(crl)) != -1
+            || X509_cmp_current_time(X509_CRL_get0_nextUpdate(crl)) != 1) continue;
+        if (X509_STORE_add_crl(store, crl) != 1) { ERR_clear_error(); return false; }
+        loaded = true;
+    }
+    return loaded && X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) == 1;
+}
+
+PeerStore FreshPeerStore(const TLSConfig& config)
+{
+    PeerStore store(X509_STORE_new(), X509_STORE_free);
+    if (!store || X509_STORE_load_locations(store.get(), config.peerCertFilePath.c_str(), nullptr) != 1
+        || !LoadCRLs(store.get(), config.crlFilePath)) store.reset();
+    return store;
+}
+}
+
+bool SSLContext::RefreshPeerStore(SSL* ssl, const TLSConfig& config)
+{
+    if (config.crlFilePath.empty()) return true;
+    auto store = FreshPeerStore(config);
+    return store && SSL_set1_verify_cert_store(ssl, store.get()) == 1;
+}
+
+bool SSLContext::PeerIsRevoked(SSL* ssl, const TLSConfig& config)
+{
+    if (config.crlFilePath.empty()) return false;
+    auto store = FreshPeerStore(config);
+    auto* chain = SSL_get0_verified_chain(ssl);
+    std::unique_ptr<X509_STORE_CTX, decltype(&X509_STORE_CTX_free)> verify(X509_STORE_CTX_new(), X509_STORE_CTX_free);
+    if (!store || !chain || sk_X509_num(chain) < 1 || !verify
+        || X509_STORE_CTX_init(verify.get(), store.get(), sk_X509_value(chain, 0), chain) != 1) return false;
+    // An established peer's certificate lifetime is not a revocation decision
+    // (§7.8.7.4.4). CRL validity/freshness checks remain enabled.
+    X509_STORE_CTX_set_verify_cb(verify.get(), [](int ok, X509_STORE_CTX* ctx) {
+        if (ok) return ok;
+        const auto error = X509_STORE_CTX_get_error(ctx);
+        if (error != X509_V_ERR_CERT_HAS_EXPIRED && error != X509_V_ERR_CERT_NOT_YET_VALID) return 0;
+        X509_STORE_CTX_set_error(ctx, X509_V_OK);
+        return 1;
+    });
+    return X509_verify_cert(verify.get()) == 0 && X509_STORE_CTX_get_error(verify.get()) == X509_V_ERR_CERT_REVOKED;
 }
 
 int SSLContext::GetVerifyMode(bool server)
@@ -121,10 +186,7 @@ std::error_code SSLContext::ApplyConfig(const TLSConfig& config, bool server, st
 
     if (!config.crlFilePath.empty())
     {
-        auto* store = SSL_CTX_get_cert_store(value.native_handle());
-        auto* lookup = store ? X509_STORE_add_lookup(store, X509_LOOKUP_file()) : nullptr;
-        if (!lookup || X509_load_crl_file(lookup, config.crlFilePath.c_str(), X509_FILETYPE_PEM) <= 0
-            || X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) != 1)
+        if (!config.crlCheckIntervalHours || !LoadCRLs(SSL_CTX_get_cert_store(value.native_handle()), config.crlFilePath))
         {
             ec = std::make_error_code(std::errc::invalid_argument);
             SIMPLE_LOG_BLOCK(logger, flags::ERR, "Unable to load TLS CRL bundle");

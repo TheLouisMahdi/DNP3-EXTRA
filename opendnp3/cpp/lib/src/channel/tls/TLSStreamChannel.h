@@ -21,8 +21,10 @@
 #define OPENDNP3_TLSSTREAMCHANNEL_H
 
 #include "channel/IAsyncChannel.h"
+#include "opendnp3/channel/TLSConfig.h"
 
 #include <asio/ssl.hpp>
+#include <exe4cpp/Timer.h>
 
 namespace opendnp3
 {
@@ -34,20 +36,27 @@ public:
     bool IsTCP() const override { return true; }
     static std::shared_ptr<IAsyncChannel> Create(
         const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
-        const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>>& stream)
-    {
-        return std::make_shared<TLSStreamChannel>(executor, stream);
-    }
+        const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>>& stream,
+        const TLSConfig& config = TLSConfig("", "", ""));
+    static std::shared_ptr<IAsyncChannel> Create(
+        const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
+        const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>>& stream,
+        const TLSConfig& config, std::chrono::steady_clock::duration interval);
 
     TLSStreamChannel(const std::shared_ptr<exe4cpp::StrandExecutor>& executor,
-                     std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream);
+                     std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream, const TLSConfig& config,
+                     std::chrono::steady_clock::duration interval);
 
 private:
+    void ScheduleCRLCheck();
     void BeginReadImpl(ser4cpp::wseq_t dest) final;
     void BeginWriteImpl(const ser4cpp::rseq_t& data) final;
     void ShutdownImpl() final;
 
     const std::shared_ptr<asio::ssl::stream<asio::ip::tcp::socket>> stream;
+    const TLSConfig config;
+    const std::chrono::steady_clock::duration interval;
+    exe4cpp::Timer revocationTimer;
 };
 
 } // namespace opendnp3

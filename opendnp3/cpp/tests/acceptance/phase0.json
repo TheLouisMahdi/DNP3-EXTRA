@@ -1,6 +1,66 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-007-BATCH": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-014-BATCH": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-027-BATCH": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-008-VALUE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-015-VALUE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-009-CTO": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-016-CTO": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-010-AS00": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-010-AS01": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-010-AS06": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-020-AS00": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-020-AS01": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-020-AS06": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-029-VALUE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-030-VALUE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
     "AT-PROFILE-039-F129G2": {
       "kind": "unit",
       "vectors": ["V1", "V2"]
@@ -59,6 +119,10 @@
         "V1",
         "V2"
       ]
+    },
+    "AT-PROFILE-003-AS06": {
+      "kind": "unit",
+      "vectors": ["V1"]
     },
     "AT-PROFILE-004-RD00": {
       "kind": "unit",
@@ -1726,6 +1790,379 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-007-BATCH/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.3.1; Device Profile p5",
+      "description": "FIFO across the Q17 count and index boundaries",
+      "input_hex": "C0 01 02 01 06",
+      "checks": [
+        ["wire_matches", "state", "SERIALIZER", "OUTSTATION", 1, 0, 1],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 257, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-014-BATCH/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.5.1; Device Profile p6",
+      "description": "FIFO across the Q17 count and index boundaries",
+      "input_hex": "C0 01 04 01 06",
+      "checks": [
+        ["wire_matches", "state", "SERIALIZER", "OUTSTATION", 1, 0, 1],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 257, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-027-BATCH/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.16.1; Device Profile p7",
+      "description": "FIFO across the Q17 count and index boundaries",
+      "input_hex": "C0 01 20 01 06",
+      "checks": [
+        ["wire_matches", "state", "SERIALIZER", "OUTSTATION", 1, 0, 1],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 257, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-008-VALUE/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.3.2; Device Profile p5",
+      "description": "Quality flags and u48 absolute boundary times",
+      "input_hex": "C0 01 02 02 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 02 02 17 03 07 A3 00 00 00 00 00 00 08 14 06 05 04 03 02 01 FF 89 FF FF FF FF FF FF"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-008-VALUE/V2": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.3.2; Device Profile p5",
+      "description": "Quality flags and u48 absolute boundary times",
+      "input_hex": "C0 01 02 02 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 02 02 28 03 00 07 00 A3 00 00 00 00 00 00 08 00 14 06 05 04 03 02 01 00 01 89 FF FF FF FF FF FF"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-015-VALUE/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.5.2; Device Profile p6",
+      "description": "Quality flags and u48 absolute boundary times",
+      "input_hex": "C0 01 04 02 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 04 02 17 03 07 A3 00 00 00 00 00 00 08 D4 06 05 04 03 02 01 FF 49 FF FF FF FF FF FF"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-015-VALUE/V2": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.5.2; Device Profile p6",
+      "description": "Quality flags and u48 absolute boundary times",
+      "input_hex": "C0 01 04 02 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 04 02 28 03 00 07 00 A3 00 00 00 00 00 00 08 00 D4 06 05 04 03 02 01 00 01 49 FF FF FF FF FF FF"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-009-CTO/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.3.3; Device Profile p5",
+      "description": "Zero, one, maximum delta, backwards time, and unsynchronized CTO",
+      "input_hex": "C0 01 02 03 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 33 01 07 01 06 05 04 03 02 01 02 03 17 03 07 81 00 00 08 81 01 00 09 81 FF FF 33 01 07 01 06 05 05 03 02 01 02 03 17 01 0A 81 00 00 33 01 07 01 05 05 04 03 02 01 02 03 17 01 0B 81 00 00 33 02 07 01 FF FF FF FF FF FF 02 03 17 01 0C 81 00 00"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 6, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C2 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-009-CTO/V2": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.3.3; Device Profile p5",
+      "description": "Each confirmed fragment has a fresh CTO",
+      "input_hex": "C0 01 02 03 06",
+      "checks": [
+        ["first", "frame", "SERIALIZER", "OUTSTATION", "A0 81 82 00 33 01 07 01 06 05 04 03 02 01 02 03 17 01 07 81 00 00"],
+        ["second", "frame", "SERIALIZER", "OUTSTATION", "61 81 80 00 33 01 07 01 07 05 04 03 02 01 02 03 17 01 08 81 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C2 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-016-CTO/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.5.3; Device Profile p6",
+      "description": "Zero, one, maximum delta, backwards time, and unsynchronized CTO",
+      "input_hex": "C0 01 04 03 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 33 01 07 01 06 05 04 03 02 01 04 03 17 03 07 81 00 00 08 81 01 00 09 81 FF FF 33 01 07 01 06 05 05 03 02 01 04 03 17 01 0A 81 00 00 33 01 07 01 05 05 04 03 02 01 04 03 17 01 0B 81 00 00 33 02 07 01 FF FF FF FF FF FF 04 03 17 01 0C 81 00 00"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 6, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C2 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-016-CTO/V2": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.5.3; Device Profile p6",
+      "description": "Each confirmed fragment has a fresh CTO",
+      "input_hex": "C0 01 04 03 06",
+      "checks": [
+        ["first", "frame", "SERIALIZER", "OUTSTATION", "A0 81 82 00 33 01 07 01 06 05 04 03 02 01 04 03 17 01 07 81 00 00"],
+        ["second", "frame", "SERIALIZER", "OUTSTATION", "61 81 80 00 33 01 07 01 07 05 04 03 02 01 04 03 17 01 08 81 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C2 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-010-AS00/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 03 00 00 07 08",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 07 00 41 08 00 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-010-AS00/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 03 00 00 07 08 03 00 00 07 08",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 07 00 41 08 00 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-010-AS01/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 03 00 01 01 01 02 01",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 01 01 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 01 01 41 02 01 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-010-AS01/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 03 00 01 01 01 02 01 03 00 01 01 01 02 01",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 01 01 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 01 01 41 02 01 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-010-AS06/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 03 00 06",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 07 00 41 08 00 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-010-AS06/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 03 00 06 03 00 06",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 07 00 41 08 00 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-020-AS00/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.14; 4.4.14; Device Profile p6",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 1E 00 00 07 08",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 20 01 28 01 00 07 00 01 02 00 00 00"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 20 01 28 02 00 07 00 01 01 00 00 00 08 00 01 02 00 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-020-AS00/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.14; 4.4.14; Device Profile p6",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 1E 00 00 07 08 1E 00 00 07 08",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 20 01 28 01 00 07 00 01 02 00 00 00"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 20 01 28 02 00 07 00 01 01 00 00 00 08 00 01 02 00 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-020-AS01/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.14; 4.4.14; Device Profile p6",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 1E 00 01 01 01 02 01",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 20 01 28 01 00 01 01 01 02 00 00 00"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 20 01 28 02 00 01 01 01 01 00 00 00 02 01 01 02 00 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-020-AS01/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.14; 4.4.14; Device Profile p6",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 1E 00 01 01 01 02 01 1E 00 01 01 01 02 01",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 20 01 28 01 00 01 01 01 02 00 00 00"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 20 01 28 02 00 01 01 01 01 00 00 00 02 01 01 02 00 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-020-AS06/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.14; 4.4.14; Device Profile p6",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 1E 00 06",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 20 01 28 01 00 07 00 01 02 00 00 00"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 20 01 28 02 00 07 00 01 01 00 00 00 08 00 01 02 00 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-020-AS06/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.14; 4.4.14; Device Profile p6",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 1E 00 06 1E 00 06",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 20 01 28 01 00 07 00 01 02 00 00 00"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 20 01 28 02 00 07 00 01 01 00 00 00 08 00 01 02 00 00 00"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-029-VALUE/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.16.4; Device Profile p7",
+      "description": "Analog numeric, flags and time boundaries",
+      "input_hex": "C0 01 20 04 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 20 04 17 03 07 03 00 80 00 00 00 00 00 00 08 11 00 00 06 05 04 03 02 01 FF 29 FF 7F FF FF FF FF FF FF"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-029-VALUE/V2": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.16.4; Device Profile p7",
+      "description": "Analog numeric, flags and time boundaries",
+      "input_hex": "C0 01 20 04 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 20 04 28 03 00 07 00 03 00 80 00 00 00 00 00 00 08 00 11 00 00 06 05 04 03 02 01 00 01 29 FF 7F FF FF FF FF FF FF"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-030-VALUE/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.16.5; Device Profile p7",
+      "description": "Analog numeric, flags and time boundaries",
+      "input_hex": "C0 01 20 05 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 20 05 17 03 07 03 00 00 00 80 08 11 00 00 C0 BF FF 09 FF FF 7F 7F"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-030-VALUE/V2": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.16.5; Device Profile p7",
+      "description": "Analog numeric, flags and time boundaries",
+      "input_hex": "C0 01 20 05 06",
+      "checks": [
+        ["reply", "frame", "SERIALIZER", "OUTSTATION", "E0 81 80 00 20 05 28 03 00 07 00 03 00 00 00 80 08 00 11 01 00 00 80 00 01 09 FF FF 7F 7F"],
+        ["parser_ok", "state", "PARSER", "MASTER", 1, 0, 1],
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C1 81 80 00"]
+      ]
+    },
+    "AT-PROFILE-003-AS06/V1": {
+      "reference": "Device Profile physical p4; IEEE 1815-2012 4.4.14 and Table 14-5",
+      "description": "Assign G1V0/Q06 to Class 2. Keep the queued Class 1 event and route later low and high indices to Class 2.",
+      "input_hex": "C0 16 3C 03 06 01 00 06",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "EVENT", "OUTSTATION", 1, 0, 1],
+        ["assigned_class", "receiver", "EVENT", "OUTSTATION", 4, 1, 8],
+        ["assigned_start", "receiver", "EVENT", "OUTSTATION", 7, 0, 65535],
+        ["assigned_stop", "receiver", "EVENT", "OUTSTATION", 257, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 02 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 02 01 28 02 00 07 00 01 01 01 81"],
+        ["drained", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"]
+      ]
+    },
     "AT-PROFILE-039-F129G2/V1": {
       "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
       "description": "CTO SYNCHRONIZED with offsets 0 and 257. Verify G2V3 and exact SOE time/quality, confirmation ownership and queue drain.",

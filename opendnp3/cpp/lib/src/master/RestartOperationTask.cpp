@@ -49,9 +49,9 @@ bool RestartOperationTask::BuildRequest(APDURequest& request, uint8_t seq)
     return true;
 }
 
-bool RestartOperationTask::IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode /*qc*/)
+bool RestartOperationTask::IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc)
 {
-    if (headerCount != 0)
+    if (headerCount != 0 || qc != QualifierCode::UINT8_CNT)
     {
         return false;
     }
@@ -99,7 +99,7 @@ IINField RestartOperationTask::ProcessHeader(const CountHeader& /*header*/, cons
     Group52Var1 value;
     if (values.ReadOnlyValue(value))
     {
-        this->duration = TimeDuration::Milliseconds(value.time);
+        this->duration = TimeDuration::Seconds(value.time);
         return IINField::Empty();
     }
 

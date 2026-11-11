@@ -1197,7 +1197,7 @@ TEST_CASE(SUITE("Cold restart fails with empty response"))
     REQUIRE(queue.responses[0].summary == TaskCompletion::FAILURE_BAD_RESPONSE);
 }
 
-TEST_CASE(SUITE("Warm restart fails with empty response"))
+TEST_CASE(SUITE("Warm restart interprets coarse delay in seconds"))
 {
     MasterParams params = NoStartupTasks();
     MasterTestFixture t(params);
@@ -1214,7 +1214,7 @@ TEST_CASE(SUITE("Warm restart fails with empty response"))
 
     REQUIRE(queue.responses.size() == 1);
     REQUIRE(queue.responses[0].summary == TaskCompletion::SUCCESS);
-    REQUIRE(queue.responses[0].restartTime == TimeDuration::Milliseconds(0xBBBB));
+    REQUIRE(queue.responses[0].restartTime == TimeDuration::Seconds(0xBBBB));
 }
 
 TEST_CASE(SUITE("IntegrityPollOnBufferOverflowIIN"))

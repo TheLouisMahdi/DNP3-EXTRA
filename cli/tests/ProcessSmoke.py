@@ -455,6 +455,9 @@ def secure(exe, method):
         master.wait(r"\[SA-OBJECT\] TX G120V2$")
         cursor = master.task("attr 210")
         master.wait(r"\[ATTR\].*Group0Var210.*value=18$", cursor)
+        cursor = master.send("attr 209")
+        master.wait(r"IIN=.* REQUEST_ERROR", cursor)
+        master.wait(r"\[TASK\] attr (?!START)[A-Z_]+", cursor)
         cursor = master.send("auth")
         master.wait(r"\[SESSION\] user=2 ready=1", cursor)
         master.task("ruk change operator 1 1 1")
@@ -1043,6 +1046,141 @@ def profile_analog_event(exe):
         "PASS RTU G32/G41 TCP smoke checks in both qualifier configurations",
         flush=True,
     )
+
+
+def profile_binary_wire(exe):
+    """Exercise the selected binary READ/ASSIGN_CLASS forms over FT3/TCP."""
+    options = ["--auth", "compat", "--rtu-io-profile", *loopback_port()]
+    out = Peer(exe, "outstation", options)
+    try:
+        out.wait(r"\[HELP\]")
+        for index, state in enumerate(("on", "off", "on", "off", "on", "on", "off", "on", "on", "off")):
+            cursor = out.send(f"set binary {index} {state} suppress")
+            out.wait(rf"\[UPDATE\].*binary {index} {state} suppress", cursor)
+        for index, state in enumerate(("intermediate", "off", "on", "indeterminate")):
+            cursor = out.send(f"set double {index} {state} suppress")
+            out.wait(rf"\[UPDATE\].*double {index} {state} suppress", cursor)
+
+        with socket.create_connection(("127.0.0.1", int(options[-1])), timeout=5) as raw:
+            out.wait(r"\[LINK\] OPEN$")
+            exchanges = (
+                ("01 01 00 00 00 08", "00 01 02 00 00 08 81 01 81 01 81 81 01 81 81"),
+                ("01 01 00 01 00 00 08 00", "00 01 02 00 00 08 81 01 81 01 81 81 01 81 81"),
+                ("01 01 00 06", "00 01 02 00 00 09 81 01 81 01 81 81 01 81 81 01"),
+                ("01 01 01 00 00 08", "00 01 01 00 00 08 B5 01"),
+                ("01 01 01 01 00 00 08 00", "00 01 01 00 00 08 B5 01"),
+                ("01 01 01 06", "00 01 01 00 00 09 B5 01"),
+                ("01 01 02 00 00 01", "00 01 02 00 00 01 81 01"),
+                ("01 01 01 00 08 00", "04"),
+                ("16 3C 03 06 01 00 06", "00"),
+                ("16 3C 02 06 01 00 01 01 00 02 00", "00"),
+                ("01 00 D2 00 00 00", "00 00 D2 00 00 00 02 01 00"),
+                ("01 00 D1 00 00 00", "02"),
+                ("01 03 00 00 00 03", "00 03 02 00 00 03 01 41 81 C1"),
+                ("01 03 02 01 00 00 03 00", "00 03 02 00 00 03 01 41 81 C1"),
+                ("16 3C 03 06 03 00 00 01 02", "00"),
+            )
+            for seq, (request, expected) in enumerate(exchanges):
+                control = 0xC0 | seq
+                raw.sendall(f01_link_frame(bytes([control]) + bytes.fromhex(request), seq))
+                _, response = f01_receive_apdu(raw)
+                # The diagnostic clock is unsynchronized and restart has not been cleared.
+                assert response == bytes([control, 0x81, 0x90]) + bytes.fromhex(expected), (
+                    request, expected, response.hex(" "),
+                )
+            out.wait(r"\[CLASS\].*class-mask=4 range=0\.\.9$")
+            out.wait(r"\[CLASS\].*class-mask=2 range=1\.\.2$")
+    finally:
+        stop(out)
+    print("PASS binary profile: real TCP READ, ASSIGN_CLASS and G0 attributes", flush=True)
+    profile_binary_event_wire(exe)
+
+
+def profile_binary_event_wire(exe):
+    """Check native G2/G4 events against an independent raw TCP peer."""
+    import select
+
+    for narrow, timed_default in ((False, 2), (True, 3)):
+        options = ["--auth", "compat", "--rtu-io-profile", "--unsolicited",
+                   "--unsol-confirm-ms", "500", *loopback_port()]
+        port = int(options[-1])
+        if narrow:
+            options += ["--event-q17", "--binary-event-time", "relative"]
+        out = Peer(exe, "outstation", options)
+        try:
+            out.wait(r"\[HELP\]")
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+                transport_seq = 0
+                seq = 0
+
+                def send(control, body):
+                    nonlocal transport_seq
+                    raw.sendall(f01_link_frame(bytes([control]) + bytes.fromhex(body), transport_seq))
+                    transport_seq = (transport_seq + 1) & 63
+
+                def event(apdu, group, variation, index, flags):
+                    payload = apdu[4:]
+                    if variation == 3:
+                        assert payload[:4] == bytes.fromhex("33 02 07 01"), apdu.hex()
+                        assert len(payload[4:10]) == 6, apdu.hex()
+                        payload = payload[10:]
+                    qualifier = 0x17 if narrow else 0x28
+                    expected = bytes([group, variation, qualifier, 1])
+                    if not narrow:
+                        expected += bytes([0])
+                    expected += index.to_bytes(1 if narrow else 2, "little") + bytes([flags])
+                    assert payload.startswith(expected), apdu.hex()
+                    time_bytes = payload[len(expected):]
+                    assert len(time_bytes) == {1: 0, 2: 6, 3: 2}[variation], apdu.hex()
+                    if variation == 3:
+                        assert time_bytes == bytes(2), apdu.hex()
+
+                def force(group, index):
+                    kind = "binary" if group == 2 else "double"
+                    cursor = out.send(f"set {kind} {index} on force")
+                    out.wait(rf"\[UPDATE\].*{kind} {index} on force", cursor)
+
+                _, startup = f01_receive_apdu(raw)
+                assert startup[:2] == bytes.fromhex("F0 82") and len(startup) == 4, startup.hex()
+                send(0xD0, "00")
+                for group in (2, 4):
+                    for variation, count in ((0, "06"), (1, "07 01"), (2, "08 01 00"), (3, "06")):
+                        force(group, 7)
+                        request = f"01 {group:02X} {variation:02X} {count}"
+                        send(0xC0 | seq, request)
+                        _, reply = f01_receive_apdu(raw)
+                        assert reply[:2] == bytes([0xE0 | seq, 0x81]), reply.hex()
+                        wire_variation = variation or (timed_default if group == 2 else 2)
+                        event(reply, group, wire_variation, 7, 0x81)
+                        if variation == 1:
+                            send(0xC0 | ((seq + 1) & 15), "00")
+                            send(0xC0 | seq, request)
+                            assert f01_receive_apdu(raw)[1] == reply
+                        send(0xC0 | seq, "00")
+                        seq += 1
+
+                send(0xC0 | seq, "01 02 00 06 04 00 06")
+                _, empty = f01_receive_apdu(raw)
+                assert empty[:2] == bytes([0xC0 | seq, 0x81]) and len(empty) == 4, empty.hex()
+                seq += 1
+                force(2, 8)
+                assert not select.select([raw], [], [], 0.05)[0], "events sent before ENABLE_UNSOLICITED"
+                send(0xC0 | seq, "14 3C 02 06")
+                _, enabled = f01_receive_apdu(raw)
+                assert enabled[:2] == bytes([0xC0 | seq, 0x81]) and enabled[3] == 0, enabled.hex()
+                _, unsolicited = f01_receive_apdu(raw)
+                assert unsolicited[:2] == bytes.fromhex("F1 82"), unsolicited.hex()
+                event(unsolicited, 2, timed_default, 8, 0x81)
+                send(0xC1, "00")  # Same sequence with the wrong UNS bit.
+                assert f01_receive_apdu(raw)[1] == unsolicited
+                send(0xD1, "00")
+                seq += 1
+                send(0xC0 | seq, "01 02 00 06")
+                _, empty = f01_receive_apdu(raw)
+                assert empty[:2] == bytes([0xC0 | seq, 0x81]) and len(empty) == 4, empty.hex()
+        finally:
+            stop(out)
+    print("PASS binary events: real TCP G2/G4 variation, time, and confirmation", flush=True)
 
 
 def profile_analog_wire(exe):
@@ -2686,12 +2824,65 @@ def profile_crob_two_output(exe):
         run(exe, "test-cleanup", *provision)
 
 
+def profile_crob_activation(exe):
+    """Exercise explicit Activation pulses through both SA methods and control qualifiers."""
+    for method in ("method4", "method68"):
+        profile = "pc-" + uuid.uuid4().hex[:12]
+        provision = ["--test-only", "--profile", profile, "--auth", method]
+        run(exe, "test-provision", *provision)
+        try:
+            for narrow in (False, True):
+                master, out = connected(
+                    exe, [*provision, "--trust-system-time", "--rtu-io-profile", "--trace"],
+                    master_options=["--control-q17"] if narrow else [],
+                    out_options=["--rtu-crob-activation", "3:250", "--rtu-crob-activation", "5:250",
+                                 "--rtu-crob-latch", "4", "--rtu-crob-two-output", "6:250"],
+                )
+                try:
+                    for point, action, status in (
+                        (3, "pulse", "AUTOMATION_INHIBIT"),
+                        (5, "pulse", "AUTOMATION_INHIBIT"),
+                        (4, "pulse", "NOT_SUPPORTED"),
+                        (6, "pulse", "NOT_SUPPORTED"),
+                        (7, "pulse", "NOT_SUPPORTED"),
+                        (3, "on", "NOT_SUPPORTED"),
+                    ):
+                        cursor = master.task(f"crob {point} {action} direct", success=False)
+                        master.wait(rf"status={status}\b", cursor)
+                    out.executed(0)
+                    cursor = out.send("crob-interlock 3 allow")
+                    out.wait(r"\[INTERLOCK\] CROB\[3\] allow$", cursor)
+                    for count, (mode, requested) in enumerate((("sbo", 1), ("direct", 2000), ("noack", 999)), 1):
+                        with out.cv:
+                            cursor = len(out.lines)
+                        command = f"crob 3 pulse {mode} {requested}"
+                        if mode == "noack":
+                            master.noack(command)
+                        else:
+                            master.task(command)
+                        out.wait(
+                            rf"\[CROB-PULSE\] started point=3 drive=activation configured-ms=250 "
+                            rf"request-on-ms={requested} request-off-ms=0 executed={count}$", cursor,
+                        )
+                        cursor = out.send("crob-pulse advance 249")
+                        out.wait(r"\[CROB-CLOCK\] advanced-ms=249 ", cursor)
+                        cursor = out.send("status")
+                        out.wait(rf"point=3 model=activation interlock=allowed activation=active executed={count}$", cursor)
+                        cursor = out.send("crob-pulse advance 1")
+                        out.wait(r"\[CROB-PULSE\] expired point=3 drive=activation$", cursor)
+                    out.executed(3)
+                finally:
+                    stop(out, master)
+        finally:
+            run(exe, "test-cleanup", *provision)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -2711,6 +2902,7 @@ def main():
     if args.only in ("f01-fragments", "all"): f01_solicited_fragments(args.exe)
     if args.only in ("f01-link", "all"): f01_confirmed_link(args.exe)
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
+    if args.only in ("profile-binary-wire", "all"): profile_binary_wire(args.exe)
     if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
     if args.only in ("profile-crob-latch", "all"):
         profile_crob_latch(args.exe)
@@ -2727,6 +2919,8 @@ def main():
         profile_crob_interlock_transition(args.exe)
     if args.only in ("profile-crob-two-output", "all"):
         profile_crob_two_output(args.exe)
+    if args.only in ("profile-crob-activation", "all"):
+        profile_crob_activation(args.exe)
     if args.only in ("compat", "all"): compatibility(args.exe)
     if args.only in ("method4", "all"): secure(args.exe, "method4")
     if args.only in ("method68", "all"): secure(args.exe, "method68")

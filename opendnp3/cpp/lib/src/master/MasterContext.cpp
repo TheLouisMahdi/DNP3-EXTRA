@@ -110,6 +110,11 @@ bool MContext::OnLowerLayerUp()
 
     isOnline = true;
 
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->sessions && authentication->sessions->remote)
+        authentication->sessions->remote->RecheckCertificates(static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time().time_since_epoch()).count()));
+#endif
     tasks.Initialize(*this->scheduler, *this);
 
     this->application->OnOpen();
@@ -140,6 +145,9 @@ bool MContext::OnLowerLayerDown()
         authentication->exchangeIndex = authentication->SessionCount();
         authentication->peerRestartAllowed = true;
         authentication->restartRecoveryPending = false;
+        authentication->startupNullSequence = -1;
+        authentication->startupConfirmSequence = -1;
+        authentication->startupConfirmInFlight = false;
         authentication->monitorWaiting = false;
         authentication->monitoring.Reset();
         DiscardEmbeddedConfirm(); // Settle the old session before disconnect invalidates it.
@@ -212,6 +220,17 @@ bool MContext::OnReceive(const Message& message)
         {
             const bool restart = result.header.IIN.IsSet(IINBit::DEVICE_RESTART);
             const bool rising = restart && !auth.restartIINSet;
+            const auto& control = result.header.control;
+            const bool startupNull = auth.sessions->remote
+                && result.header.function == FunctionCode::UNSOLICITED_RESPONSE
+                && control.IsFirAndFin() && control.CON && control.UNS && result.objects.is_empty();
+            // A repeat of the initial NULL only requests another FC0. It cannot
+            // trigger a second restart or satisfy an outstanding ordinary task.
+            if (startupNull && auth.startupNullSequence == control.SEQ)
+            {
+                ConfirmStartupNull(control.SEQ, false);
+                return true;
+            }
             auth.restartIINSet = restart;
             if (rising && auth.established)
             {
@@ -235,8 +254,19 @@ bool MContext::OnReceive(const Message& message)
                     responseTimer.cancel();
                     tstate = OnResponseTimeout_WaitForResponse();
                 }
+                if (startupNull)
+                {
+                    auth.startupNullSequence = -1;
+                    ConfirmStartupNull(control.SEQ, true);
+                }
                 ServiceAuthentication();
                 return true; // Table 7-8 row 28 overrides ordinary response processing.
+            }
+            if (startupNull)
+            {
+                if (auth.startupNullSequence == -1) ConfirmStartupNull(control.SEQ, restart);
+                else auth.sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+                return true;
             }
         }
     }
@@ -308,6 +338,12 @@ bool MContext::OnTxReady()
     if (authentication)
     {
         auto& auth = *authentication;
+        if (auth.startupConfirmInFlight)
+        {
+            auth.startupConfirmInFlight = false;
+            if (!CheckConfirmTransmit()) ServiceAuthentication();
+            return true;
+        }
         const bool replyCompleted = IsAuthenticatedNoResponseTask() && tstate == TaskState::WAIT_FOR_AUTH_REPLY_TX
             && auth.replyInFlight && auth.responderUser == activeTask->AuthenticationUser();
         const bool aggressiveCompleted = IsAuthenticatedNoResponseTask() && tstate == TaskState::WAIT_FOR_AGGRESSIVE_TX;
@@ -423,6 +459,8 @@ bool MContext::ChangeUpdateKey(const UpdateKeyRequest& request, const TaskConfig
 {
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (!authentication || !authentication->sessions || !authentication->sessions->remote) return false;
+    if (!request.certificate.empty() && (request.certificate.size() > MAX_USER_CERTIFICATE_SIZE
+        || request.certificate.size() + 10 > params.maxTxFragSize)) return false;
     ScheduleAdhocTask(std::make_shared<UpdateKeyTask>(tasks.context, *application, logger, config,
         Timestamp(executor->get_time()) + params.taskStartTimeout, executor, authentication,
         *authentication->sessions->remote, request));
@@ -526,6 +564,8 @@ void MContext::ProcessUnsolicitedResponse(const APDUResponseHeader& header, cons
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (result != ParseResult::OK && authentication && authentication->sessions)
         authentication->sessions->statistics.Increment(SecurityStatistic::DISCARDED_MESSAGES);
+    if (result == ParseResult::OK && objects.is_not_empty() && authentication && authentication->sessions)
+        authentication->startupNullSequence = -2;
 #endif
 
     if ((result == ParseResult::OK) && header.control.CON)
@@ -589,10 +629,25 @@ void MContext::QueueConfirm(const APDUHeader& header)
 
 bool MContext::CheckConfirmTransmit()
 {
-    if (this->isSending || this->confirmQueue.empty())
+    if (this->isSending)
     {
         return false;
     }
+#ifdef OPENDNP3_USE_SA_CRYPTO
+    if (authentication && authentication->startupConfirmSequence >= 0 && tstate != TaskState::WAIT_FOR_TX_COMPLETION)
+    {
+        const auto confirm = APDUHeader::UnsolicitedConfirm(
+            static_cast<uint8_t>(authentication->startupConfirmSequence));
+        APDUWrapper wrapper(this->txBuffer.as_wslice());
+        wrapper.SetFunction(confirm.function);
+        wrapper.SetControl(confirm.control);
+        authentication->startupConfirmSequence = -1;
+        authentication->startupConfirmInFlight = true;
+        this->Transmit(wrapper.ToRSeq());
+        return true;
+    }
+#endif
+    if (this->confirmQueue.empty()) return false;
 
     auto confirm = this->confirmQueue.front();
     APDUWrapper wrapper(this->txBuffer.as_wslice());
@@ -667,6 +722,30 @@ bool MContext::CheckConfirmTransmit()
     this->confirmQueue.pop_front();
     return true;
 }
+
+#ifdef OPENDNP3_USE_SA_CRYPTO
+void MContext::ConfirmStartupNull(uint8_t sequence, bool restart)
+{
+    authentication->startupNullSequence = sequence;
+    authentication->startupConfirmSequence = sequence;
+    this->CheckConfirmTransmit();
+    // Only the restart indication belongs to the unauthenticated startup NULL.
+    if (restart)
+    {
+        this->ProcessIIN(IINField(IINBit::DEVICE_RESTART));
+        // A startup task can be admitted while the session keys are still
+        // being established. Put it back behind Clear Restart if it has not
+        // sent a request. Keep in-flight transactions under their normal owners.
+        if (!params.ignoreRestartIIN && tstate == TaskState::TASK_READY && activeTask
+            && tasks.FollowsRestartClear(*activeTask))
+        {
+            activeTask->OnLowerLayerClose(Timestamp(executor->get_time()));
+            tstate = TaskState::IDLE;
+            CompleteActiveTask();
+        }
+    }
+}
+#endif
 
 void MContext::Transmit(const ser4cpp::rseq_t& data)
 {

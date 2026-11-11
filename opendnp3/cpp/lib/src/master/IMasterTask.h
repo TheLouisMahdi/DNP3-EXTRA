@@ -73,6 +73,7 @@ public:
     virtual char const* Name() const = 0;
 
     uint16_t AuthenticationUser() const { return config.authenticationUser; }
+    void SetAuthenticationUser(uint16_t user) { config.authenticationUser = user; }
     bool IsUserTask() const { return GetTaskType() == MasterTaskType::USER_TASK; }
     virtual bool IsAuthenticationTask() const { return false; }
     virtual bool AcceptsAuthenticationResponse(const APDUResponseHeader&, const ser4cpp::rseq_t&) { return false; }

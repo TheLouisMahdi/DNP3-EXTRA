@@ -64,32 +64,43 @@ TEST_CASE("ProfileClasses - ENABLE_UNSOLICITED and DISABLE_UNSOLICITED accept on
     REQUIRE(Exchange(t, "C6 15 3C 02 06") == "C6 81 80 00");
 }
 
-TEST_CASE("ProfileClasses - ENABLE_UNSOLICITED arms and DISABLE_UNSOLICITED clears class 1", "[profile-classes]")
+TEST_CASE("ProfileClasses - enabling and disabling unsolicited data affects only the selected class", "[profile-classes]")
 {
+    const auto cls = GENERATE(1, 2, 3);
+    const std::string target = "3C 0" + std::to_string(cls + 1) + " 06";
+    const std::string other = "3C 0" + std::to_string(cls % 3 + 2) + " 06";
+    const std::string iin = cls == 1 ? "82" : cls == 2 ? "84" : "88";
     OutstationConfig cfg;
     cfg.params.allowUnsolicited = true;
     cfg.eventBufferConfig = EventBufferConfig(5);
-    OutstationTestObject t(cfg, configure::by_count_of::binary_input(5));
+    auto points = configure::by_count_of::binary_input(2);
+    points.binary_input[0].clazz = static_cast<PointClass>(cls);
+    points.binary_input[1].clazz = static_cast<PointClass>(cls % 3 + 1);
+    OutstationTestObject t(cfg, points);
     t.LowerLayerUp();
 
     REQUIRE(t.lower->PopWriteAsHex() == hex::NullUnsolicited(0));
     t.OnTxReady();
     t.SendToOutstation(hex::UnsolConfirm(0));
 
-    // Class 1 is not armed yet, so the event is not solicited.
+    // Neither class is enabled yet.
     t.Transaction([](IUpdateHandler& db) { db.Update(Binary(false, Flags(0x01)), 0); });
     REQUIRE(t.lower->PopWriteAsHex().empty());
 
-    // Arming class 1 reports the pending event.
-    REQUIRE(Exchange(t, "C1 14 3C 02 06") == "C1 81 82 00");
+    REQUIRE(Exchange(t, "C1 14 " + target) == "C1 81 " + iin + " 00");
     REQUIRE(t.lower->PopWriteAsHex() == "F1 82 80 00 02 01 28 01 00 00 00 01");
     t.OnTxReady();
     t.SendToOutstation(hex::UnsolConfirm(1));
 
-    // Disarming class 1 stops further unsolicited data.
-    REQUIRE(Exchange(t, "C2 15 3C 02 06") == "C2 81 80 00");
     t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01)), 1); });
     REQUIRE(t.lower->PopWriteAsHex().empty());
+    const std::string otherIIN = cls == 1 ? "84" : cls == 2 ? "88" : "82";
+    REQUIRE(Exchange(t, "C2 15 " + target) == "C2 81 " + otherIIN + " 00");
+    t.Transaction([](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01)), 0); });
+    REQUIRE(t.lower->PopWriteAsHex().empty());
+    REQUIRE(Exchange(t, "C3 01 " + target) == "E3 81 " + otherIIN + " 00 02 01 28 01 00 00 00 81");
+    t.SendToOutstation("C3 00");
+    REQUIRE(Exchange(t, "C4 01 " + other) == "E4 81 80 00 02 01 28 01 00 01 00 81");
 }
 
 TEST_CASE("ProfileClasses - ASSIGN_CLASS maps G60V1 to class 0 and rejects count qualifiers", "[profile-classes]")
@@ -117,14 +128,14 @@ TEST_CASE("ProfileClasses - ASSIGN_CLASS G1V0 accepts 8-bit start-stop",
     t.application->supportsAssignClass = true;
     t.LowerLayerUp();
 
-    // FC22: G60V3/Q06, then G1V0/Q00, points 1 through 3.
-    REQUIRE(Exchange(t, "C1 16 3C 03 06 01 00 00 01 03")
-            == "C1 81 80 00");
+    const auto cls = GENERATE(0, 1, 2, 3);
+    // FC22: G60V1..4/Q06, then G1V0/Q00, points 1 through 3.
+    REQUIRE(Exchange(t, "C1 16 3C 0" + std::to_string(cls + 1) + " 06 01 00 00 01 03") == "C1 81 80 00");
 
     REQUIRE(t.application->classAssignments.size() == 1);
     REQUIRE(t.application->classAssignments.front()
             == std::make_tuple(AssignClassType::BinaryInput,
-                               PointClass::Class2, 1, 3));
+                               static_cast<PointClass>(cls), 1, 3));
 }
 
 TEST_CASE("ProfileClasses - ASSIGN_CLASS reports an incomplete trailing pair", "[profile-classes]")
