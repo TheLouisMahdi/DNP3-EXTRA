@@ -279,6 +279,10 @@ For the D-07 Activation behavior, configure a simulated point with
 (`0x01`) with count one. The Outstation uses the configured pulse duration
 and checks the same interlock as Complementary controls.
 
+Authenticated `--test-only` RTU Masters can use
+`crob <index> raw <sbo|direct|noack> <decimal-code> <count>` to exercise
+receiver rejection of excluded codes and repeat counts.
+
 The selected RTU default for analog events is G32V5 (float32 without time);
 generic diagnostics retain G32V7. In RTU mode, the unselected G41V4
 double-precision analog command is rejected for SELECT and all operation

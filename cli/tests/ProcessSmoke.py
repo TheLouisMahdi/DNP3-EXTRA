@@ -2934,6 +2934,14 @@ def profile_crob_two_output(exe):
 
 def profile_crob_activation(exe):
     """Exercise explicit Activation pulses through both SA methods and control qualifiers."""
+    for args, error in (
+        (["--rtu-crob-activation", "3:0"], "Timeout must be"),
+        (["--rtu-crob-activation", "3:120001"], "Numeric option out of range"),
+        (["--rtu-crob-latch", "3", "--rtu-crob-activation", "3:1"], "Conflicting CROB models"),
+    ):
+        rejected = run(exe, "outstation", "--test-only", "--auth", "method4", "--rtu-io-profile",
+                       *args, success=False)
+        assert error in rejected.stderr, (args, rejected.stderr)
     for method in ("method4", "method68"):
         profile = "pc-" + uuid.uuid4().hex[:12]
         provision = ["--test-only", "--profile", profile, "--auth", method]
@@ -2960,6 +2968,26 @@ def profile_crob_activation(exe):
                     out.executed(0)
                     cursor = out.send("crob-interlock 3 allow")
                     out.wait(r"\[INTERLOCK\] CROB\[3\] allow$", cursor)
+                    cursor = out.send("crob-interlock 4 allow")
+                    out.wait(r"\[INTERLOCK\] CROB\[4\] allow$", cursor)
+                    for point, code, repeat in (
+                        (3, 0x01, 0), (3, 0x01, 2), (3, 0x01, 255),
+                        (3, 0x02, 1), (3, 0x03, 1), (3, 0x04, 1),
+                        (3, 0x11, 1), (3, 0x21, 1), (3, 0xC1, 1), (3, 0xFF, 1),
+                        (4, 0x41, 0), (4, 0x81, 2), (4, 0x41, 255),
+                        (4, 0x51, 1), (4, 0x91, 1), (4, 0x61, 1), (4, 0xA1, 1),
+                    ):
+                        for mode in ("sbo", "direct", "noack"):
+                            command = f"crob {point} raw {mode} {code} {repeat}"
+                            if mode == "noack":
+                                master.noack(command)
+                            else:
+                                cursor = master.task(command, success=False)
+                                master.wait(r"status=NOT_SUPPORTED\b", cursor)
+                    cursor = master.task("read 10 2 3 4")
+                    master.wait(r"BinaryOutput\[3\]=OFF\b", cursor)
+                    master.wait(r"BinaryOutput\[4\]=OFF\b", cursor)
+                    out.executed(0)
                     for count, (mode, requested) in enumerate((("sbo", 1), ("direct", 2000), ("noack", 999)), 1):
                         with out.cv:
                             cursor = len(out.lines)

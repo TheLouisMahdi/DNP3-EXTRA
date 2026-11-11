@@ -926,19 +926,30 @@ int RunMaster(diagnostic::Options o)
             }
             else if (Is(w, {"stats"})) master->ScanRange(GroupVariationID(121, 1), 0, 17, soe, task);
             else if (Is(w, {"events"})) master->ScanAllObjects(GroupVariationID(122, 0), soe, task);
-            else if (w[0] == "crob" && (w.size() == 3 || w.size() == 4 || w.size() == 5))
+            else if (w[0] == "crob" && w.size() >= 3 && w.size() <= 6)
             {
-                const bool pulse = w[2] == "pulse" && o.rtuIoProfile;
-                if ((!pulse && w[2] != "on" && w[2] != "off") || (!pulse && w.size() == 5))
-                    throw std::runtime_error("Expected on/off or RTU pulse");
                 const auto index = static_cast<uint16_t>(RequiredNumber(w[1], 65535));
-                const bool on = w[2] == "on";
-                const auto onTime = w.size() == 5 ? RequiredNumber(w[4], UINT32_MAX) : 100;
-                const auto command = o.rtuIoProfile
-                    ? ControlRelayOutputBlock(OperationType::PULSE_ON,
-                        pulse ? TripCloseCode::NUL : on ? TripCloseCode::CLOSE : TripCloseCode::TRIP, false, 1, onTime, 0)
-                    : ControlRelayOutputBlock(on ? OperationType::LATCH_ON : OperationType::LATCH_OFF);
                 const auto mode = w.size() == 3 ? std::string("sbo") : w[3];
+                ControlRelayOutputBlock command;
+                if (w[2] == "raw" && w.size() == 6 && o.testOnly && o.rtuIoProfile && o.auth != "compat")
+                {
+                    // Exercise receiver policy with an authenticated diagnostic command.
+                    const auto code = static_cast<uint8_t>(RequiredNumber(w[4], UINT8_MAX));
+                    const auto count = static_cast<uint8_t>(RequiredNumber(w[5], UINT8_MAX));
+                    command = ControlRelayOutputBlock(code, count, 100, 0);
+                }
+                else
+                {
+                    const bool pulse = w[2] == "pulse" && o.rtuIoProfile;
+                    if ((!pulse && w[2] != "on" && w[2] != "off") || (!pulse && w.size() == 5) || w.size() == 6)
+                        throw std::runtime_error("Expected on/off or RTU pulse");
+                    const bool on = w[2] == "on";
+                    const auto onTime = w.size() == 5 ? RequiredNumber(w[4], UINT32_MAX) : 100;
+                    command = o.rtuIoProfile
+                        ? ControlRelayOutputBlock(OperationType::PULSE_ON,
+                            pulse ? TripCloseCode::NUL : on ? TripCloseCode::CLOSE : TripCloseCode::TRIP, false, 1, onTime, 0)
+                        : ControlRelayOutputBlock(on ? OperationType::LATCH_ON : OperationType::LATCH_OFF);
+                }
                 if (mode == "noack")
                 {
                     if (!master->DirectOperateNoAck(command, index, onNoAckResult, task))
