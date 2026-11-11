@@ -654,16 +654,16 @@ TEST_CASE("ProfileControls - bounded selection owns its bytes and handles sequen
     ControlState control(bytes.size());
     const Timestamp now;
     const auto selected = ser4cpp::rseq_t(original.data(), original.size());
-    control.Select(AppSeqNum(15), now, ser4cpp::rseq_t(bytes.data(), bytes.size()));
+    control.Select(AppSeqNum(15), now, ser4cpp::rseq_t(bytes.data(), bytes.size()), 1);
     bytes[0] = 99; // Transport storage is reusable immediately after SELECT returns.
     REQUIRE(control.IsSelectSequence(AppSeqNum(15)));
     REQUIRE_FALSE(control.IsSelectSequence(AppSeqNum(0)));
-    REQUIRE(control.OnRequest(FunctionCode::SELECT, AppSeqNum(15), selected));
-    REQUIRE(control.ValidateSelection(AppSeqNum(0), now, TimeDuration::Seconds(1), selected) == CommandStatus::SUCCESS);
+    REQUIRE(control.OnRequest(FunctionCode::SELECT, AppSeqNum(15), selected, 1));
+    REQUIRE(control.ValidateSelection(AppSeqNum(0), now, TimeDuration::Seconds(1), selected, 1) == CommandStatus::SUCCESS);
     const std::array<uint8_t, 5> oversized{{1, 2, 3, 4, 5}};
-    control.Select(AppSeqNum(0), now, ser4cpp::rseq_t(oversized.data(), oversized.size()));
+    control.Select(AppSeqNum(0), now, ser4cpp::rseq_t(oversized.data(), oversized.size()), 1);
     REQUIRE_FALSE(control.IsSelectSequence(AppSeqNum(0)));
-    REQUIRE(control.ValidateSelection(AppSeqNum(1), now, TimeDuration::Seconds(1), selected) == CommandStatus::NO_SELECT);
+    REQUIRE(control.ValidateSelection(AppSeqNum(1), now, TimeDuration::Seconds(1), selected, 1) == CommandStatus::NO_SELECT);
 }
 
 TEST_CASE("ProfileControls - Master direct response rejects extra headers and reports changed raw command fields",

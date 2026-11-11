@@ -46,14 +46,16 @@ public:
         return selected && expectedSeq.Equals(seq.Next());
     }
 
+    bool OwnsSelection(uint16_t source) const { return selected && selectSource == source; }
+
     // Table 4-9 applies only after native authentication/authorization admission.
     // A changed same-sequence SELECT is discarded without replacing the timer.
-    bool OnRequest(FunctionCode function, const AppSeqNum& seq, const ser4cpp::rseq_t& objects)
+    bool OnRequest(FunctionCode function, const AppSeqNum& seq, const ser4cpp::rseq_t& objects, uint16_t source)
     {
         if (!selected) return true;
         if (function == FunctionCode::SELECT)
         {
-            if (IsSelectSequence(seq))
+            if (OwnsSelection(source) && IsSelectSequence(seq))
                 return selectedObjects.as_rslice().take(length).equals(objects);
             Unselect();
         }
@@ -66,9 +68,10 @@ public:
     CommandStatus ValidateSelection(const AppSeqNum& seq,
                                     const Timestamp& now,
                                     const TimeDuration& timeout,
-                                    const ser4cpp::rseq_t& objects) const
+                                    const ser4cpp::rseq_t& objects,
+                                    uint16_t source) const
     {
-        if (selected && expectedSeq.Equals(seq))
+        if (OwnsSelection(source) && expectedSeq.Equals(seq))
         {
             if (selectTime <= now)
             {
@@ -100,12 +103,13 @@ public:
         }
     }
 
-    void Select(const AppSeqNum& currentSeqN, const Timestamp& now, const ser4cpp::rseq_t& objects)
+    void Select(const AppSeqNum& currentSeqN, const Timestamp& now, const ser4cpp::rseq_t& objects, uint16_t source)
     {
         selected = objects.is_not_empty() && objects.length() <= selectedObjects.length();
         if (!selected) return;
         selectedObjects.as_wslice().copy_from(objects);
         selectTime = now;
+        selectSource = source;
         expectedSeq = currentSeqN.Next();
         length = objects.length();
     }
@@ -118,6 +122,7 @@ public:
 private:
     bool selected = false;
     AppSeqNum expectedSeq;
+    uint16_t selectSource = 0;
     Timestamp selectTime;
     ser4cpp::Buffer selectedObjects;
     size_t length = 0;

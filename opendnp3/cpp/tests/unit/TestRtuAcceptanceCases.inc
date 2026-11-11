@@ -1524,6 +1524,30 @@ TEST_CASE("AT-CFG-05-OUTSTATION-MULTIFRAME-250", "[rtu-acceptance]")
         ConfirmedLink(false, LinkConfirmMode::MultiFrame, true, "C0 81 00 00 01 02 00 00 F0 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81", "05 64 05 40 01 00 0A 00 94 ED", "05 64 FF 73 01 00 0A 00 87 B0 40 C0 81 00 00 01 02 00 00 F0 81 81 81 81 81 81 00 F7 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 B9 FE", "05 64 07 53 01 00 0A 00 BB 04 81 81 7C DF", "05 64 FF 73 01 00 0A 00 87 B0 42 C0 81 00 00 01 02 00 00 F0 81 81 81 81 81 81 18 6C 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 81 E3 5D 81 81 81 81 81 81 81 81 81 81 B9 FE");
 }
 
+TEST_CASE("AT-PROFILE-035-ECHO", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogInvalidEcho(1, true);
+    if (Selected("V2")) AnalogInvalidEcho(1, false);
+}
+
+TEST_CASE("AT-PROFILE-035-REJECT", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogRejectedRequest(1, true);
+    if (Selected("V2")) AnalogRejectedRequest(1, false);
+}
+
+TEST_CASE("AT-PROFILE-035-SBO-OWNER", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogSelectionOwner(1, true);
+    if (Selected("V2")) AnalogSelectionOwner(1, false);
+}
+
+TEST_CASE("AT-PROFILE-035-DUP", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogDuplicateControls(1, true);
+    if (Selected("V2")) AnalogDuplicateControls(1, false);
+}
+
 TEST_CASE("AT-PROFILE-035-SBO17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -1560,6 +1584,30 @@ TEST_CASE("AT-PROFILE-035-NR28", "[rtu-acceptance]")
         AnalogCommand(1, 2, false, 257, -65537, "C0 06 29 01 28 01 00 01 01 FF FF FE FF 00", "", "", "", "CF 01 28 01 01 01 01 01 01", "CF 81 00 00 28 01 01 01 01 01 01 01 7B 00 00 00", "C2 01 28 01 01 01 01 01 01", "C2 81 00 00 28 01 01 01 01 01 01 01 FF FF FE FF");
 }
 
+TEST_CASE("AT-PROFILE-036-ECHO", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogInvalidEcho(2, true);
+    if (Selected("V2")) AnalogInvalidEcho(2, false);
+}
+
+TEST_CASE("AT-PROFILE-036-REJECT", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogRejectedRequest(2, true);
+    if (Selected("V2")) AnalogRejectedRequest(2, false);
+}
+
+TEST_CASE("AT-PROFILE-036-SBO-OWNER", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogSelectionOwner(2, true);
+    if (Selected("V2")) AnalogSelectionOwner(2, false);
+}
+
+TEST_CASE("AT-PROFILE-036-DUP", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogDuplicateControls(2, true);
+    if (Selected("V2")) AnalogDuplicateControls(2, false);
+}
+
 TEST_CASE("AT-PROFILE-036-SBO17", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -1594,6 +1642,30 @@ TEST_CASE("AT-PROFILE-036-NR28", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         AnalogCommand(2, 2, false, 257, -257, "C0 06 29 02 28 01 00 01 01 FF FE 00", "", "", "", "CF 01 28 02 01 01 01 01 01", "CF 81 00 00 28 02 01 01 01 01 01 01 7B 00", "C2 01 28 02 01 01 01 01 01", "C2 81 00 00 28 02 01 01 01 01 01 01 FF FE");
+}
+
+TEST_CASE("AT-PROFILE-037-ECHO", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogInvalidEcho(3, true);
+    if (Selected("V2")) AnalogInvalidEcho(3, false);
+}
+
+TEST_CASE("AT-PROFILE-037-REJECT", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogRejectedRequest(3, true);
+    if (Selected("V2")) AnalogRejectedRequest(3, false);
+}
+
+TEST_CASE("AT-PROFILE-037-SBO-OWNER", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogSelectionOwner(3, true);
+    if (Selected("V2")) AnalogSelectionOwner(3, false);
+}
+
+TEST_CASE("AT-PROFILE-037-DUP", "[rtu-acceptance]")
+{
+    if (Selected("V1")) AnalogDuplicateControls(3, true);
+    if (Selected("V2")) AnalogDuplicateControls(3, false);
 }
 
 TEST_CASE("AT-PROFILE-037-SBO17", "[rtu-acceptance]")

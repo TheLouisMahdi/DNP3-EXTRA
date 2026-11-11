@@ -1,6 +1,54 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-035-SBO-OWNER": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-035-ECHO": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-035-REJECT": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-035-DUP": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-036-SBO-OWNER": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-036-ECHO": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-036-REJECT": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-036-DUP": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-037-SBO-OWNER": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-037-ECHO": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-037-REJECT": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-037-DUP": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
     "AT-PROFILE-007-BATCH": {
       "kind": "unit",
       "vectors": ["V1"]
@@ -1798,6 +1846,216 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-035-SBO-OWNER/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "SBO-OWNER command boundaries",
+      "input_hex": "C0 03 29 01 17 01 07 FF FF FE FF 00",
+      "checks": [
+        ["rejected_operations", "receiver", "STATE", "OUTSTATION", 11, 0, 65535],
+        ["authorized_operations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-SBO-OWNER/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "SBO-OWNER command boundaries",
+      "input_hex": "C0 03 29 01 28 01 00 07 00 FF FF FE FF 00",
+      "checks": [
+        ["rejected_operations", "receiver", "STATE", "OUTSTATION", 11, 0, 65535],
+        ["authorized_operations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-ECHO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "ECHO command boundaries",
+      "input_hex": "C0 03 29 01 17 01 07 FF FF FE FF 00",
+      "checks": [
+        ["rejected_echoes", "receiver", "STATE", "MASTER", 8, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-ECHO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "ECHO command boundaries",
+      "input_hex": "C0 03 29 01 28 01 00 07 00 FF FF FE FF 00",
+      "checks": [
+        ["rejected_echoes", "receiver", "STATE", "MASTER", 8, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-REJECT/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "REJECT command boundaries",
+      "input_hex": "C0 03 29 01 17 01 07 FF FF FE FF 00",
+      "checks": [
+        ["malformed_requests", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["unchanged_readbacks", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-REJECT/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "REJECT command boundaries",
+      "input_hex": "C0 03 29 01 28 01 00 07 00 FF FF FE FF 00",
+      "checks": [
+        ["malformed_requests", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["unchanged_readbacks", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-DUP/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "DUP command boundaries",
+      "input_hex": "CF 03 29 01 17 01 07 FF FF FE FF 00",
+      "checks": [
+        ["operations_before_reconnect", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["operations_after_reconnect", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-035-DUP/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
+      "description": "DUP command boundaries",
+      "input_hex": "CF 03 29 01 28 01 00 07 00 FF FF FE FF 00",
+      "checks": [
+        ["operations_before_reconnect", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["operations_after_reconnect", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-SBO-OWNER/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "SBO-OWNER command boundaries",
+      "input_hex": "C0 03 29 02 17 01 07 FF FE 00",
+      "checks": [
+        ["rejected_operations", "receiver", "STATE", "OUTSTATION", 11, 0, 65535],
+        ["authorized_operations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-SBO-OWNER/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "SBO-OWNER command boundaries",
+      "input_hex": "C0 03 29 02 28 01 00 07 00 FF FE 00",
+      "checks": [
+        ["rejected_operations", "receiver", "STATE", "OUTSTATION", 11, 0, 65535],
+        ["authorized_operations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-ECHO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "ECHO command boundaries",
+      "input_hex": "C0 03 29 02 17 01 07 FF FE 00",
+      "checks": [
+        ["rejected_echoes", "receiver", "STATE", "MASTER", 8, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-ECHO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "ECHO command boundaries",
+      "input_hex": "C0 03 29 02 28 01 00 07 00 FF FE 00",
+      "checks": [
+        ["rejected_echoes", "receiver", "STATE", "MASTER", 8, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-REJECT/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "REJECT command boundaries",
+      "input_hex": "C0 03 29 02 17 01 07 FF FE 00",
+      "checks": [
+        ["malformed_requests", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["unchanged_readbacks", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-REJECT/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "REJECT command boundaries",
+      "input_hex": "C0 03 29 02 28 01 00 07 00 FF FE 00",
+      "checks": [
+        ["malformed_requests", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["unchanged_readbacks", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-DUP/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "DUP command boundaries",
+      "input_hex": "CF 03 29 02 17 01 07 FF FE 00",
+      "checks": [
+        ["operations_before_reconnect", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["operations_after_reconnect", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-036-DUP/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.2; Device Profile p8",
+      "description": "DUP command boundaries",
+      "input_hex": "CF 03 29 02 28 01 00 07 00 FF FE 00",
+      "checks": [
+        ["operations_before_reconnect", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["operations_after_reconnect", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-SBO-OWNER/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "SBO-OWNER command boundaries",
+      "input_hex": "C0 03 29 03 17 01 07 00 00 48 C1 00",
+      "checks": [
+        ["rejected_operations", "receiver", "STATE", "OUTSTATION", 11, 0, 65535],
+        ["authorized_operations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-SBO-OWNER/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "SBO-OWNER command boundaries",
+      "input_hex": "C0 03 29 03 28 01 00 07 00 00 00 48 C1 00",
+      "checks": [
+        ["rejected_operations", "receiver", "STATE", "OUTSTATION", 11, 0, 65535],
+        ["authorized_operations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-ECHO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "ECHO command boundaries",
+      "input_hex": "C0 03 29 03 17 01 07 00 00 48 C1 00",
+      "checks": [
+        ["rejected_echoes", "receiver", "STATE", "MASTER", 9, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-ECHO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "ECHO command boundaries",
+      "input_hex": "C0 03 29 03 28 01 00 07 00 00 00 48 C1 00",
+      "checks": [
+        ["rejected_echoes", "receiver", "STATE", "MASTER", 9, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-REJECT/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "REJECT command boundaries",
+      "input_hex": "C0 03 29 03 17 01 07 00 00 48 C1 00",
+      "checks": [
+        ["malformed_requests", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["unchanged_readbacks", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-REJECT/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "REJECT command boundaries",
+      "input_hex": "C0 03 29 03 28 01 00 07 00 00 00 48 C1 00",
+      "checks": [
+        ["malformed_requests", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["unchanged_readbacks", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-DUP/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "DUP command boundaries",
+      "input_hex": "CF 03 29 03 17 01 07 00 00 48 C1 00",
+      "checks": [
+        ["operations_before_reconnect", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["operations_after_reconnect", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-037-DUP/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Annex A.20.3; Device Profile p8",
+      "description": "DUP command boundaries",
+      "input_hex": "CF 03 29 03 28 01 00 07 00 00 00 48 C1 00",
+      "checks": [
+        ["operations_before_reconnect", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["operations_after_reconnect", "receiver", "STATE", "OUTSTATION", 4, 0, 65535]
+      ]
+    },
     "AT-PROFILE-007-BATCH/V1": {
       "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.3.1; Device Profile p5",
       "description": "FIFO across the Q17 count and index boundaries",

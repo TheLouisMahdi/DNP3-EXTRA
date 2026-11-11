@@ -1,4 +1,5 @@
 // Licensed under the Apache License, Version 2.0.
+#include "app/Message.h"
 #include "dnp3mocks/MockSOEHandler.h"
 #include "master/MeasurementHandler.h"
 #include "master/TimeSyncHandler.h"
@@ -848,6 +849,210 @@ void AnalogCommand(unsigned variation, unsigned mode, bool narrow, uint16_t inde
     Observe("readback_times_two", actual);
     REQUIRE(actual == doubleValue);
 }
+std::string AnalogTestHeader(unsigned variation, bool narrow, bool wrongPoint = false)
+{
+    const std::string group = "29 0" + std::to_string(variation);
+    if (narrow) return group + (wrongPoint ? " 17 01 08 " : " 17 01 07 ");
+    return group + (wrongPoint ? " 28 01 00 08 00 " : " 28 01 00 07 00 ");
+}
+
+const char* AnalogTestValue(unsigned variation)
+{
+    const char* values[] = {"FF FF FE FF ", "FF FE ", "00 00 48 C1 "};
+    return values[variation - 1];
+}
+
+CommandSet AnalogTestCommand(unsigned variation, bool signedZero = false)
+{
+    if (variation == 1) return CommandSet({WithIndex(AnalogOutputInt32(-65537), 7)});
+    if (variation == 2) return CommandSet({WithIndex(AnalogOutputInt16(-257), 7)});
+    return CommandSet({WithIndex(AnalogOutputFloat32(signedZero ? -0.0f : -12.5f), 7)});
+}
+
+void AnalogSelectionOwner(unsigned variation, bool narrow)
+{
+    const auto header = AnalogTestHeader(variation, narrow);
+    const std::string value = AnalogTestValue(variation);
+    const auto body = header + value + "00";
+    OutstationConfig config;
+    config.params.selectTimeout = TimeDuration::Milliseconds(5);
+    uint32_t operations = 0;
+    uint32_t rejections = 0;
+    const auto test = [&](const std::string& candidate, const char* sequence, int age,
+                          const char* status, bool disconnect = false) {
+        OutstationTestObject t(config);
+        t.LowerLayerUp();
+        REQUIRE(Request(t, ("C0 03 " + body).c_str()) == "C0 81 80 00 " + body);
+        REQUIRE(t.cmdHandler->NumOperate() == 0);
+        if (disconnect)
+        {
+            t.LowerLayerDown();
+            t.LowerLayerUp();
+        }
+        t.AdvanceTime(TimeDuration::Milliseconds(age));
+        const auto req = std::string(sequence) + " 04 " + candidate + "00";
+        const auto response = std::string(sequence) + " 81 80 00 " + candidate + status;
+        REQUIRE(Request(t, req.c_str()) == response);
+        const bool accepted = std::string(status) == "00";
+        REQUIRE(t.cmdHandler->NumOperate() == (accepted ? 1 : 0));
+        operations += t.cmdHandler->NumOperate();
+        rejections += !accepted;
+    };
+    test(AnalogTestHeader(variation, narrow, true) + value, "C1", 0, "02");
+    test(header + "01 " + value.substr(3), "C1", 0, "02");
+    test(AnalogTestHeader(variation, !narrow) + value, "C1", 0, "02");
+    const auto other = (variation % 3) + 1;
+    test(AnalogTestHeader(other, narrow) + AnalogTestValue(other), "C1", 0, "02");
+    test(header + value, "C2", 0, "02");
+    test(header + value, "C1", 4, "00");
+    test(header + value, "C1", 5, "01");
+    test(header + value, "C1", 6, "01");
+    test(header + value, "C1", 0, "02", true);
+
+    config.params.respondToAnyMaster = true;
+    OutstationTestObject t(config);
+    t.LowerLayerUp();
+    REQUIRE(Request(t, ("C0 03 " + body).c_str()) == "C0 81 80 00 " + body);
+    const HexSequence foreign("C1 04 " + body);
+    REQUIRE(t.context.OnReceive(Message(Addresses(1, 0), foreign.ToRSeq())));
+    REQUIRE(t.lower->PopWriteAsHex() == "C1 81 80 00 " + header + value + "02");
+    REQUIRE(t.cmdHandler->NumOperate() == 0);
+    t.OnTxReady();
+    REQUIRE(Request(t, ("C1 04 " + body).c_str()) == "C1 81 80 00 " + body);
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+    REQUIRE(Request(t, ("C2 03 " + body).c_str()) == "C2 81 80 00 " + body);
+    t.AdvanceTime(TimeDuration::Milliseconds(2));
+    const HexSequence foreignAgain("C3 04 " + body);
+    REQUIRE(t.context.OnReceive(Message(Addresses(1, 0), foreignAgain.ToRSeq())));
+    REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00 " + header + value + "02");
+    t.OnTxReady();
+    REQUIRE(Request(t, ("C2 03 " + body).c_str()) == "C2 81 80 00 " + body);
+    REQUIRE(t.cmdHandler->NumSelect() == 2);
+    t.AdvanceTime(TimeDuration::Milliseconds(3));
+    REQUIRE(Request(t, ("C3 04 " + body).c_str()) == "C3 81 80 00 " + header + value + "01");
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+    Observe("rejected_operations", rejections + 3);
+    Observe("authorized_operations", operations + t.cmdHandler->NumOperate());
+}
+
+void AnalogDuplicateControls(unsigned variation, bool narrow)
+{
+    const auto header = AnalogTestHeader(variation, narrow);
+    const std::string value = AnalogTestValue(variation);
+    const auto body = header + value + "00";
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+    const auto select = "CF 03 " + body;
+    const auto operate = "C0 04 " + body;
+    REQUIRE(Request(t, select.c_str()) == "CF 81 80 00 " + body);
+    REQUIRE(Request(t, select.c_str()) == "CF 81 80 00 " + body);
+    REQUIRE(t.cmdHandler->NumSelect() == 1);
+    REQUIRE(t.cmdHandler->NumOperate() == 0);
+    REQUIRE(Request(t, operate.c_str()) == "C0 81 80 00 " + body);
+    REQUIRE(Request(t, operate.c_str()) == "C0 81 80 00 " + body);
+    REQUIRE(Request(t, ("C0 04 " + header + "01 " + value.substr(3) + "00").c_str())
+            == "C0 81 80 00 " + header + "01 " + value.substr(3) + "02");
+    REQUIRE(t.cmdHandler->NumOperate() == 1);
+
+    const auto direct = "C1 05 " + body;
+    REQUIRE(Request(t, direct.c_str()) == "C1 81 80 00 " + body);
+    REQUIRE(Request(t, direct.c_str()) == "C1 81 80 00 " + body);
+    REQUIRE(t.cmdHandler->NumOperate() == 2);
+    const auto noack = "C2 06 " + body;
+    REQUIRE(Request(t, noack.c_str()).empty());
+    REQUIRE(Request(t, noack.c_str()).empty());
+    REQUIRE(t.cmdHandler->NumOperate() == 3);
+    Observe("operations_before_reconnect", t.cmdHandler->NumOperate());
+
+    t.LowerLayerDown();
+    t.LowerLayerUp();
+    REQUIRE(Request(t, operate.c_str()) == "C0 81 80 00 " + header + value + "02");
+    REQUIRE(t.cmdHandler->NumOperate() == 3);
+    REQUIRE(Request(t, ("C3 05 " + body).c_str()) == "C3 81 80 00 " + body);
+    REQUIRE(t.cmdHandler->NumOperate() == 4);
+    Observe("operations_after_reconnect", t.cmdHandler->NumOperate());
+}
+
+void AnalogInvalidEcho(unsigned variation, bool narrow)
+{
+    const auto header = AnalogTestHeader(variation, narrow);
+    const std::string value = AnalogTestValue(variation);
+    const auto body = header + value + "00";
+    uint32_t rejections = 0;
+    const auto reject = [&](const std::string& response, bool signedZero = false) {
+        auto params = NoStartupTasks();
+        params.controlQualifierMode = narrow ? IndexQualifierMode::allow_one_byte : IndexQualifierMode::always_two_bytes;
+        MasterTestFixture master(params);
+        REQUIRE(master.context->OnLowerLayerUp());
+        CommandCallbackQueue result;
+        master.context->SelectAndOperate(AnalogTestCommand(variation, signedZero), result.Callback(), TaskConfig::Default());
+        master.exe->run_many();
+        REQUIRE(master.lower->PopWriteAsHex() == "C0 03 " + (signedZero ? header + "00 00 00 80 00" : body));
+        REQUIRE(master.context->OnTxReady());
+        REQUIRE(master.SendToMaster(response));
+        master.exe->run_many();
+        REQUIRE(master.lower->HasNoData());
+        REQUIRE(result.values.size() == 1);
+        for (const auto& point : result.values.front().results)
+            REQUIRE_FALSE((point.state == CommandPointState::SUCCESS && point.status == CommandStatus::SUCCESS));
+        ++rejections;
+    };
+    reject("C0 81 00 00");
+    reject("C0 81 00 00 " + body + " " + body);
+    reject("C0 81 00 00 " + header + value.substr(0, value.size() - 1));
+    reject("C0 81 00 00 " + AnalogTestHeader(variation, narrow, true) + value + "00");
+    reject("C0 81 00 00 " + header + "01 " + value.substr(3) + "00");
+    reject("C0 81 00 00 " + header + value + "0C");
+    reject("C0 81 00 00 " + AnalogTestHeader(variation, !narrow) + value + "00");
+    reject("C0 81 00 04 " + body);
+    if (variation == 3) reject("C0 81 00 00 " + header + "00 00 00 00 00", true);
+    Observe("rejected_echoes", rejections);
+}
+
+void AnalogRejectedRequest(unsigned variation, bool narrow)
+{
+    const auto header = AnalogTestHeader(variation, narrow);
+    const auto body = header + AnalogTestValue(variation) + "00";
+    const std::string malformed[] = {"", " " + header + AnalogTestValue(variation),
+        " " + body + " 29", " 29 0" + std::to_string(variation) + " 00 07 07 " + AnalogTestValue(variation) + "00"};
+    uint32_t malformedRejected = 0;
+    uint32_t policyRejected = 0;
+    for (unsigned function = 3; function <= 6; ++function)
+    {
+        for (const auto& objects : malformed)
+        {
+            OutstationTestObject t(OutstationConfig{});
+            t.LowerLayerUp();
+            const auto req = "C0 0" + std::to_string(function) + objects;
+            REQUIRE(Request(t, req.c_str()) == (function == 6 ? "" : "C0 81 80 04"));
+            REQUIRE(t.cmdHandler->NumInvocations() == 0);
+            ++malformedRejected;
+        }
+
+        const Point initial{7, 123, 1};
+        OutstationTestObject t(OutstationConfig{}, Points(40, 1, {initial}));
+        t.cmdHandler->reflectAnalogOutput = true;
+        t.LowerLayerUp();
+        Update(t, 40, {initial}, false);
+        if (function == 4)
+            REQUIRE(Request(t, ("CF 03 " + body).c_str()) == "CF 81 80 00 " + body);
+        t.cmdHandler->SetResponse(CommandStatus::OUT_OF_RANGE);
+        const auto req = "C0 0" + std::to_string(function) + " " + body;
+        const auto denied = "C0 81 80 00 " + header + AnalogTestValue(variation) + "0C";
+        REQUIRE(Request(t, req.c_str()) == (function == 6 ? "" : denied));
+        if (function == 3)
+        {
+            t.cmdHandler->SetResponse(CommandStatus::SUCCESS);
+            REQUIRE(Request(t, ("C1 04 " + body).c_str()) == "C1 81 80 00 " + header + AnalogTestValue(variation) + "02");
+            REQUIRE(t.cmdHandler->NumOperate() == 0);
+        }
+        REQUIRE(Request(t, "C2 01 28 01 00 07 07") == "C2 81 80 00 28 01 00 07 07 01 7B 00 00 00");
+        ++policyRejected;
+    }
+    Observe("malformed_requests", malformedRejected);
+    Observe("unchanged_readbacks", policyRejected);
+}
+
 void ReadReject(unsigned group, unsigned variation, bool event, std::initializer_list<Point> points,
                 const char* request, const char* errorReply, const char* probe, const char* expected)
 {

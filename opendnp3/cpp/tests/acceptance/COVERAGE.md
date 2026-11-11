@@ -1,6 +1,6 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 276 Host scenarios have executable bindings (489 vectors). 165 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 288 Host scenarios have executable bindings (513 vectors). 153 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
@@ -37,9 +37,9 @@ A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The re
 | PROFILE-032 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-033 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-034 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
-| PROFILE-035 | `SBO17`, `DO17`, `NR17`, `SBO28`, `DO28`, `NR28` | `SBO-OWNER`, `ECHO`, `REJECT`, `DUP` | — |
-| PROFILE-036 | `SBO17`, `DO17`, `NR17`, `SBO28`, `DO28`, `NR28` | `SBO-OWNER`, `ECHO`, `REJECT`, `DUP` | — |
-| PROFILE-037 | `SBO17`, `DO17`, `NR17`, `SBO28`, `DO28`, `NR28` | `SBO-OWNER`, `ECHO`, `REJECT`, `DUP` | — |
+| PROFILE-035 | `SBO17`, `DO17`, `NR17`, `SBO28`, `DO28`, `NR28`, `SBO-OWNER`, `ECHO`, `REJECT`, `DUP` | — | — |
+| PROFILE-036 | `SBO17`, `DO17`, `NR17`, `SBO28`, `DO28`, `NR28`, `SBO-OWNER`, `ECHO`, `REJECT`, `DUP` | — | — |
+| PROFILE-037 | `SBO17`, `DO17`, `NR17`, `SBO28`, `DO28`, `NR28`, `SBO-OWNER`, `ECHO`, `REJECT`, `DUP` | — | — |
 | PROFILE-038 | `READ`, `WRITE`, `NEG`, `EDGE` | — | — |
 | PROFILE-039 | `F129G2`, `F129G4`, `F130G2`, `F130G4` | `NEG` | — |
 | PROFILE-040 | `F129G2`, `F129G4`, `F130G2`, `F130G4` | `NEG` | — |

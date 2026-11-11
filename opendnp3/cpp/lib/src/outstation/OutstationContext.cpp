@@ -313,7 +313,8 @@ bool OContext::ProcessObjects(const ParsedRequest& request)
         return false;
     }
 
-    if (!control.OnRequest(request.header.function, AppSeqNum(request.header.control.SEQ), request.objects))
+    if (!control.OnRequest(request.header.function, AppSeqNum(request.header.control.SEQ), request.objects,
+                           request.addresses.source))
         return true; // Changed same-sequence SELECT: discard per Table 4-9.
 
     if (request.header.function != FunctionCode::DIRECT_OPERATE_NR && request.header.function != FunctionCode::CONFIRM)
@@ -983,9 +984,9 @@ IINField OContext::HandleNonReadResponse(const ParsedRequest& request, HeaderWri
     case (FunctionCode::WRITE):
         return this->HandleWrite(request);
     case (FunctionCode::SELECT):
-        return this->HandleSelect(objects, writer);
+        return this->HandleSelect(request, writer);
     case (FunctionCode::OPERATE):
-        return this->HandleOperate(objects, writer);
+        return this->HandleOperate(request, writer);
     case (FunctionCode::DIRECT_OPERATE):
         return this->HandleDirectOperate(objects, OperateType::DirectOperate, &writer);
     case (FunctionCode::COLD_RESTART):
@@ -1151,8 +1152,15 @@ IINField OContext::HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateTy
     return (result == ParseResult::OK) ? handler.Errors() : IINFromParseResult(result);
 }
 
-IINField OContext::HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& writer)
+IINField OContext::HandleSelect(const ParsedRequest& request, HeaderWriter& writer)
 {
+    const auto& objects = request.objects;
+    const auto source = request.addresses.source;
+    const auto seq = AppSeqNum(request.header.control.SEQ);
+    // The request history can have been replaced by another source's rejected OPERATE.
+    if (control.OwnsSelection(source) && control.IsSelectSequence(seq))
+        return HandleCommandWithConstant(objects, writer, CommandStatus::SUCCESS);
+
     control.Unselect(); // A failed new SELECT must never leave an older selection armed.
     if (objects.is_empty() || objects.length() > params.maxRxFragSize) return IINBit::PARAM_ERROR;
 
@@ -1172,7 +1180,7 @@ IINField OContext::HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& wr
     {
         if (handler.AllCommandsSuccessful())
         {
-            this->control.Select(this->sol.seq.num, Timestamp(this->executor->get_time()), objects);
+            this->control.Select(seq, Timestamp(this->executor->get_time()), objects, source);
         }
         else
         {
@@ -1185,26 +1193,29 @@ IINField OContext::HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& wr
     return IINFromParseResult(result);
 }
 
-IINField OContext::HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& writer)
+IINField OContext::HandleOperate(const ParsedRequest& request, HeaderWriter& writer)
 {
+    const auto& objects = request.objects;
+    const auto source = request.addresses.source;
+    const bool ownsSelection = control.OwnsSelection(source);
     if (objects.is_empty() || objects.length() > params.maxRxFragSize)
     {
-        control.Unselect();
+        if (ownsSelection) control.Unselect();
         return IINBit::PARAM_ERROR;
     }
 
     // since we're echoing, make sure there's enough size before beginning
     if (objects.length() > writer.Remaining())
     {
-        control.Unselect();
+        if (ownsSelection) control.Unselect();
         FORMAT_LOG_BLOCK(this->logger, flags::WARN, "Igonring command request due to oversized payload size of %zu",
                          objects.length());
         return IINField(IINBit::PARAM_ERROR);
     }
 
     auto now = Timestamp(this->executor->get_time());
-    auto result = this->control.ValidateSelection(this->sol.seq.num, now, this->params.selectTimeout, objects);
-    control.Unselect(); // Consume once; native history retransmits an exact duplicate response.
+    auto result = this->control.ValidateSelection(this->sol.seq.num, now, this->params.selectTimeout, objects, source);
+    if (ownsSelection) control.Unselect(); // Native history retransmits an exact duplicate response.
 
     if (result == CommandStatus::SUCCESS)
     {

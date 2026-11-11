@@ -276,8 +276,8 @@ private:
     // ------ Function Handlers ------
 
     IINField HandleWrite(const ParsedRequest& request);
-    IINField HandleSelect(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
-    IINField HandleOperate(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
+    IINField HandleSelect(const ParsedRequest& request, HeaderWriter& writer);
+    IINField HandleOperate(const ParsedRequest& request, HeaderWriter& writer);
     IINField HandleDirectOperate(const ser4cpp::rseq_t& objects, OperateType opType, HeaderWriter* pWriter);
     IINField HandleDelayMeasure(const ser4cpp::rseq_t& objects, HeaderWriter& writer);
     IINField HandleRecordCurrentTime(const ParsedRequest& request);
