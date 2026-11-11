@@ -1810,7 +1810,7 @@ def profile_crob_latch(exe):
         "--auth", "compat", "--rtu-crob-latch", "3",
         success=False,
     )
-    assert "RTU CROB models require an RTU outstation, --test-only and SA" in rejected.stderr
+    assert "RTU CROB models require an RTU outstation, --test-only and SA" in rejected.stderr, rejected.stderr
 
     duplicate = run(
         exe, "outstation", "--rtu-io-profile", "--test-only",
