@@ -63,6 +63,8 @@ public:
 
     virtual bool Advance() override;
 
+    bool ForceUnconfirmed() const override { return this->message.forceUnconfirmed; }
+
     const StackStatistics::Transport::Tx& Statistics() const
     {
         return statistics;

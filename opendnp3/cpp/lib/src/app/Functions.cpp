@@ -19,6 +19,7 @@
  */
 
 #include "Functions.h"
+#include "app/parsing/APDUParser.h"
 
 namespace opendnp3
 {
@@ -34,5 +35,24 @@ bool Functions::IsNoAckFuncCode(FunctionCode code)
     default:
         return false;
     }
+}
+bool Functions::IsTimeSynchronizationRequest(FunctionCode code, const ser4cpp::rseq_t& objects)
+{
+    if (code == FunctionCode::DELAY_MEASURE || code == FunctionCode::RECORD_CURRENT_TIME)
+        return true;
+    if (code != FunctionCode::WRITE)
+        return false;
+
+    struct TimeWrite final : IWhiteList
+    {
+        bool IsAllowed(uint32_t, GroupVariation gv, QualifierCode) override
+        {
+            containsClock = containsClock || gv == GroupVariation::Group50Var1 || gv == GroupVariation::Group50Var3;
+            return true;
+        }
+        bool containsClock = false;
+    } write;
+    APDUParser::ParseSinglePass(objects, nullptr, nullptr, &write, ParserSettings::Default());
+    return write.containsClock;
 }
 } // namespace opendnp3

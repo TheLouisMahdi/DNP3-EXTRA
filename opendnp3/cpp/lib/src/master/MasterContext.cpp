@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "MasterContext.h"
+#include "app/Functions.h"
 
 #include "app/APDUBuilders.h"
 #include "app/APDULogging.h"
@@ -62,7 +63,7 @@ MContext::MContext(const Addresses& addresses,
       SOEHandler(SOEHandler),
       application(application),
       scheduler(std::move(scheduler)),
-      tasks(params, logger, *application, SOEHandler),
+      tasks(params, logger, *application, SOEHandler, executor),
       txBuffer(params.maxTxFragSize),
       tstate(TaskState::IDLE),
       previousResponseObjects(params.maxRxFragSize)
@@ -747,7 +748,7 @@ void MContext::ConfirmStartupNull(uint8_t sequence, bool restart)
 }
 #endif
 
-void MContext::Transmit(const ser4cpp::rseq_t& data)
+void MContext::Transmit(const ser4cpp::rseq_t& data, bool forceUnconfirmed)
 {
     logging::ParseAndLogRequestTx(this->logger, data);
     assert(!this->isSending);
@@ -779,7 +780,7 @@ void MContext::Transmit(const ser4cpp::rseq_t& data)
     }
 #endif
     this->isSending = true;
-    const bool started = this->lower->BeginTransmit(Message(this->addresses, data));
+    const bool started = this->lower->BeginTransmit(Message(this->addresses, data, forceUnconfirmed));
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (started && authentication && authentication->sessions)
     {
@@ -1097,6 +1098,7 @@ MContext::TaskState MContext::ResumeActiveTask()
     }
 #endif
     auto apdu = request.ToRSeq();
+    const auto forceUnconfirmed = Functions::IsTimeSynchronizationRequest(request.GetFunction(), apdu.skip(2));
     auto nextState = activeTask->ExpectsResponse() ? TaskState::WAIT_FOR_RESPONSE : TaskState::WAIT_FOR_TX_COMPLETION;
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (authentication)
@@ -1175,7 +1177,7 @@ MContext::TaskState MContext::ResumeActiveTask()
         ? Timestamp::Max() : Timestamp(executor->get_time()) + params.maxResponseTime;
     tstate = nextState;
     this->StartResponseTimer(); // Also bounds waiting for lower-layer transmit completion.
-    this->Transmit(apdu);
+    this->Transmit(apdu, forceUnconfirmed);
 
     return nextState;
 }

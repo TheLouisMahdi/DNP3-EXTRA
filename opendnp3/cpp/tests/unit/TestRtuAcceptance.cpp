@@ -581,6 +581,32 @@ void RejectMeasurement(const char* body)
     REQUIRE(soe.TotalReceived() == 0);
 }
 
+void MalformedCto(unsigned variation, unsigned vector)
+{
+    MasterTestFixture master(NoStartupTasks());
+    REQUIRE(master.context->OnLowerLayerUp());
+    const std::string cto = "33 0" + std::to_string(variation);
+    const std::string relative = "02 03 17 01 07 81 01 00";
+    REQUIRE(master.SendToMaster("F0 82 00 00 " + cto + " 07 01 01 00 00 00 00 00 " + relative));
+    REQUIRE(master.meas->TotalReceived() == 1);
+    REQUIRE(master.lower->PopWriteAsHex() == "D0 00");
+    REQUIRE(master.context->OnTxReady());
+    master.meas->Clear();
+    const std::string invalid[] = {
+        cto + " 07 00",
+        cto + " 07 02 01 00 00 00 00 00 02 00 00 00 00 00 " + relative,
+        cto + " 08 01 00 01 00 00 00 00 00 " + relative,
+        cto + " 07 01 01 00 00 00 00",
+        relative,
+        cto + " 07 01 FF FF FF FF FF FF " + relative,
+    };
+    REQUIRE(master.SendToMaster("F1 82 00 00 01 02 00 00 00 81 " + invalid[vector]));
+    Observe("typed_delivery_count", master.meas->TotalReceived());
+    REQUIRE(master.meas->TotalReceived() == 0);
+    Observe("unexpected_confirm", !master.lower->HasNoData());
+    REQUIRE(master.lower->HasNoData());
+}
+
 void DelayMeasure()
 {
     OutstationTestObject t(OutstationConfig{});

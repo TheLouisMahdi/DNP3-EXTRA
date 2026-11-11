@@ -2214,6 +2214,13 @@ TEST_CASE("AT-PROFILE-046-READ08", "[rtu-acceptance]")
         ClassRead(3, true, {{7, 1, 1}, {8, 0, 1}, {9, 1, 1}}, {{7, 1, 1}, {8, 0, 1}}, "C0 01 3C 04 08 02 00", "E0 81 8A 00 02 01 28 02 00 07 00 81 08 00 01", "C1 01 3C 02 06", "E1 81 88 00 02 01 28 01 00 1E 00 81");
 }
 
+TEST_CASE("AT-PROFILE-039-NEG", "[rtu-acceptance]")
+{
+    for (unsigned vector = 0; vector < 6; ++vector)
+        if (Selected(("V" + std::to_string(vector + 1)).c_str()))
+            MalformedCto(1, vector);
+}
+
 TEST_CASE("AT-PROFILE-039-F129G2", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -2244,6 +2251,13 @@ TEST_CASE("AT-PROFILE-039-F130G4", "[rtu-acceptance]")
         CommonTime(4, true, true, TimestampQuality::SYNCHRONIZED, "", "F1 82 80 00 33 01 07 01 06 05 04 03 02 01 04 03 17 02 07 01 00 00 08 41 01 01");
     if (Selected("V2"))
         CommonTime(4, false, true, TimestampQuality::SYNCHRONIZED, "", "F1 82 80 00 33 01 07 01 06 05 04 03 02 01 04 03 28 02 00 07 00 01 00 00 00 01 41 01 01");
+}
+
+TEST_CASE("AT-PROFILE-040-NEG", "[rtu-acceptance]")
+{
+    for (unsigned vector = 0; vector < 6; ++vector)
+        if (Selected(("V" + std::to_string(vector + 1)).c_str()))
+            MalformedCto(2, vector);
 }
 
 TEST_CASE("AT-PROFILE-040-F129G2", "[rtu-acceptance]")

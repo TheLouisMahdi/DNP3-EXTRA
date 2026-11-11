@@ -986,7 +986,8 @@ TEST_CASE(SUITE("performs non-LAN time synchronization"))
 
     REQUIRE(t.lower->PopWriteAsHex() == hex::MeasureDelay(1));
     t.context->OnTxReady();
-    t.application->time += 100; // advance time by 100ms so that the master sees 100ms for a response
+    t.exe->advance_time(std::chrono::milliseconds(100));
+    t.application->time += 100;
     t.SendToMaster("C1 81 10 00 34 02 07 01 0A 00"); // still need time, 52 Var 2, delay == 10ms
 
     t.exe->run_many();
@@ -1000,6 +1001,49 @@ TEST_CASE(SUITE("performs non-LAN time synchronization"))
     t.exe->run_many();
 
     REQUIRE(t.lower->NumWrites() == 0); // no more packets
+}
+
+TEST_CASE("ProfileTime - clock synchronization never retries an expired request", "[profile-time]")
+{
+    auto params = NoStartupTasks();
+    params.timeSyncMode = TimeSyncMode::NonLAN;
+    params.responseTimeout = TimeDuration::Milliseconds(500);
+    MasterTestFixture t(params);
+    t.context->OnLowerLayerUp();
+    t.application->time = 1000;
+    t.SendToMaster(hex::NullUnsolicited(0, IINField(IINBit::NEED_TIME)));
+    REQUIRE(t.lower->PopWriteAsHex() == hex::UnsolConfirm(0));
+    t.context->OnTxReady();
+    t.exe->run_many();
+    REQUIRE(t.lower->NextWriteIsUnconfirmed());
+    REQUIRE(t.lower->PopWriteAsHex() == hex::MeasureDelay(0));
+    t.context->OnTxReady();
+
+    SECTION("lost delay result")
+    {
+        t.exe->advance_time(std::chrono::milliseconds(500));
+        t.exe->run_many();
+        REQUIRE(t.lower->HasNoData());
+        t.SendToMaster("C0 81 00 00 34 02 07 01 0A 00"); // late, no synchronization write
+        REQUIRE(t.lower->HasNoData());
+    }
+    SECTION("error IIN with a decodable delay")
+    {
+        t.SendToMaster("C0 81 00 04 34 02 07 01 0A 00");
+        REQUIRE(t.lower->HasNoData());
+    }
+    SECTION("monotonic round trip and lost write result")
+    {
+        t.exe->advance_time(std::chrono::milliseconds(100));
+        t.application->time = 100; // civil time moved backwards during the delay request
+        t.SendToMaster("C0 81 10 00 34 02 07 01 0A 00");
+        REQUIRE(t.lower->NextWriteIsUnconfirmed());
+        REQUIRE(t.lower->PopWriteAsHex() == "C1 02 32 01 07 01 91 00 00 00 00 00");
+        t.context->OnTxReady();
+        t.exe->advance_time(std::chrono::milliseconds(500));
+        t.exe->run_many();
+        REQUIRE(t.lower->HasNoData());
+    }
 }
 
 TEST_CASE(SUITE("performs LAN time synchronization"))
@@ -1020,11 +1064,13 @@ TEST_CASE(SUITE("performs LAN time synchronization"))
 
     t.exe->run_many();
 
+    REQUIRE(t.lower->NextWriteIsUnconfirmed());
     REQUIRE(t.lower->PopWriteAsHex() == hex::RecordCurrentTime(0));
     t.context->OnTxReady();
     t.application->time += 100; // advance time by 100ms so that the master sees 100ms for a response
     t.SendToMaster(hex::EmptyResponse(0, IINField(IINBit::NEED_TIME)));
 
+    REQUIRE(t.lower->NextWriteIsUnconfirmed());
     REQUIRE(t.lower->PopWriteAsHex() == "C1 02 32 03 07 01 64 00 00 00 00 00");
     t.context->OnTxReady();
     t.exe->run_many();

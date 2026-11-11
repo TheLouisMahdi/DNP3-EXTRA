@@ -206,7 +206,8 @@ private:
 
     // ---- common helper methods ----
 
-    OutstationState& BeginResponseTx(uint16_t destination, APDUResponse& response, bool readResponse);
+    OutstationState& BeginResponseTx(uint16_t destination, APDUResponse& response, bool readResponse,
+                                     bool forceUnconfirmed = false);
 
     OutstationState& RetransmitSolicitedResponse(const ParsedRequest& request);
 
@@ -216,7 +217,8 @@ private:
 
     void BeginUnsolTx(APDUResponse& response);
 
-    void BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse = false);
+    void BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse = false,
+                 bool forceUnconfirmed = false);
 
     void CheckForTaskStart();
 

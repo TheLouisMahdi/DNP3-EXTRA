@@ -34,7 +34,8 @@ namespace opendnp3
 MasterTasks::MasterTasks(const MasterParams& params,
                          const Logger& logger,
                          IMasterApplication& app,
-                         std::shared_ptr<ISOEHandler> SOEHandler)
+                         std::shared_ptr<ISOEHandler> SOEHandler,
+                         const std::shared_ptr<exe4cpp::IExecutor>& executor)
     : context(std::make_shared<TaskContext>()),
       clearRestart(std::make_shared<ClearRestartTask>(context, app, logger)),
       assignClass(std::make_shared<AssignClassTask>(context, app, RetryBehavior(params), logger)),
@@ -45,7 +46,7 @@ MasterTasks::MasterTasks(const MasterParams& params,
       // optional tasks
       disableUnsol(GetDisableUnsolTask(context, params, logger, app)),
       enableUnsol(GetEnableUnsolTask(context, params, logger, app)),
-      timeSynchronization(GetTimeSyncTask(context, params.timeSyncMode, logger, app))
+      timeSynchronization(GetTimeSyncTask(context, params.timeSyncMode, logger, app, executor))
 {
     for (const auto& task : {std::static_pointer_cast<IMasterTask>(clearRestart),
                             std::static_pointer_cast<IMasterTask>(assignClass),
@@ -106,12 +107,13 @@ bool MasterTasks::FollowsRestartClear(const IMasterTask& task) const
 std::shared_ptr<IMasterTask> MasterTasks::GetTimeSyncTask(const std::shared_ptr<TaskContext>& context,
                                                           TimeSyncMode mode,
                                                           const Logger& logger,
-                                                          IMasterApplication& application)
+                                                          IMasterApplication& application,
+                                                          const std::shared_ptr<exe4cpp::IExecutor>& executor)
 {
     switch (mode)
     {
     case (TimeSyncMode::NonLAN):
-        return std::make_shared<SerialTimeSyncTask>(context, application, logger);
+        return std::make_shared<SerialTimeSyncTask>(context, application, logger, executor);
     case (TimeSyncMode::LAN):
         return std::make_shared<LANTimeSyncTask>(context, application, logger);
     default:

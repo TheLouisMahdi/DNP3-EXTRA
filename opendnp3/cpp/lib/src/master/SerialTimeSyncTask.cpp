@@ -31,8 +31,10 @@ namespace opendnp3
 
 SerialTimeSyncTask::SerialTimeSyncTask(const std::shared_ptr<TaskContext>& context,
                                        IMasterApplication& app,
-                                       const Logger& logger)
-    : IMasterTask(context, app, TaskBehavior::ReactsToIINOnly(), logger, TaskConfig::Default()), delay(-1)
+                                       const Logger& logger,
+                                       const std::shared_ptr<exe4cpp::IExecutor>& executor)
+    : IMasterTask(context, app, TaskBehavior::ReactsToIINOnly(), logger, TaskConfig::Default()),
+      delay(-1), executor(executor)
 {
 }
 
@@ -45,14 +47,17 @@ bool SerialTimeSyncTask::BuildRequest(APDURequest& request, uint8_t seq)
 {
     if (delay < 0)
     {
-        start = this->application->Now();
+        start = executor->get_time();
         build::MeasureDelay(request, seq);
     }
     else
     {
-        auto now = this->application->Now();
+        constexpr uint64_t maxTime = 0xFFFFFFFFFFFFULL;
+        const auto now = this->application->Now().msSinceEpoch;
+        if (now > maxTime || static_cast<uint64_t>(delay) > maxTime - now)
+            return false;
         Group50Var1 time;
-        time.time = DNPTime(now.msSinceEpoch + delay);
+        time.time = DNPTime(now + delay);
         request.SetFunction(FunctionCode::WRITE);
         request.SetControl(AppControlField::Request(seq));
         auto writer = request.GetWriter();
@@ -71,7 +76,7 @@ IMasterTask::ResponseResult SerialTimeSyncTask::ProcessResponse(const APDURespon
 IMasterTask::ResponseResult SerialTimeSyncTask::OnResponseDelayMeas(const APDUResponseHeader& response,
                                                                     const ser4cpp::rseq_t& objects)
 {
-    if (ValidateSingleResponse(response))
+    if (ValidateSingleResponse(response) && ValidateInternalIndications(response))
     {
         TimeSyncHandler handler;
         auto result = APDUParser::Parse(objects, handler, &logger);
@@ -80,12 +85,8 @@ IMasterTask::ResponseResult SerialTimeSyncTask::OnResponseDelayMeas(const APDURe
             uint16_t rtuTurnAroundTime;
             if (handler.GetTimeDelay(rtuTurnAroundTime))
             {
-                auto now = this->application->Now();
-                auto sendReceiveTime = now.msSinceEpoch - start.msSinceEpoch;
-
-                // The later shouldn't happen, but could cause a negative delay which would result in a weird time
-                // setting
-                delay = (sendReceiveTime >= rtuTurnAroundTime) ? (sendReceiveTime - rtuTurnAroundTime) / 2 : 0;
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(executor->get_time() - start);
+                delay = elapsed.count() >= rtuTurnAroundTime ? (elapsed.count() - rtuTurnAroundTime) / 2 : 0;
 
                 return ResponseResult::OK_REPEAT;
             }

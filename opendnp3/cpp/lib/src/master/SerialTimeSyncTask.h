@@ -23,6 +23,8 @@
 #include "master/IMasterTask.h"
 #include "master/TaskPriority.h"
 
+#include <exe4cpp/IExecutor.h>
+
 namespace opendnp3
 {
 
@@ -31,7 +33,8 @@ class SerialTimeSyncTask : public IMasterTask
 {
 
 public:
-    SerialTimeSyncTask(const std::shared_ptr<TaskContext>& context, IMasterApplication& app, const Logger& logger);
+    SerialTimeSyncTask(const std::shared_ptr<TaskContext>& context, IMasterApplication& app, const Logger& logger,
+                       const std::shared_ptr<exe4cpp::IExecutor>& executor);
 
     virtual char const* Name() const override final
     {
@@ -78,8 +81,8 @@ private:
     // < 0 implies the delay measure hasn't happened yet
     int64_t delay;
 
-    // what time we sent the delay meas
-    UTCTimestamp start;
+    const std::shared_ptr<exe4cpp::IExecutor> executor;
+    std::chrono::steady_clock::time_point start;
 };
 
 } // namespace opendnp3

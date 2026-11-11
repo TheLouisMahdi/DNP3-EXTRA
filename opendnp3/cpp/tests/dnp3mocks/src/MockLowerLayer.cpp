@@ -48,6 +48,11 @@ std::string MockLowerLayer::PopWriteAsHex()
     return HexConversions::to_hex(ret.payload);
 }
 
+bool MockLowerLayer::NextWriteIsUnconfirmed() const
+{
+    return !sendQueue.empty() && sendQueue.front().forceUnconfirmed;
+}
+
 bool MockLowerLayer::BeginTransmit(const Message& message)
 {
     this->sendQueue.push(message);

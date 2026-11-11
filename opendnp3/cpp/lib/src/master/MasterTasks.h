@@ -26,6 +26,8 @@
 #include "opendnp3/master/ISOEHandler.h"
 #include "opendnp3/master/MasterParams.h"
 
+#include <exe4cpp/IExecutor.h>
+
 #include <vector>
 
 namespace opendnp3
@@ -38,7 +40,8 @@ public:
     MasterTasks(const MasterParams& params,
                 const Logger& logger,
                 IMasterApplication& application,
-                std::shared_ptr<ISOEHandler> SOEHandler);
+                std::shared_ptr<ISOEHandler> SOEHandler,
+                const std::shared_ptr<exe4cpp::IExecutor>& executor);
 
     void Initialize(IMasterScheduler& scheduler, IMasterTaskRunner& runner);
 
@@ -84,7 +87,8 @@ private:
     static std::shared_ptr<IMasterTask> GetTimeSyncTask(const std::shared_ptr<TaskContext>& context,
                                                         TimeSyncMode mode,
                                                         const Logger& logger,
-                                                        IMasterApplication& application);
+                                                        IMasterApplication& application,
+                                                        const std::shared_ptr<exe4cpp::IExecutor>& executor);
     static std::shared_ptr<IMasterTask> GetEnableUnsolTask(const std::shared_ptr<TaskContext>& context,
                                                            const MasterParams& params,
                                                            const Logger& logger,

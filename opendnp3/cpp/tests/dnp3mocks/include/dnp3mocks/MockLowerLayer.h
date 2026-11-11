@@ -39,6 +39,7 @@ public:
 
     size_t NumWrites() const;
     std::string PopWriteAsHex();
+    bool NextWriteIsUnconfirmed() const;
 
     virtual bool BeginTransmit(const opendnp3::Message& message) override final;
 

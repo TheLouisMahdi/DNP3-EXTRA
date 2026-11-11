@@ -216,7 +216,7 @@ public:
 
     void ProcessUnsolicitedResponse(const APDUResponseHeader& header, const ser4cpp::rseq_t& objects);
 
-    void Transmit(const ser4cpp::rseq_t& data);
+    void Transmit(const ser4cpp::rseq_t& data, bool forceUnconfirmed = false);
 
 private:
     // Owned copy of the most recent non-final fragment of the active response.

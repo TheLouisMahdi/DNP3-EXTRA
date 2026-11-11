@@ -377,7 +377,8 @@ bool OContext::ProcessConfirm(const ParsedRequest& request)
     return true;
 }
 
-OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& response, bool readResponse)
+OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& response, bool readResponse,
+                                           bool forceUnconfirmed)
 {
     solConfirm.Cancel();
     CheckForBroadcastConfirmation(response);
@@ -387,7 +388,7 @@ OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& r
     this->sol.seq.confirmNum = response.GetControl().SEQ;
     this->solResponseSource = destination;
     this->solicitedReadSelection = readResponse && response.GetControl().CON;
-    this->BeginTx(destination, data);
+    this->BeginTx(destination, data, false, forceUnconfirmed);
 
     if (response.GetControl().CON)
     {
@@ -400,6 +401,9 @@ OutstationState& OContext::BeginResponseTx(uint16_t destination, APDUResponse& r
 
 OutstationState& OContext::RetransmitSolicitedResponse(const ParsedRequest& request)
 {
+    // IEEE 1815-2012 10.3.4.1 requires a fresh FC23 with a new sequence.
+    if (request.header.function == FunctionCode::DELAY_MEASURE)
+        return *this->state;
     this->BeginTx(request.addresses.source, this->sol.tx.GetLastResponse());
     if (this->sol.tx.GetLastControl().CON)
         this->RestartSolConfirmTimer();
@@ -451,7 +455,8 @@ void OContext::BeginUnsolTx(APDUResponse& response)
     this->BeginTx(this->addresses.destination, data, plainStartupNull);
 }
 
-void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse)
+void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, bool authenticationResponse,
+                       bool forceUnconfirmed)
 {
     auto encoded = message;
 #ifdef OPENDNP3_USE_SA_CRYPTO
@@ -505,7 +510,8 @@ void OContext::BeginTx(uint16_t destination, const ser4cpp::rseq_t& message, boo
 #endif
     logging::ParseAndLogResponseTx(this->logger, encoded);
     this->isTransmitting = true;
-    const bool started = this->lower->BeginTransmit(Message(Addresses(this->addresses.source, destination), encoded));
+    const bool started = this->lower->BeginTransmit(Message(Addresses(this->addresses.source, destination),
+                                                        encoded, forceUnconfirmed));
 #ifdef OPENDNP3_USE_SA_CRYPTO
     if (started && authentication && authentication->sessions)
     {
@@ -692,7 +698,8 @@ OutstationState& OContext::RespondToNonReadRequest(const ParsedRequest& request)
     response.SetControl(AppControlField(true, true, false, false, request.header.control.SEQ));
     auto iin = this->HandleNonReadResponse(request, writer);
     response.SetIIN(iin | this->GetResponseIIN());
-    return this->BeginResponseTx(request.addresses.source, response, false);
+    return this->BeginResponseTx(request.addresses.source, response, false,
+                                 request.header.function == FunctionCode::DELAY_MEASURE);
 }
 
 OutstationState& OContext::RespondToReadRequest(const ParsedRequest& request)

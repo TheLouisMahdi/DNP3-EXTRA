@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-039-NEG": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
+    },
+    "AT-PROFILE-040-NEG": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
+    },
     "AT-PROFILE-035-SBO-OWNER": {
       "kind": "unit",
       "vectors": ["V1", "V2"]
@@ -1846,6 +1854,114 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-039-NEG/V1": {
+      "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Zero CTO quantity",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 01 07 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-039-NEG/V2": {
+      "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Excess CTO quantity",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 01 07 02 01 00 00 00 00 00 02 00 00 00 00 00 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-039-NEG/V3": {
+      "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Wrong CTO qualifier",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 01 08 01 00 01 00 00 00 00 00 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-039-NEG/V4": {
+      "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Truncated u48",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 01 07 01 01 00 00 00 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-039-NEG/V5": {
+      "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Missing CTO in this fragment",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-039-NEG/V6": {
+      "reference": "Annex A.24.1; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Overflowed relative timestamp",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 01 07 01 FF FF FF FF FF FF 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-040-NEG/V1": {
+      "reference": "Annex A.24.2; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Zero CTO quantity",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 02 07 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-040-NEG/V2": {
+      "reference": "Annex A.24.2; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Excess CTO quantity",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 02 07 02 01 00 00 00 00 00 02 00 00 00 00 00 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-040-NEG/V3": {
+      "reference": "Annex A.24.2; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Wrong CTO qualifier",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 02 08 01 00 01 00 00 00 00 00 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-040-NEG/V4": {
+      "reference": "Annex A.24.2; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Truncated u48",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 02 07 01 01 00 00 00 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-040-NEG/V5": {
+      "reference": "Annex A.24.2; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Missing CTO in this fragment",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-040-NEG/V6": {
+      "reference": "Annex A.24.2; Annex A.3.3/A.5.3; 4.3; Table 12-23; Device Profile p9",
+      "description": "Overflowed relative timestamp",
+      "input_hex": "F1 82 00 00 01 02 00 00 00 81 33 02 07 01 FF FF FF FF FF FF 02 03 17 01 07 81 01 00",
+      "checks": [
+        ["typed_delivery_count", "receiver", "EVENT", "MASTER", 0, 0, 65535],
+        ["unexpected_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
     "AT-PROFILE-035-SBO-OWNER/V1": {
       "reference": "4.4.4–4.4.5; 11.7; Annex A.20.1; Device Profile p8",
       "description": "SBO-OWNER command boundaries",

@@ -184,7 +184,7 @@ ser4cpp::rseq_t LinkContext::FormatPrimaryBufferWithUnconfirmed(const Addresses&
 bool LinkContext::ShouldConfirm(const ITransportSegment& segments) const
 {
     const auto& addresses = segments.GetAddresses();
-    return !addresses.IsBroadcast() && addresses.destination != LinkSelfAddress
+    return !segments.ForceUnconfirmed() && !addresses.IsBroadcast() && addresses.destination != LinkSelfAddress
         && (config.ConfirmMode == LinkConfirmMode::Always
             || (config.ConfirmMode == LinkConfirmMode::MultiFrame && segments.IsMultiFrame()));
 }

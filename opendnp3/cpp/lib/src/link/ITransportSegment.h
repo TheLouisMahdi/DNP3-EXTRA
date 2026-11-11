@@ -43,6 +43,8 @@ public:
 
     // move to the next segment, true if more segments available
     virtual bool Advance() = 0;
+
+    virtual bool ForceUnconfirmed() const { return false; }
 };
 
 } // namespace opendnp3

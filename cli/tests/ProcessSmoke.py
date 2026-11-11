@@ -1285,6 +1285,40 @@ def profile_class_restart(exe):
     print("PASS FC22 class routing across TCP reconnect and Outstation process restart", flush=True)
 
 
+def profile_time_wire(exe):
+    """Exercise time WRITE/readback and FC23 no-retry link behavior on TCP."""
+    for confirm_mode in ("never", "always"):
+        options = ["--auth", "compat", "--rtu-io-profile", "--link-confirm", confirm_mode, *loopback_port()]
+        out = Peer(exe, "outstation", options)
+        try:
+            out.wait(r"\[HELP\]")
+            with socket.create_connection(("127.0.0.1", int(options[-1])), timeout=5) as raw:
+                delay = bytes.fromhex("C0 17")
+                raw.sendall(f01_link_frame(delay, 0))
+                # f01_receive_apdu checks FC4/UNCONFIRMED_USER_DATA even with link-confirm always.
+                assert f01_receive_apdu(raw)[1] == bytes.fromhex("C0 81 90 00 34 02 07 01 00 00")
+                raw.sendall(f01_link_frame(delay, 1))
+                raw.settimeout(0.1)
+                try:
+                    assert not raw.recv(1), "Outstation retried a stale delay result"
+                except socket.timeout:
+                    pass
+                raw.sendall(f01_link_frame(bytes.fromhex("C1 17"), 2))
+                assert f01_receive_apdu(raw)[1] == bytes.fromhex("C1 81 90 00 34 02 07 01 00 00")
+                if confirm_mode == "never":
+                    stamp = 0x010203040506
+                    payload = bytes.fromhex("C2 02 32 01 07 01") + stamp.to_bytes(6, "little")
+                    raw.sendall(f01_link_frame(payload, 3))
+                    assert f01_receive_apdu(raw)[1] == bytes.fromhex("C2 81 80 00")
+                    raw.sendall(f01_link_frame(bytes.fromhex("C3 01 32 01 07 01"), 4))
+                    reply = f01_receive_apdu(raw)[1]
+                    assert reply[:8] == bytes.fromhex("C3 81 80 00 32 01 07 01"), reply.hex()
+                    assert len(reply) == 14 and stamp <= int.from_bytes(reply[8:], "little") < stamp + 5000
+        finally:
+            stop(out)
+    print("PASS time WRITE readback and unconfirmed FC23 with no stale response retry", flush=True)
+
+
 def profile_analog_wire(exe):
     """Verify G32V5 request and response bytes over real TCP."""
     for request_qualifier, count_bytes in (
@@ -3018,7 +3052,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-class-restart", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-class-restart", "profile-time-wire", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -3040,6 +3074,7 @@ def main():
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
     if args.only in ("profile-binary-wire", "all"): profile_binary_wire(args.exe)
     if args.only in ("profile-class-restart", "all"): profile_class_restart(args.exe)
+    if args.only in ("profile-time-wire", "all"): profile_time_wire(args.exe)
     if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
     if args.only in ("profile-crob-latch", "all"):
         profile_crob_latch(args.exe)

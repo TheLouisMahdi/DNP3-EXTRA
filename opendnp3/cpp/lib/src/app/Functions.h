@@ -24,6 +24,8 @@
 #include "opendnp3/gen/FunctionCode.h"
 #include "opendnp3/util/StaticOnly.h"
 
+#include <ser4cpp/container/SequenceTypes.h>
+
 namespace opendnp3
 {
 
@@ -31,6 +33,7 @@ class Functions : private StaticOnly
 {
 public:
     static bool IsNoAckFuncCode(FunctionCode code);
+    static bool IsTimeSynchronizationRequest(FunctionCode code, const ser4cpp::rseq_t& objects);
 };
 
 } // namespace opendnp3

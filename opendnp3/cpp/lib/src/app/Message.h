@@ -31,9 +31,13 @@ struct Message
 {
     Message() = default;
 
-    Message(const Addresses& addresses, const ser4cpp::rseq_t& payload) : addresses(addresses), payload(payload) {}
+    Message(const Addresses& addresses, const ser4cpp::rseq_t& payload, bool forceUnconfirmed = false)
+        : addresses(addresses), forceUnconfirmed(forceUnconfirmed), payload(payload)
+    {
+    }
 
     Addresses addresses;
+    bool forceUnconfirmed = false;
     ser4cpp::rseq_t payload;
 };
 
