@@ -7,6 +7,9 @@
 #include "outstation/SecurityStatEventPublisher.h"
 #include "utils/OutstationTestObject.h"
 #include "utils/BufferHelpers.h"
+#include "utils/AcceptanceObservation.h"
+#include "dnp3mocks/MockSOEHandler.h"
+#include "master/MeasurementHandler.h"
 
 #include <ser4cpp/util/HexConversions.h>
 #include <catch.hpp>
@@ -16,6 +19,8 @@
 
 using namespace opendnp3;
 using namespace ser4cpp;
+using acceptance::Observe;
+using acceptance::Selected;
 
 namespace opendnp3
 {
@@ -116,6 +121,117 @@ struct NativeEvents
         for (int n = 0; n < 3; ++n) statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     }
 };
+}
+
+namespace
+{
+std::string NativeRequest(NativeEvents& fixture, const std::string& request)
+{
+    auto& out = fixture.outstation;
+    out.SendToOutstation(request);
+    const auto reply = out.lower->PopWriteAsHex();
+    if (!reply.empty()) out.OnTxReady();
+    return reply;
+}
+
+void WildcardEventRead(const std::string& encoding, bool all, bool timed)
+{
+    auto config = NativeEvents::Config();
+    const auto variation = timed ? EventSecurityStatVariation::Group122Var2 : EventSecurityStatVariation::Group122Var1;
+    config.securityStatConfig[0].evariation = variation;
+    config.securityStatConfig[1].evariation = variation;
+    NativeEvents f(config);
+    f.Generate();
+    for (unsigned i = 0; i < 5; ++i) f.statistics.Increment(SecurityStatistic::AUTHORIZATION_FAILURES);
+    const std::string timestamp = timed ? " 01 02 03 04 05 06" : "";
+    const std::string unexpected = "00 00 41 00 00 03 00 00 00" + timestamp;
+    const std::string denied = "01 00 41 00 00 05 00 00 00" + timestamp;
+    const std::string header = timed ? "7A 02 28 " : "7A 01 28 ";
+    const auto request = "C0 01 7A 00 " + encoding;
+    const auto reply = NativeRequest(f, request);
+    REQUIRE(reply == (all ? "E0 81 80 00 " + header + "02 00 " + unexpected + " " + denied
+                          : "E0 81 82 00 " + header + "01 00 " + denied));
+    const HexSequence bytes(reply);
+    MockSOEHandler master;
+    REQUIRE(MeasurementHandler::ProcessMeasurements(ResponseInfo(false, true, true), bytes.ToRSeq().skip(4),
+                                                  f.outstation.log.logger, &master) == ParseResult::OK);
+    const auto& records = master.securityStatSOE;
+    REQUIRE(records.size() == (all ? 2 : 1));
+    const auto& last = records.back().meas;
+    REQUIRE(last.index == 1);
+    REQUIRE(last.value.value == 5);
+    REQUIRE(last.value.flags.value == 0x41);
+    REQUIRE(last.value.associationId == 0);
+    REQUIRE(last.value.HasTime() == timed);
+    if (timed) REQUIRE(last.value.time.value == 0x060504030201ULL);
+    Observe("typed_events", records.size());
+    f.outstation.SendToOutstation("D0 00");
+    REQUIRE(NativeRequest(f, request) == reply);
+    REQUIRE(f.outstation.application->confirms.empty());
+    f.outstation.SendToOutstation("C0 00");
+    Observe("matching_confirms", f.outstation.application->confirms.size());
+    REQUIRE(f.outstation.application->confirms.size() == 1);
+
+    const auto after = NativeRequest(f, "C1 01 7A 00 06");
+    REQUIRE(after == (all ? "C1 81 80 00" : "E1 81 80 00 " + header + "01 00 " + unexpected));
+    if (!all) f.outstation.SendToOutstation("C1 00");
+    REQUIRE(NativeRequest(f, "C2 01 7A 00 06") == "C2 81 80 00");
+}
+
+void WildcardBadHeaders()
+{
+    NativeEvents f;
+    f.Generate();
+    unsigned rejected = 0;
+    for (const std::string qualifier : {"07 01", "08 01 00", "00 00", "01 00 00 01", "17 01", "28 01 00 00"})
+    {
+        REQUIRE(NativeRequest(f, "C0 01 7A 00 " + qualifier) == "C0 81 82 04");
+        REQUIRE(f.outstation.application->confirms.empty());
+        ++rejected;
+    }
+    Observe("rejected_headers", rejected);
+    REQUIRE(NativeRequest(f, "C1 01 7A 00 06") == "E1 81 80 00 7A 01 28 01 00 00 00 41 00 00 03 00 00 00");
+    f.outstation.SendToOutstation("C1 00");
+    Observe("matching_confirms", f.outstation.application->confirms.size());
+    REQUIRE(f.outstation.application->confirms.size() == 1);
+    REQUIRE(NativeRequest(f, "C2 01 7A 00 06") == "C2 81 80 00");
+}
+} // namespace
+
+
+TEST_CASE("AT-PROFILE-064-READ00", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) WildcardEventRead("00 01 01", false, false);
+    if (Selected("V2")) WildcardEventRead("00 01 01", false, true);
+}
+
+TEST_CASE("AT-PROFILE-064-READ01", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) WildcardEventRead("01 01 00 01 00", false, false);
+    if (Selected("V2")) WildcardEventRead("01 01 00 01 00", false, true);
+}
+
+TEST_CASE("AT-PROFILE-064-READ06", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) WildcardEventRead("06", true, false);
+    if (Selected("V2")) WildcardEventRead("06", true, true);
+}
+
+TEST_CASE("AT-PROFILE-064-READ17", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) WildcardEventRead("17 02 01 01", false, false);
+    if (Selected("V2")) WildcardEventRead("17 02 01 01", false, true);
+}
+
+TEST_CASE("AT-PROFILE-064-READ28", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) WildcardEventRead("28 01 00 01 00", false, false);
+    if (Selected("V2")) WildcardEventRead("28 01 00 01 00", false, true);
+}
+
+TEST_CASE("AT-PROFILE-064-BAD", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) WildcardBadHeaders();
 }
 
 TEST_CASE("SecurityStatEvents - exact codecs and truncation", "[security-stat-events]")

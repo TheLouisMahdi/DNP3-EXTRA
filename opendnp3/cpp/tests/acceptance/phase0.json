@@ -1,6 +1,62 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-064-READ00": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-064-READ01": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-064-READ06": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-064-READ17": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-064-READ28": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-064-BAD": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-063-READ00": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-063-READ01": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-063-READ06": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-063-READ17": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-063-READ28": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-063-IIN": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-063-SNAP": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-063-RET": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
     "AT-PROFILE-043-ASSIGN": {
       "kind": "unit",
       "vectors": ["V1"]
@@ -1926,6 +1982,246 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-064-READ00/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 00 01 01",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ00/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 00 01 01",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ01/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 01 01 00 01 00",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ01/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 01 01 00 01 00",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ06/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 06",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 2, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ06/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 06",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 2, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ17/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 17 02 01 01",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ17/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 17 02 01 01",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ28/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 28 01 00 01 00",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-READ28/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Resolve configured G122 variation and drain only confirmed selected events",
+      "input_hex": "C0 01 7A 00 28 01 00 01 00",
+      "checks": [
+        ["typed_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-064-BAD/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
+      "description": "Reject illegal/truncated headers and retain the queued event",
+      "input_hex": "C0 01 7A 00 07 01",
+      "checks": [
+        ["rejected_headers", "receiver", "STATE", "OUTSTATION", 6, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ00/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 01 00 00 11",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ00/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 00 00 00 11",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ01/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 01 01 00 00 11 00",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ01/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 00 01 00 00 11 00",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ06/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 01 06",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ06/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 00 06",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ17/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 01 17 02 00 11",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 23, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ17/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 00 17 02 00 11",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 23, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ28/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 01 28 02 00 00 00 11 00",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 23, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-READ28/V2": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Read own-association snapshot without changing counters",
+      "input_hex": "C0 01 79 00 28 02 00 00 00 11 00",
+      "checks": [
+        ["response_qualifier", "receiver", "STATE", "OUTSTATION", 23, 0, 65535],
+        ["first_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["decoded_count", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["statistics_unchanged", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-IIN/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Native read and counter continuity",
+      "input_hex": "C0 01 79 01 00 11 12",
+      "checks": [
+        ["merged_count", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["partial_iin", "receiver", "STATE", "OUTSTATION", 4, 0, 65535],
+        ["empty_range_iin", "receiver", "STATE", "OUTSTATION", 4, 0, 65535],
+        ["empty_index_iin", "receiver", "STATE", "OUTSTATION", 4, 0, 65535],
+        ["truncated_rejected", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["count_only_iin", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-SNAP/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Native read and counter continuity",
+      "input_hex": "C0 01 79 01 06",
+      "checks": [
+        ["snapshot_points", "receiver", "STATE", "OUTSTATION", 18, 0, 65535],
+        ["report_pending", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-063-RET/V1": {
+      "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Annex A.46.1; Table 7-6; Device Profile p12",
+      "description": "Native read and counter continuity",
+      "input_hex": "C0 01 79 01 00 00 00",
+      "checks": [
+        ["retained_counter", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["discontinuous_flags", "receiver", "STATE", "OUTSTATION", 65, 0, 65535]
+      ]
+    },
     "AT-PROFILE-043-ASSIGN/V1": {
       "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.1; Device Profile p9",
       "description": "Receiver class routing and event retention",

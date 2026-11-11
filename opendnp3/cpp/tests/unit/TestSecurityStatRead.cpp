@@ -10,6 +10,7 @@
 #include "outstation/StaticWriters.h"
 #include "outstation/event/EventBuffer.h"
 #include "utils/BufferHelpers.h"
+#include "utils/AcceptanceObservation.h"
 
 #include <ser4cpp/util/HexConversions.h>
 #include <catch.hpp>
@@ -20,6 +21,8 @@
 
 using namespace opendnp3;
 using namespace ser4cpp;
+using acceptance::Observe;
+using acceptance::Selected;
 namespace
 {
 struct ReadStore final : IAuthenticationStatisticsStore
@@ -27,7 +30,11 @@ struct ReadStore final : IAuthenticationStatisticsStore
     SecurityStatisticValues saved{};
     bool available = true;
     bool Load(uint16_t, bool, SecurityStatisticValues& values) override { values = saved; return available; }
-    bool Save(uint16_t, bool, const SecurityStatisticValues&) override { return available; }
+    bool Save(uint16_t, bool, const SecurityStatisticValues& values) override
+    {
+        if (available) saved = values;
+        return available;
+    }
 };
 
 struct SecurityReadFixture
@@ -124,11 +131,10 @@ TEST_CASE("SecurityStatRead - generated serializers support all permitted respon
         REQUIRE(hex == "C0 81 00 00 79 01 28 01 00 00 00 01 00 00 78 56 34 12");
 }
 
-TEST_CASE("SecurityStatRead - both selectors and all READ index encodings use the same runtime", "[security-stat-read]")
+namespace
 {
-    const auto variation = GENERATE(std::string("00"), std::string("01"));
-    const auto selection = GENERATE(std::string("06"), std::string("00 00 11"), std::string("01 00 00 11 00"),
-                                   std::string("17 02 00 11"), std::string("28 02 00 00 00 11 00"));
+void VerifyReadSelection(const std::string& variation, const std::string& selection)
+{
     SecurityReadFixture fixture;
     fixture.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     const auto before = fixture.statistics.Values();
@@ -141,48 +147,93 @@ TEST_CASE("SecurityStatRead - both selectors and all READ index encodings use th
     REQUIRE(bytes[6] == (indexed ? 0x17 : 0x00));
     REQUIRE(bytes.size() == (indexed ? 24u : 135u));
     auto input = rseq_t(bytes.data(), bytes.size()).skip(indexed ? 8 : 9);
-    for (uint16_t i = 0; i < (indexed ? 2 : 18); ++i)
+    Observe("response_qualifier", bytes[6]);
+    uint16_t decoded = 0;
+    for (; decoded < (indexed ? 2 : 18); ++decoded)
     {
-        const auto index = indexed ? (i ? 17 : 0) : i;
+        const auto index = indexed ? (decoded ? 17 : 0) : decoded;
         if (indexed) { REQUIRE(input[0] == index); input.advance(1); }
         Group121Var1 value;
         REQUIRE(Group121Var1::Read(input, value));
         REQUIRE(value.flags == 0x41); // No retention backend: never claim startup continuity.
         REQUIRE(value.associationId == 0);
         REQUIRE(value.value == before[index]);
+        if (index == 0) Observe("first_counter", value.value);
     }
     REQUIRE(input.is_empty());
+    Observe("decoded_count", decoded);
+    Observe("statistics_unchanged", fixture.statistics.Values() == before);
     REQUIRE(fixture.statistics.Values() == before);
 }
+} // namespace
 
-TEST_CASE("SecurityStatRead - validation merges selectors and preserves native IIN errors", "[security-stat-read]")
+TEST_CASE("AT-PROFILE-063-READ00", "[security-stat-read][rtu-acceptance]")
+{
+    if (Selected("V1")) VerifyReadSelection("01", "00 00 11");
+    if (Selected("V2")) VerifyReadSelection("00", "00 00 11");
+}
+
+TEST_CASE("AT-PROFILE-063-READ01", "[security-stat-read][rtu-acceptance]")
+{
+    if (Selected("V1")) VerifyReadSelection("01", "01 00 00 11 00");
+    if (Selected("V2")) VerifyReadSelection("00", "01 00 00 11 00");
+}
+
+TEST_CASE("AT-PROFILE-063-READ06", "[security-stat-read][rtu-acceptance]")
+{
+    if (Selected("V1")) VerifyReadSelection("01", "06");
+    if (Selected("V2")) VerifyReadSelection("00", "06");
+}
+
+TEST_CASE("AT-PROFILE-063-READ17", "[security-stat-read][rtu-acceptance]")
+{
+    if (Selected("V1")) VerifyReadSelection("01", "17 02 00 11");
+    if (Selected("V2")) VerifyReadSelection("00", "17 02 00 11");
+}
+
+TEST_CASE("AT-PROFILE-063-READ28", "[security-stat-read][rtu-acceptance]")
+{
+    if (Selected("V1")) VerifyReadSelection("01", "28 02 00 00 00 11 00");
+    if (Selected("V2")) VerifyReadSelection("00", "28 02 00 00 00 11 00");
+}
+
+TEST_CASE("AT-PROFILE-063-IIN", "[security-stat-read][rtu-acceptance]")
 {
     SecurityReadFixture fixture;
     SECTION("single point and overlapping indexed selectors are emitted once in point order")
     {
         REQUIRE(fixture.Select("79 01 00 00 00 79 00 17 04 02 00 02 01") == ParseResult::OK);
-        REQUIRE(Hex(fixture.Fragment()) == "C0 81 00 00 79 01 17 03 00 41 00 00 00 00 00 00 01 41 00 00 00 00 00 00 02 41 00 00 00 00 00 00");
+        const auto reply = fixture.Fragment();
+        Observe("merged_count", reply.at(7));
+        REQUIRE(Hex(reply) == "C0 81 00 00 79 01 17 03 00 41 00 00 00 00 00 00 01 41 00 00 00 00 00 00 02 41 00 00 00 00 00 00");
     }
     SECTION("partially available range is clipped with PARAM_ERROR")
     {
         REQUIRE(fixture.Select("79 01 00 11 12") == ParseResult::OK);
         REQUIRE(fixture.errors.IsSet(IINBit::PARAM_ERROR));
-        REQUIRE(Hex(fixture.Fragment()) == "C0 81 00 04 79 01 00 11 11 41 00 00 00 00 00 00");
+        const auto reply = fixture.Fragment();
+        Observe("partial_iin", reply.at(3));
+        REQUIRE(Hex(reply) == "C0 81 00 04 79 01 00 11 11 41 00 00 00 00 00 00");
     }
     SECTION("missing range and index do not create points")
     {
         const auto request = GENERATE(std::string("79 01 01 00 01 00 01"), std::string("79 00 28 01 00 FF FF"));
         REQUIRE(fixture.Select(request) == ParseResult::OK);
         REQUIRE(fixture.errors.IsSet(IINBit::PARAM_ERROR));
-        REQUIRE(Hex(fixture.Fragment()) == "C0 81 00 04");
+        const auto reply = fixture.Fragment();
+        Observe(request.find(" 28 ") == std::string::npos ? "empty_range_iin" : "empty_index_iin", reply.at(3));
+        REQUIRE(Hex(reply) == "C0 81 00 04");
     }
     SECTION("truncated index list is rejected by the existing parser")
     {
-        REQUIRE(fixture.Select("79 01 28 02 00 00 00") != ParseResult::OK);
+        const auto rejected = fixture.Select("79 01 28 02 00 00 00") != ParseResult::OK;
+        Observe("truncated_rejected", rejected);
+        REQUIRE(rejected);
     }
     SECTION("count-only READ does not admit unsupported G121 framing")
     {
         REQUIRE(fixture.Select("79 01 07 01") == ParseResult::OK);
+        Observe("count_only_iin", fixture.Fragment().at(3));
         REQUIRE(fixture.errors.IsSet(IINBit::FUNC_NOT_SUPPORTED));
     }
 }
@@ -201,7 +252,7 @@ TEST_CASE("SecurityStatRead - Class 0 cannot exclude security statistics and mix
     REQUIRE(Hex(fixture.Fragment()) == "C0 81 00 00 01 02 00 00 00 81 79 01 00 00 00 41 00 00 00 00 00 00");
 }
 
-TEST_CASE("SecurityStatRead - fragmented responses retain one snapshot without changing report or Max state", "[security-stat-read]")
+TEST_CASE("AT-PROFILE-063-SNAP", "[security-stat-read][rtu-acceptance]")
 {
     SecurityReadFixture fixture;
     for (unsigned n = 0; n < 6; ++n) fixture.statistics.AuthenticationFailed();
@@ -225,9 +276,12 @@ TEST_CASE("SecurityStatRead - fragmented responses retain one snapshot without c
         }
         if (fragment == 0) fixture.statistics.Increment(SecurityStatistic::FAILED_SESSION_KEY_CHANGES);
     }
+    Observe("snapshot_points", next);
     REQUIRE(next == 18);
     REQUIRE_FALSE(fixture.response.HasSelection());
-    REQUIRE(fixture.statistics.ReportPending(SecurityStatistic::AUTHENTICATION_FAILURES));
+    const auto pending = fixture.statistics.ReportPending(SecurityStatistic::AUTHENTICATION_FAILURES);
+    Observe("report_pending", pending);
+    REQUIRE(pending);
     REQUIRE(fixture.statistics.Maximum(SecurityStatistic::AUTHENTICATION_FAILURES) == maximum);
     REQUIRE(fixture.statistics.Value(SecurityStatistic::FAILED_SESSION_KEY_CHANGES) == before[14] + 1);
     REQUIRE(fixture.statistics.Value(SecurityStatistic::UPDATE_KEY_CHANGES) == 0);
@@ -235,7 +289,7 @@ TEST_CASE("SecurityStatRead - fragmented responses retain one snapshot without c
     REQUIRE(fixture.statistics.Value(SecurityStatistic::RESTART_REKEYS) == 0);
 }
 
-TEST_CASE("SecurityStatRead - association snapshots and retained rollover are isolated", "[security-stat-read]")
+TEST_CASE("AT-PROFILE-063-RET", "[security-stat-read][rtu-acceptance]")
 {
     auto store = std::make_shared<ReadStore>();
     store->saved[0] = std::numeric_limits<uint32_t>::max();
@@ -246,11 +300,18 @@ TEST_CASE("SecurityStatRead - association snapshots and retained rollover are is
     first.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     REQUIRE(other.Select("79 01 00 00 00") == ParseResult::OK);
     REQUIRE(Hex(other.Fragment()) == "C0 81 00 00 79 01 00 00 00 41 00 00 00 00 00 00");
+    SecurityReadFixture reopened(store, 7);
+    REQUIRE(reopened.Select("79 01 00 00 00") == ParseResult::OK);
+    const auto retained = reopened.Fragment();
+    REQUIRE(Hex(retained) == "C0 81 00 00 79 01 00 00 00 01 00 00 01 00 00 00");
+    Observe("retained_counter", retained.at(12));
     store->available = false; // Live values remain, but uncertain retention is discontinuous.
     first.statistics.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     REQUIRE_FALSE(first.statistics.Retained());
     REQUIRE(first.Select("79 01 00 00 00") == ParseResult::OK);
-    REQUIRE(Hex(first.Fragment()) == "C0 81 00 00 79 01 00 00 00 41 00 00 02 00 00 00");
+    const auto discontinuity = first.Fragment();
+    Observe("discontinuous_flags", discontinuity.at(9));
+    REQUIRE(Hex(discontinuity) == "C0 81 00 00 79 01 00 00 00 41 00 00 02 00 00 00");
 }
 
 TEST_CASE("SecurityStatRead - failed save marks G121 discontinuous and later save cannot clear it",
