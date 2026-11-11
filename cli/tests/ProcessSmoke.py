@@ -2821,6 +2821,12 @@ def profile_crob_two_output(exe):
                         ) == close_body
                         assert fc6_sequence not in captured["responses"]
                         assert len(captured["responses"]) == responses_before_fc6
+                        # Forwarding and Master TX completion precede receiver actuation.
+                        out.wait(
+                            r"\[CROB-PULSE\] started point=3 drive=close "
+                            r"configured-ms=10000 request-on-ms=100 "
+                            r"request-off-ms=0 executed=3$"
+                        )
                         out.executed(3)
                         state("active", "inactive", 3)
                         readback("OFF")
