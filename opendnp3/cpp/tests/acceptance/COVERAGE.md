@@ -1,12 +1,12 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 274 Host scenarios have executable bindings (485 vectors). 167 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 276 Host scenarios have executable bindings (489 vectors). 165 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
 | Requirement | Executable suffixes | Pending Host suffixes | External suffixes |
 | --- | --- | --- | --- |
-| PROFILE-003 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD`, `AS06` | `AS00`, `AS01` | — |
+| PROFILE-003 | `RD00`, `RD01`, `RD06`, `DEFAULT`, `BAD`, `AS00`, `AS01`, `AS06` | — | — |
 | PROFILE-004 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-005 | `RD00`, `RD01`, `RD06`, `VALUE`, `BAD` | — | — |
 | PROFILE-006 | `R06Q28`, `R07Q28`, `R08Q28`, `DEFAULT`, `NEG` | — | — |

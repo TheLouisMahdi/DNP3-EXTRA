@@ -29,7 +29,15 @@
       "kind": "unit",
       "vectors": ["V1", "V2"]
     },
+    "AT-PROFILE-003-AS00": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
     "AT-PROFILE-010-AS00": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-003-AS01": {
       "kind": "unit",
       "vectors": ["V1", "V2"]
     },
@@ -1912,6 +1920,22 @@
         ["probe", "frame", "SERIALIZER", "OUTSTATION", "C2 81 80 00"]
       ]
     },
+    "AT-PROFILE-003-AS00/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.2; 4.4.14; Device Profile p4",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 01 00 00 07 08",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 02 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 02 01 28 02 00 07 00 81 08 00 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
     "AT-PROFILE-010-AS00/V1": {
       "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
       "description": "Queued event retains old class while new events use assigned class",
@@ -1921,6 +1945,22 @@
         ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
         ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 07 00 81"],
         ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 07 00 41 08 00 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-003-AS00/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.2; 4.4.14; Device Profile p4",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 01 00 00 07 08 01 00 00 07 08",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 02 01 28 01 00 07 00 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 02 01 28 02 00 07 00 81 08 00 81"],
         ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
         ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
         ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
@@ -1944,6 +1984,22 @@
         ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
       ]
     },
+    "AT-PROFILE-003-AS01/V1": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.2; 4.4.14; Device Profile p4",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 01 00 01 01 01 02 01",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 02 01 28 01 00 01 01 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 02 01 28 02 00 01 01 81 02 01 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
     "AT-PROFILE-010-AS01/V1": {
       "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.4; 4.4.14; Device Profile p5",
       "description": "Queued event retains old class while new events use assigned class",
@@ -1953,6 +2009,22 @@
         ["assignments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
         ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 04 01 28 01 00 01 01 81"],
         ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 04 01 28 02 00 01 01 41 02 01 81"],
+        ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
+        ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
+        ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],
+        ["invalid_range", "frame", "SERIALIZER", "OUTSTATION", "C6 81 80 04"],
+        ["invalid_count", "frame", "SERIALIZER", "OUTSTATION", "C7 81 80 05"]
+      ]
+    },
+    "AT-PROFILE-003-AS01/V2": {
+      "reference": "4.4.2.1; 11.6; Table 12-23; Annex A.2; 4.4.14; Device Profile p4",
+      "description": "Queued event retains old class while new events use assigned class",
+      "input_hex": "C0 16 3C 03 06 01 00 01 01 01 02 01 01 00 01 01 01 02 01",
+      "checks": [
+        ["assignment", "frame", "SERIALIZER", "OUTSTATION", "C0 81 82 00"],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["class1", "frame", "SERIALIZER", "OUTSTATION", "E1 81 84 00 02 01 28 01 00 01 01 81"],
+        ["class2", "frame", "SERIALIZER", "OUTSTATION", "E2 81 80 00 02 01 28 02 00 01 01 81 02 01 81"],
         ["probe", "frame", "SERIALIZER", "OUTSTATION", "C3 81 80 00"],
         ["target_without_class", "frame", "SERIALIZER", "OUTSTATION", "C4 81 80 04"],
         ["dangling_class", "frame", "SERIALIZER", "OUTSTATION", "C5 81 80 04"],

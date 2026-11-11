@@ -430,8 +430,9 @@ void EventClassAssignment(unsigned group, unsigned qualifier, bool repeated)
     const uint16_t first = high ? 257 : 7;
     const uint16_t last = first + 1;
     const bool analog = group == 32;
-    const std::string targetGroup = analog ? "1E" : "03";
-    const std::string eventGroup = analog ? "20" : "04";
+    const bool binary = group == 2;
+    const std::string targetGroup = analog ? "1E" : binary ? "01" : "03";
+    const std::string eventGroup = analog ? "20" : binary ? "02" : "04";
     OutstationTestObject t(config, Points(group, 1, {{first, 0, 1}, {last, 0, 1}}));
     t.application->supportsAssignClass = true;
     t.LowerLayerUp();
@@ -442,7 +443,8 @@ void EventClassAssignment(unsigned group, unsigned qualifier, bool repeated)
     const auto& assignments = t.application->classAssignments;
     REQUIRE(assignments.size() == (repeated ? 2 : 1));
     Observe("assignments", assignments.size());
-    const auto type = analog ? AssignClassType::AnalogInput : AssignClassType::DoubleBinaryInput;
+    const auto type = analog ? AssignClassType::AnalogInput
+                             : binary ? AssignClassType::BinaryInput : AssignClassType::DoubleBinaryInput;
     for (const auto& assignment : assignments)
         REQUIRE(assignment == std::make_tuple(type, PointClass::Class2, first, last));
     Update(t, group, {{first, 1, 1}, {last, 2, 1}}, true);
@@ -452,7 +454,7 @@ void EventClassAssignment(unsigned group, unsigned qualifier, bool repeated)
     CheckFrame("class1", Request(t, "C1 01 3C 02 06"), old.c_str());
     t.SendToOutstation("C1 00");
     const auto fresh = "E2 81 80 00 " + eventGroup + " 01 28 02 00 " + firstIndex
-        + (analog ? "01 01 00 00 00 " : "41 ") + lastIndex + (analog ? "01 02 00 00 00" : "81");
+        + (analog ? "01 01 00 00 00 " : binary ? "81 " : "41 ") + lastIndex + (analog ? "01 02 00 00 00" : "81");
     CheckFrame("class2", Request(t, "C2 01 3C 03 06"), fresh.c_str());
     t.SendToOutstation("C2 00");
     CheckFrame("probe", Request(t, "C3 01 3C 02 06 3C 03 06"), "C3 81 80 00");

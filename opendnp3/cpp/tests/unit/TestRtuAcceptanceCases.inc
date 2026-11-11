@@ -30,6 +30,18 @@ TEST_CASE("AT-PROFILE-003-DEFAULT", "[rtu-acceptance]")
         StaticRead(1, 2, {{7, 1, 1}, {257, 0, 1}}, {{7, 1, 1}, {257, 0, 1}}, "C0 01 01 00 06", "C0 81 80 00 01 02 01 07 00 07 00 81 01 02 01 01 01 01 01 01", "C1 01", "C1 81 80 00");
 }
 
+TEST_CASE("AT-PROFILE-003-AS00", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(2, 0, false);
+    if (Selected("V2")) EventClassAssignment(2, 0, true);
+}
+
+TEST_CASE("AT-PROFILE-003-AS01", "[rtu-acceptance]")
+{
+    if (Selected("V1")) EventClassAssignment(2, 1, false);
+    if (Selected("V2")) EventClassAssignment(2, 1, true);
+}
+
 TEST_CASE("AT-PROFILE-003-AS06", "[rtu-acceptance]")
 {
     if (!Selected("V1"))
