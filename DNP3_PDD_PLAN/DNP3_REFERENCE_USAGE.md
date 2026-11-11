@@ -32,3 +32,9 @@ Implementation choices D-10, D-13, D-15, D-18, D-23, D-24 and D-25 are defined i
 - The IEC source previously called unavailable is now provided and inspected. Read `G120V8_IEC62351_2011_PROFILE.md` for exact normative certificate values and `G120V8_DUE_AFTER_IMPLEMENTATION.md` for tagged test/deployment gates.
 - The canonical 15-sheet XLSX remains the editable master and the two CSVs remain derived exports. **Do not patch CSVs separately or claim workbook synchronization** unless the XLSX itself has been opened, updated, exported and compared. IEC source review and any supplementary workbook do not prove runtime implementation.
 - Reviewed `develop@6fc3129a` still lacks G120V8 native runtime handling. `PROFILE-055` is MISSING_RUNTIME pending code and permanent tests. Keep `P4-OPEN-01` provisional.
+
+## D-07 owner approval (2026-11-11)
+
+Owner-approved D-07 (2026-11-11): support CLOSE 0x41 and TRIP 0x81 on configured Complementary points (Latch or Two-output as appropriate). Permit 0x01 NUL/PULSE_ON only on explicitly enabled Activation points; deny on Complementary, disabled or undefined points. Require count=1, no queue/clear, no Pulse Off or Latch OpType. Use the configured safe point pulse duration rather than Master-requested duration; preserve exact request/echo and validate timing semantics. SELECT validates and arms only, never actuates. Authenticate SA v5, authorize the user and recheck interlocks and safe execution conditions before every actuation. Preserve generic library capabilities.
+
+Actual RTU point indices, point models, safe pulse durations, physical output mapping and interlocks remain product/deployment inputs. Host may use explicit test-only fixtures. No new runtime test evidence; implementation pending. Overlapping pulse/busy policy remains PROPOSED, not approved.

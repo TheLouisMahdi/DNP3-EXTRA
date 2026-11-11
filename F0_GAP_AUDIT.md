@@ -113,3 +113,9 @@ Require local safety: `$ErrorActionPreference = 'Stop'`; `git rev-parse --show-t
 User runs Windows validation as needed. Freebuff must not invent PASS. Commit/push test code and changes with an `IMPLEMENTED_UNVERIFIED` evidence label when runtime results are not yet available; once the real user-supplied console output exists, record tested SHA, exact commands, exit codes, test counts, receiver-side effects, errors and limits, then commit/push the evidence update. A build/test failure requires diagnosis, not a blind retry.
 
 **Not yet approved:** any actual implementation, changed operational production defaults, disabled IEEE-required capability, G120V8 certification trust model, TLS renegotiation/KeyUpdate equivalence, CFG-12 deviation or final 119-ID acceptance upgrade. This audit commit is documentation only.
+
+## D-07 follow-up (2026-11-11)
+
+The historical F0 audit above is retained at its original reviewed SHA. Owner-approved D-07 (2026-11-11): support CLOSE 0x41 and TRIP 0x81 on configured Complementary points (Latch or Two-output as appropriate). Permit 0x01 NUL/PULSE_ON only on explicitly enabled Activation points; deny on Complementary, disabled or undefined points. Require count=1, no queue/clear, no Pulse Off or Latch OpType. Use the configured safe point pulse duration rather than Master-requested duration; preserve exact request/echo and validate timing semantics. SELECT validates and arms only, never actuates. Authenticate SA v5, authorize the user and recheck interlocks and safe execution conditions before every actuation. Preserve generic library capabilities.
+
+Actual RTU point indices, point models, safe pulse durations, physical output mapping and interlocks remain product/deployment inputs. Host may use explicit test-only fixtures. No new runtime test evidence; implementation pending. Overlapping pulse/busy policy remains PROPOSED, not approved.
