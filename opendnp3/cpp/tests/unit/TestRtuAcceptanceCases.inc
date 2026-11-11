@@ -640,6 +640,17 @@ TEST_CASE("AT-PROFILE-033-VALUE", "[rtu-acceptance]")
         StaticRead(40, 2, {{7, -32768, 1}, {8, 0, 1}, {9, 32767, 1}}, {{7, -32768, 1}, {8, 0, 1}, {9, 32767, 1}}, "C0 01 28 02 00 07 09", "C0 81 80 00 28 02 00 07 09 01 00 80 01 00 00 01 FF 7F", "C1 01", "C1 81 80 00");
 }
 
+TEST_CASE("ProfileMeasurements - G40V2 WRITE cannot change analog output status", "[profile-analog-static]")
+{
+    OutstationTestObject t(OutstationConfig{}, Points(40, 2, {{7, -32768, 5}}));
+    t.LowerLayerUp();
+    Update(t, 40, {{7, -32768, 5}}, false);
+    CheckFrame("write", Request(t, "C0 02 28 02 00 07 07 01 FF 7F"), "C0 81 80 01");
+    const auto reply = Request(t, "C1 01 28 02 00 07 07");
+    CheckFrame("read", reply, "C1 81 80 00 28 02 00 07 07 05 00 80");
+    CheckPoints(40, reply, {{7, -32768, 5}});
+}
+
 TEST_CASE("AT-PROFILE-034-RD00", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -692,6 +703,20 @@ TEST_CASE("AT-PROFILE-006-DEFAULT", "[rtu-acceptance]")
         EventRead(2, 2, false, true, {{7, 1, 1}}, {{7, 1, 1}}, "C0 01 02 00 06", "E0 81 80 00 02 02 28 01 00 07 00 81 06 05 04 03 02 01", "C1 01 02 00 06", "C1 81 80 00");
     if (Selected("V2"))
         EventRead(2, 3, false, true, {{7, 1, 1}}, {{7, 1, 1}}, "C0 01 02 00 06", "E0 81 80 00 33 01 07 01 06 05 04 03 02 01 02 03 28 01 00 07 00 81 00 00", "C1 01 02 00 06", "C1 81 80 00");
+}
+
+TEST_CASE("ProfileMeasurements - G2V0 and G4V0 limit narrow event reads", "[profile-binary-event]")
+{
+    const bool binary = GENERATE(false, true);
+    const std::string qualifier = GENERATE("07 01", "08 01 00");
+    const std::string group = binary ? "02" : "04";
+    const int off = binary ? 0 : 1;
+    const int on = binary ? 1 : 2;
+    EventRead(binary ? 2 : 4, 1, true, false, {{7, off, 1}, {255, on, 1}}, {{7, off, 1}},
+              ("C0 01 " + group + " 00 " + qualifier).c_str(),
+              ("E0 81 82 00 " + group + " 01 17 01 07 " + (binary ? "01" : "41")).c_str(),
+              ("C1 01 " + group + " 00 06").c_str(),
+              ("E1 81 80 00 " + group + " 01 17 01 FF 81").c_str());
 }
 
 TEST_CASE("AT-PROFILE-007-R06Q17", "[rtu-acceptance]")
