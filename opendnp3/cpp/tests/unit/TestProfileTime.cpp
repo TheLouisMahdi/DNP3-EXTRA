@@ -162,6 +162,21 @@ TEST_CASE("Level4 - indexed IIN read widths and standard device restart clearing
     REQUIRE(Exchange(t, "C7 01 50 01 01 07 00 10 00") == "C7 81 00 04");
 }
 
+TEST_CASE("ProfileTime - G80V1 clears restart only after a valid Q00 WRITE", "[profile-time][profile-iin-write]")
+{
+    const auto invalid = GENERATE("C0 02 50 01 01 07 00 07 00 00",
+                                  "C0 02 50 01 00 07 07 00 50 01 00 07 07 00",
+                                  "C0 02 50 01 00 07 07 00 50 01 00 08 08 00",
+                                  "C0 02 50 01 00 07 07 00 50 01 00 07");
+    OutstationTestObject t(OutstationConfig{});
+    t.LowerLayerUp();
+    CAPTURE(invalid);
+    REQUIRE(Exchange(t, invalid) == "C0 81 80 04");
+    REQUIRE(Exchange(t, "C1 01 50 01 00 07 07") == "C1 81 80 00 50 01 00 07 07 01");
+    REQUIRE(Exchange(t, "C2 02 50 01 00 07 07 00") == "C2 81 00 00");
+    REQUIRE(Exchange(t, "C3 01 50 01 01 07 00 07 00") == "C3 81 00 00 50 01 01 07 00 07 00 00");
+}
+
 TEST_CASE("ProfileTime - NEED_TIME clear delegates to the application without writing time", "[profile-time]")
 {
     OutstationTestObject t(OutstationConfig{});

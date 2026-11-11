@@ -1128,7 +1128,7 @@ IINField OContext::HandleWrite(const ParsedRequest& request)
         return IINFromParseResult(result);
     const auto errors = handler.Errors();
     if (!errors.Any())
-        handler.CommitDeadbands();
+        handler.CommitStagedWrites();
     return errors;
 }
 

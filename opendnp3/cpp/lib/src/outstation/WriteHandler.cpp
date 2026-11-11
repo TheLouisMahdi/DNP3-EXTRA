@@ -56,8 +56,10 @@ IINField WriteHandler::ProcessHeader(const PrefixHeader&, const ICollection<Inde
     return StageDeadbands(values);
 }
 
-void WriteHandler::CommitDeadbands()
+void WriteHandler::CommitStagedWrites()
 {
+    if (clearRestartIIN)
+        writeIIN->ClearBit(IINBit::DEVICE_RESTART);
     for (const auto& change : pendingDeadbands)
         change.first->deadband = change.second;
 }
@@ -66,7 +68,7 @@ IINField WriteHandler::ProcessHeader(const RangeHeader& header, const ICollectio
 {
     Indexed<IINValue> pair;
 
-    if (!values.ReadOnlyValue(pair))
+    if (header.GetQualifierCode() != QualifierCode::UINT8_START_STOP || !values.ReadOnlyValue(pair))
     {
         return IINBit::PARAM_ERROR;
     }
@@ -83,12 +85,10 @@ IINField WriteHandler::ProcessHeader(const RangeHeader& header, const ICollectio
 
     if (pair.index == static_cast<uint16_t>(IINBit::DEVICE_RESTART))
     {
-        writeIIN->ClearBit(IINBit::DEVICE_RESTART);
+        clearRestartIIN = true;
     }
     else if (pair.index == static_cast<uint16_t>(IINBit::NEED_TIME))
     {
-        if (header.GetQualifierCode() != QualifierCode::UINT8_START_STOP)
-            return IINBit::PARAM_ERROR;
         if (!application->ClearNeedTime())
             return IINBit::FUNC_NOT_SUPPORTED;
     }

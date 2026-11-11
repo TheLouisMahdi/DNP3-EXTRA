@@ -47,8 +47,8 @@ public:
                  IINField* pWriteIIN,
                  Database& database);
 
-    /// Called after the complete WRITE has passed syntax and point validation.
-    void CommitDeadbands();
+    /// Apply staged restart clearing and deadband updates after validation.
+    void CommitStagedWrites();
 
     virtual bool IsAllowed(uint32_t headerCount, GroupVariation gv, QualifierCode qc) override
     {
@@ -90,6 +90,7 @@ private:
 
     bool wroteTime = false;
     bool wroteIIN = false;
+    bool clearRestartIIN = false;
 };
 
 } // namespace opendnp3
