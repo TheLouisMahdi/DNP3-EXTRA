@@ -22,6 +22,7 @@
 
 #include "app/MeasurementTypeSpecs.h"
 #include "app/Range.h"
+#include "outstation/IClassAssigner.h"
 #include "outstation/IEventReceiver.h"
 #include "outstation/StaticDataCell.h"
 
@@ -183,7 +184,7 @@ public:
 
     Range assign_class(PointClass clazz);
 
-    Range assign_class(PointClass clazz, const Range& range);
+    ClassAssignmentResult assign_class(PointClass clazz, const Range& range);
 
     iterator begin();
 
@@ -389,14 +390,16 @@ template<class Spec> Range StaticDataMap<Spec>::assign_class(PointClass clazz)
     return this->get_full_range();
 }
 
-template<class Spec> Range StaticDataMap<Spec>::assign_class(PointClass clazz, const Range& range)
+template<class Spec> ClassAssignmentResult StaticDataMap<Spec>::assign_class(PointClass clazz, const Range& range)
 {
+    ClassAssignmentResult assigned;
     for (auto iter = this->map.lower_bound(range.start); iter != this->map.end() && range.Contains(iter->first); iter++)
     {
         iter->second.config.clazz = clazz;
+        assigned.range = assigned.range.Union(Range::From(iter->first, iter->first));
+        ++assigned.count;
     }
-
-    return range.Intersection(this->get_full_range());
+    return assigned;
 }
 
 template<class Spec> typename StaticDataMap<Spec>::iterator StaticDataMap<Spec>::begin()

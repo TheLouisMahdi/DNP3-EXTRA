@@ -23,6 +23,8 @@
 #include "opendnp3/gen/AnalogQuality.h"
 #include "opendnp3/gen/DoubleBitBinaryQuality.h"
 
+#include <limits>
+
 namespace opendnp3
 {
 
@@ -88,17 +90,18 @@ StaticDoubleBinaryVariation check_for_promotion<DoubleBitBinarySpec>(const Doubl
 
 template<> StaticAnalogVariation check_for_promotion<AnalogSpec>(const Analog& value, StaticAnalogVariation variation)
 {
-    if (value.flags.value == static_cast<uint8_t>(AnalogQuality::ONLINE))
-    {
-        return variation;
-    }
-
+    const bool onlineOnly = value.flags.value == static_cast<uint8_t>(AnalogQuality::ONLINE);
+    // IEEE 1815-2012 A.14.3/4: use the flagged variation when narrowing sets OVER_RANGE.
     switch (variation)
     {
     case (StaticAnalogVariation::Group30Var3):
-        return StaticAnalogVariation::Group30Var1;
+        return onlineOnly && value.value >= std::numeric_limits<int32_t>::min()
+                   && value.value <= std::numeric_limits<int32_t>::max()
+            ? variation : StaticAnalogVariation::Group30Var1;
     case (StaticAnalogVariation::Group30Var4):
-        return StaticAnalogVariation::Group30Var2;
+        return onlineOnly && value.value >= std::numeric_limits<int16_t>::min()
+                   && value.value <= std::numeric_limits<int16_t>::max()
+            ? variation : StaticAnalogVariation::Group30Var2;
     default:
         return variation;
     }

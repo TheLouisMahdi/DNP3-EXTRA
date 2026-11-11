@@ -477,6 +477,81 @@ TEST_CASE("AT-PROFILE-025-VALUE", "[rtu-acceptance]")
         StaticRead(30, 5, {{7, -2, 5}, {8, 0, 5}, {9, 257, 5}}, {{7, -2, 5}, {8, 0, 5}, {9, 257, 5}}, "C0 01 1E 05 00 07 09", "C0 81 80 00 1E 05 00 07 09 05 00 00 00 C0 05 00 00 00 00 05 00 80 80 43", "C1 01", "C1 81 80 00");
 }
 
+TEST_CASE("ProfileMeasurements - G30V5 and G40V3 preserve binary32 wire boundaries", "[profile-analog-static]")
+{
+    const bool output = GENERATE(false, true);
+    const std::string object = output ? "28 03" : "1E 05";
+    const auto subnormal = std::numeric_limits<float>::denorm_min();
+    const auto maxSubnormal = std::nextafter(std::numeric_limits<float>::min(), 0.0f);
+    const std::vector<double> values{-0.0, 1.5, subnormal, -maxSubnormal, std::numeric_limits<float>::max()};
+    OutstationTestObject t(OutstationConfig{}, Points(output ? 40 : 30, output ? 3 : 5,
+        {{7, 0, 1}, {8, 0, 1}, {9, 0, 1}, {10, 0, 1}, {11, 0, 1}}));
+    t.LowerLayerUp();
+    t.Transaction([&](IUpdateHandler& db) {
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            const auto index = static_cast<uint16_t>(7 + i);
+            if (output)
+                db.Update(AnalogOutputStatus(values[i], Flags(0x11)), index, EventMode::Suppress);
+            else
+                db.Update(Analog(values[i], Flags(0x11)), index, EventMode::Suppress);
+        }
+    });
+
+    const auto reply = Request(t, ("C0 01 " + object + " 00 07 0B").c_str());
+    const auto expected = "C0 81 80 00 " + object + " 00 07 0B 11 00 00 00 80 11 00 00 C0 3F 11 01 00 00 00"
+                                                    " 11 FF FF 7F 80 11 FF FF 7F 7F";
+    CheckFrame("reply", reply, expected.c_str());
+    MockSOEHandler soe;
+    Decode(reply, soe);
+    const auto check = [&](const auto& received) {
+        REQUIRE(received.size() == values.size());
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            const auto& point = received.at(static_cast<uint16_t>(7 + i)).meas;
+            REQUIRE(point.flags.value == 0x11);
+            REQUIRE(point.value == values[i]);
+            REQUIRE(std::signbit(point.value) == std::signbit(values[i]));
+        }
+    };
+    if (output)
+        check(soe.analogOutputStatusSOE);
+    else
+        check(soe.analogSOE);
+}
+
+TEST_CASE("ProfileMeasurements - unflagged analog reads preserve overrange quality", "[profile-analog-static]")
+{
+    const bool narrow = GENERATE(false, true);
+    const auto requestVariation = narrow ? "04" : "03";
+    const auto low = narrow ? -32768.0 : -2147483648.0;
+    const auto high = narrow ? 32767.0 : 2147483647.0;
+    OutstationTestObject t(OutstationConfig{}, Points(30, narrow ? 4 : 3,
+        {{7, 0, 1}, {8, 0, 1}, {9, 0, 1}, {10, 0, 1}}));
+    t.LowerLayerUp();
+    t.Transaction([&](IUpdateHandler& db) {
+        db.Update(Analog(low), 7, EventMode::Suppress);
+        db.Update(Analog(low - 1), 8, EventMode::Suppress);
+        db.Update(Analog(high + 1), 9, EventMode::Suppress);
+        db.Update(Analog(high), 10, EventMode::Suppress);
+    });
+
+    const auto expected = narrow
+        ? "C0 81 80 00 1E 04 00 07 07 00 80 1E 02 00 08 09 21 00 80 21 FF 7F 1E 04 00 0A 0A FF 7F"
+        : "C0 81 80 00 1E 03 00 07 07 00 00 00 80 1E 01 00 08 09 21 00 00 00 80 21 FF FF FF 7F 1E 03 00 0A 0A FF FF FF 7F";
+    const auto reply = Request(t, (std::string("C0 01 1E ") + requestVariation + " 00 07 0A").c_str());
+    CheckFrame("explicit", reply, expected);
+    CheckFrame("wildcard", Request(t, "C1 01 1E 00 06"), (std::string("C1") + (expected + 2)).c_str());
+    MockSOEHandler soe;
+    Decode(reply, soe);
+    REQUIRE(soe.analogSOE.at(7).meas.flags.value == 0x01);
+    REQUIRE(soe.analogSOE.at(8).meas.flags.value == 0x21);
+    REQUIRE(soe.analogSOE.at(8).meas.value == low);
+    REQUIRE(soe.analogSOE.at(9).meas.flags.value == 0x21);
+    REQUIRE(soe.analogSOE.at(9).meas.value == high);
+    REQUIRE(soe.analogSOE.at(10).meas.flags.value == 0x01);
+}
+
 TEST_CASE("AT-PROFILE-031-RD00", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -997,6 +1072,38 @@ TEST_CASE("AT-PROFILE-026-DEFAULT", "[rtu-acceptance]")
         EventRead(32, 4, false, true, {{7, -2, 1}}, {{7, -2, 1}}, "C0 01 20 00 06", "E0 81 80 00 20 04 28 01 00 07 00 01 FE FF 06 05 04 03 02 01", "C1 01 20 00 06", "C1 81 80 00");
     if (Selected("V4"))
         EventRead(32, 5, false, false, {{7, -2, 1}}, {{7, -2, 1}}, "C0 01 20 00 06", "E0 81 80 00 20 05 28 01 00 07 00 01 00 00 00 C0", "C1 01 20 00 06", "C1 81 80 00");
+}
+
+TEST_CASE("ProfileMeasurements - G32V0 selects narrow default events and preserves unconfirmed data",
+          "[profile-analog-event]")
+{
+    const std::string selection = GENERATE("06", "07 01", "08 01 00");
+    OutstationConfig config;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(4);
+    config.params.prefer8BitEventQualifiers = true;
+    config.params.solConfirmTimeout = TimeDuration::Seconds(2);
+    OutstationTestObject t(config, Points(32, 5, {{7, 0, 1}, {255, 0, 1}}));
+    t.LowerLayerUp();
+    Update(t, 32, {{7, -2, 5}, {255, 3, 1}}, true);
+    REQUIRE(t.lower->PopWriteAsHex().empty());
+    const bool all = selection == "06";
+    const std::string objects = all ? "20 05 17 02 07 05 00 00 00 C0 FF 01 00 00 40 40"
+                                    : "20 05 17 01 07 05 00 00 00 C0";
+    const std::string iin = all ? "80" : "82";
+    const auto reply = Request(t, ("C0 01 20 00 " + selection).c_str());
+    CheckFrame("reply", reply, ("E0 81 " + iin + " 00 " + objects).c_str());
+    MockSOEHandler soe;
+    Decode(reply, soe);
+    REQUIRE(soe.analogSOE.at(7).meas.value == -2);
+    REQUIRE(soe.analogSOE.at(7).meas.flags.value == 0x05);
+    t.AdvanceTime(TimeDuration::Seconds(2));
+    REQUIRE(t.application->confirms.empty());
+    CheckFrame("repoll", Request(t, ("C1 01 20 00 " + selection).c_str()),
+               ("E1 81 " + iin + " 00 " + objects).c_str());
+    t.SendToOutstation("C1 00");
+    REQUIRE(t.application->confirms.size() == 1);
+    CheckFrame("remaining", Request(t, "C2 01 20 00 06"),
+               all ? "C2 81 80 00" : "E2 81 80 00 20 05 17 01 FF 01 00 00 40 40");
 }
 
 TEST_CASE("AT-PROFILE-027-R06Q17", "[rtu-acceptance]")

@@ -65,7 +65,7 @@ public:
 
     // ------- IClassAssigner -------------
     Range AssignClassToAll(AssignClassType type, PointClass clazz) override;
-    Range AssignClassToRange(AssignClassType type, PointClass clazz, const Range& range) override;
+    ClassAssignmentResult AssignClassToRange(AssignClassType type, PointClass clazz, const Range& range) override;
 
     // ------- IResponseLoader -------------
     bool HasAnySelection() const override;

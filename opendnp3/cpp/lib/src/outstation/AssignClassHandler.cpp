@@ -138,12 +138,12 @@ IINField AssignClassHandler::ProcessHeader(const CountHeader& header)
 IINField AssignClassHandler::ProcessAssignRange(AssignClassType type, PointClass clazz, const Range& range)
 {
     state = State::HasTarget;
-    auto actual = pAssigner->AssignClassToRange(type, clazz, range);
+    const auto assigned = pAssigner->AssignClassToRange(type, clazz, range);
 
-    this->NotifyApplicationOfAssignment(type, clazz, actual);
+    this->NotifyApplicationOfAssignment(type, clazz, assigned.range);
 
-    // if the range was clipped or invalid return parameter error
-    return actual.Equals(range) ? IINField() : IINBit::PARAM_ERROR;
+    // IEEE 1815-2012 4.5.11 requires PARAM_ERROR even for holes inside the range.
+    return assigned.count == range.Count() ? IINField() : IINBit::PARAM_ERROR;
 }
 
 IINField AssignClassHandler::ProcessAssignAll(AssignClassType type, PointClass clazz)

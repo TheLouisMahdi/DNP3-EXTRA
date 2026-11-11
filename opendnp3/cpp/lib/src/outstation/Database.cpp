@@ -597,13 +597,18 @@ IINField Database::SelectIIN(const Range& range, QualifierCode qualifier)
 
 namespace
 {
-Range AssignCommandClass(std::map<uint16_t, CommandEventConfig>& points, PointClass clazz, const Range& requested)
+ClassAssignmentResult AssignCommandClass(std::map<uint16_t, CommandEventConfig>& points,
+                                         PointClass clazz,
+                                         const Range& requested)
 {
-    if (points.empty())
-        return Range::Invalid();
+    ClassAssignmentResult assigned;
     for (auto iter = points.lower_bound(requested.start); iter != points.end() && requested.Contains(iter->first); ++iter)
+    {
         iter->second.clazz = clazz;
-    return requested.Intersection(Range::From(points.begin()->first, points.rbegin()->first));
+        assigned.range = assigned.range.Union(Range::From(iter->first, iter->first));
+        ++assigned.count;
+    }
+    return assigned;
 }
 }
 
@@ -626,15 +631,15 @@ Range Database::AssignClassToAll(AssignClassType type, PointClass clazz)
     case (AssignClassType::AnalogOutputStatus):
         return this->analog_output_status.assign_class(clazz);
     case AssignClassType::BinaryCommandEvent:
-        return AssignCommandClass(binary_command_event, clazz, Range::From(0, UINT16_MAX));
+        return AssignCommandClass(binary_command_event, clazz, Range::From(0, UINT16_MAX)).range;
     case AssignClassType::AnalogCommandEvent:
-        return AssignCommandClass(analog_command_event, clazz, Range::From(0, UINT16_MAX));
+        return AssignCommandClass(analog_command_event, clazz, Range::From(0, UINT16_MAX)).range;
     default:
         return Range::Invalid();
     }
 }
 
-Range Database::AssignClassToRange(AssignClassType type, PointClass clazz, const Range& range)
+ClassAssignmentResult Database::AssignClassToRange(AssignClassType type, PointClass clazz, const Range& range)
 {
     switch (type)
     {
@@ -657,7 +662,7 @@ Range Database::AssignClassToRange(AssignClassType type, PointClass clazz, const
     case AssignClassType::AnalogCommandEvent:
         return AssignCommandClass(analog_command_event, clazz, range);
     default:
-        return Range::Invalid();
+        return {};
     }
 }
 

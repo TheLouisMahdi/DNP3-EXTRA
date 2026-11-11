@@ -29,6 +29,12 @@
 namespace opendnp3
 {
 
+struct ClassAssignmentResult
+{
+    Range range;
+    size_t count = 0;
+};
+
 /**
  * An interface used to process assign class requests
  */
@@ -41,9 +47,9 @@ public:
     virtual Range AssignClassToAll(AssignClassType type, PointClass clazz) = 0;
 
     /**
-     *	@return the portion of the requested range that is valid, an invalid range if the type doesn't exist
+     *	@return the bounds and count of the points actually assigned
      */
-    virtual Range AssignClassToRange(AssignClassType type, PointClass clazz, const Range& range) = 0;
+    virtual ClassAssignmentResult AssignClassToRange(AssignClassType type, PointClass clazz, const Range& range) = 0;
 };
 
 } // namespace opendnp3

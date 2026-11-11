@@ -5,6 +5,7 @@
 #include "utils/BufferHelpers.h"
 #include "utils/AcceptanceObservation.h"
 #include "utils/OutstationTestObject.h"
+#include "utils/CallbackQueue.h"
 #include "utils/LinkLayerTest.h"
 #include "utils/CommandCallbackQueue.h"
 #include "utils/MasterTestFixture.h"
@@ -445,13 +446,13 @@ void EventClassAssignment(unsigned group, unsigned qualifier, bool repeated)
     for (const auto& assignment : assignments)
         REQUIRE(assignment == std::make_tuple(type, PointClass::Class2, first, last));
     Update(t, group, {{first, 1, 1}, {last, 2, 1}}, true);
-    const auto firstIndex = high ? " 01 01 " : " 07 00 ";
-    const auto lastIndex = high ? " 02 01 " : " 08 00 ";
-    const auto old = "E1 81 84 00 " + eventGroup + " 01 28 01 00" + firstIndex + (analog ? "01 02 00 00 00" : "81");
+    const auto firstIndex = high ? "01 01 " : "07 00 ";
+    const auto lastIndex = high ? "02 01 " : "08 00 ";
+    const auto old = "E1 81 84 00 " + eventGroup + " 01 28 01 00 " + firstIndex + (analog ? "01 02 00 00 00" : "81");
     CheckFrame("class1", Request(t, "C1 01 3C 02 06"), old.c_str());
     t.SendToOutstation("C1 00");
-    const auto fresh = "E2 81 80 00 " + eventGroup + " 01 28 02 00" + firstIndex
-        + (analog ? "01 01 00 00 00" : "41") + lastIndex + (analog ? "01 02 00 00 00" : "81");
+    const auto fresh = "E2 81 80 00 " + eventGroup + " 01 28 02 00 " + firstIndex
+        + (analog ? "01 01 00 00 00 " : "41 ") + lastIndex + (analog ? "01 02 00 00 00" : "81");
     CheckFrame("class2", Request(t, "C2 01 3C 03 06"), fresh.c_str());
     t.SendToOutstation("C2 00");
     CheckFrame("probe", Request(t, "C3 01 3C 02 06 3C 03 06"), "C3 81 80 00");
