@@ -18,7 +18,7 @@ if(WIN32 AND DNP3_TESTS AND DNP3_SA_CRYPTO AND Python3_Interpreter_FOUND)
     if(DNP3_TLS)
         list(APPEND pc_cases tls)
     endif()
-    list(APPEND pc_cases profile-crob-interlock-transition profile-binary-wire profile-crob-activation)
+    list(APPEND pc_cases profile-crob-interlock-transition profile-binary-wire profile-class-restart profile-crob-activation)
     foreach(pc_case IN LISTS pc_cases)
         add_test(NAME pc-${pc_case} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProcessSmoke.py"
             --exe $<TARGET_FILE:dnp3-cli> --work-dir "${CMAKE_CURRENT_BINARY_DIR}/pc-test" --only ${pc_case})

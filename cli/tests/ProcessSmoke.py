@@ -1211,6 +1211,80 @@ def profile_binary_event_wire(exe):
     print("PASS binary events: real TCP G2/G4 variation, time, and confirmation", flush=True)
 
 
+def profile_class_restart(exe):
+    """Route events through FC22, a link reconnect, and an Outstation process restart."""
+    options = ["--auth", "compat", "--rtu-io-profile", *loopback_port()]
+    port = int(options[-1])
+    assign = "16 3C 04 06 03 00 06 1E 00 06"
+    malformed = "16 3C 04 06 03 00 06 1E 00"
+    double_event = bytes.fromhex("04 02 28 01 00 07 00 81")
+    analog_event = bytes.fromhex("20 05 28 01 00 08 00 01 00 00 20 41")
+
+    def connect():
+        return socket.create_connection(("127.0.0.1", port), timeout=5)
+
+    def force(out):
+        for command in ("set double 7 on force", "set analog 8 10 force"):
+            cursor = out.send(command)
+            out.wait(r"\[UPDATE\].*" + re.escape(command[4:]) + "$", cursor)
+
+    def exchange(raw, seq, request):
+        raw.sendall(f01_link_frame(bytes([0xC0 | seq]) + bytes.fromhex(request), seq * 2))
+        _, reply = f01_receive_apdu(raw)
+        assert reply[1] == 0x81 and reply[0] & 0x0F == seq, (request, reply.hex())
+        return reply
+
+    def poll(raw, seq, event_class, expected):
+        reply = exchange(raw, seq, f"01 3C {event_class + 1:02X} 06")
+        payload = reply[4:]
+        assert reply[3] == 0 and bool(reply[0] & 0x20) == bool(expected), reply.hex()
+        for event in expected:
+            assert payload.startswith(event), reply.hex()
+            payload = payload[len(event) + (6 if event == double_event else 0):]
+        assert not payload, reply.hex()
+        if expected:
+            raw.sendall(f01_link_frame(bytes([0xC0 | seq, 0]), seq * 2 + 1))
+
+    out = Peer(exe, "outstation", options)
+    try:
+        out.wait(r"\[HELP\]")
+        with connect() as raw:
+            # A truncated second target must not apply even the complete first target.
+            assert exchange(raw, 0, malformed) == bytes.fromhex("C0 81 90 04")
+            force(out)
+            poll(raw, 1, 3, ())
+            assert exchange(raw, 2, assign) == bytes.fromhex("C2 81 96 00")
+            # Events already queued retain their original classes.
+            poll(raw, 3, 1, (double_event,))
+            poll(raw, 4, 2, (analog_event,))
+            force(out)
+            poll(raw, 5, 1, ())
+            poll(raw, 6, 2, ())
+            poll(raw, 7, 3, (double_event, analog_event))
+        with connect() as raw:
+            force(out)
+            poll(raw, 0, 3, (double_event, analog_event))
+    finally:
+        stop(out)
+
+    out = Peer(exe, "outstation", options)
+    try:
+        out.wait(r"\[HELP\]")
+        with connect() as raw:
+            # A new process is a device restart for the volatile Host configuration.
+            assert exchange(raw, 0, "01")[2] & 0x80
+            assert exchange(raw, 1, malformed) == bytes.fromhex("C1 81 90 04")
+            force(out)
+            poll(raw, 2, 3, ())
+            poll(raw, 3, 1, (double_event,))
+            poll(raw, 4, 2, (analog_event,))
+            poll(raw, 5, 1, ())
+            poll(raw, 6, 2, ())
+    finally:
+        stop(out)
+    print("PASS FC22 class routing across TCP reconnect and Outstation process restart", flush=True)
+
+
 def profile_analog_wire(exe):
     """Verify G32V5 request and response bytes over real TCP."""
     for request_qualifier, count_bytes in (
@@ -2916,7 +2990,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-class-restart", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
     parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -2937,6 +3011,7 @@ def main():
     if args.only in ("f01-link", "all"): f01_confirmed_link(args.exe)
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
     if args.only in ("profile-binary-wire", "all"): profile_binary_wire(args.exe)
+    if args.only in ("profile-class-restart", "all"): profile_class_restart(args.exe)
     if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
     if args.only in ("profile-crob-latch", "all"):
         profile_crob_latch(args.exe)
