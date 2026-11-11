@@ -1,6 +1,6 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 258 Host scenarios have executable bindings (457 vectors). 182 Host scenarios remain NOT_RUN. 8 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 258 Host scenarios have executable bindings (457 vectors). 183 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the exact binding, vectors, independent golden values and sources. An executable binding is an implementation inventory entry. See the delivery report for the limited Linux execution sample.
 
@@ -57,7 +57,7 @@ A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The re
 | CFG-03 | — | `MASTER-RX`, `MASTER-TX`, `MASTER-CLI`, `OUTSTATION-RX`, `OUTSTATION-TX`, `OUTSTATION-CLI`, `TPDU`, `TIMEOUT` | `PRODUCT` |
 | CFG-05 | `MASTER-NEVER-249`, `MASTER-NEVER-250`, `MASTER-ALWAYS-249`, `MASTER-ALWAYS-250`, `MASTER-MULTIFRAME-249`, `MASTER-MULTIFRAME-250`, `OUTSTATION-NEVER-249`, `OUTSTATION-NEVER-250`, `OUTSTATION-ALWAYS-249`, `OUTSTATION-ALWAYS-250`, `OUTSTATION-MULTIFRAME-249`, `OUTSTATION-MULTIFRAME-250` | `RETRY`, `OWNER`, `STALE`, `DFC`, `BCAST`, `TCP` | — |
 | CFG-08 | — | `M4-CHALLENGE-G12V1-SBO`, `M4-CHALLENGE-G12V1-DO`, `M4-CHALLENGE-G12V1-NR`, `M4-CHALLENGE-G41V1-SBO`, `M4-CHALLENGE-G41V1-DO`, `M4-CHALLENGE-G41V1-NR`, `M4-CHALLENGE-G41V2-SBO`, `M4-CHALLENGE-G41V2-DO`, `M4-CHALLENGE-G41V2-NR`, `M4-CHALLENGE-G41V3-SBO`, `M4-CHALLENGE-G41V3-DO`, `M4-CHALLENGE-G41V3-NR`, `M4-AGGRESSIVE-G12V1-SBO`, `M4-AGGRESSIVE-G12V1-DO`, `M4-AGGRESSIVE-G12V1-NR`, `M4-AGGRESSIVE-G41V1-SBO`, `M4-AGGRESSIVE-G41V1-DO`, `M4-AGGRESSIVE-G41V1-NR`, `M4-AGGRESSIVE-G41V2-SBO`, `M4-AGGRESSIVE-G41V2-DO`, `M4-AGGRESSIVE-G41V2-NR`, `M4-AGGRESSIVE-G41V3-SBO`, `M4-AGGRESSIVE-G41V3-DO`, `M4-AGGRESSIVE-G41V3-NR`, `M68-CHALLENGE-G12V1-SBO`, `M68-CHALLENGE-G12V1-DO`, `M68-CHALLENGE-G12V1-NR`, `M68-CHALLENGE-G41V1-SBO`, `M68-CHALLENGE-G41V1-DO`, `M68-CHALLENGE-G41V1-NR`, `M68-CHALLENGE-G41V2-SBO`, `M68-CHALLENGE-G41V2-DO`, `M68-CHALLENGE-G41V2-NR`, `M68-CHALLENGE-G41V3-SBO`, `M68-CHALLENGE-G41V3-DO`, `M68-CHALLENGE-G41V3-NR`, `M68-AGGRESSIVE-G12V1-SBO`, `M68-AGGRESSIVE-G12V1-DO`, `M68-AGGRESSIVE-G12V1-NR`, `M68-AGGRESSIVE-G41V1-SBO`, `M68-AGGRESSIVE-G41V1-DO`, `M68-AGGRESSIVE-G41V1-NR`, `M68-AGGRESSIVE-G41V2-SBO`, `M68-AGGRESSIVE-G41V2-DO`, `M68-AGGRESSIVE-G41V2-NR`, `M68-AGGRESSIVE-G41V3-SBO`, `M68-AGGRESSIVE-G41V3-DO`, `M68-AGGRESSIVE-G41V3-NR`, `DENY`, `REPLAY`, `TIMEOUT`, `NOACK` | `PEER` |
-| CFG-09 | — | `CLOSE`, `TRIP`, `COUNT`, `PULSE-OFF`, `LATCH-ON`, `LATCH-OFF`, `QUEUE`, `CLEAR`, `BADCODE`, `WRITE` | `PULSE-ON`, `RTU` |
+| CFG-09 | — | `CLOSE`, `TRIP`, `COUNT`, `PULSE-OFF`, `LATCH-ON`, `LATCH-OFF`, `QUEUE`, `CLEAR`, `BADCODE`, `WRITE`, `PULSE-ON` | `RTU` |
 | CFG-13 | `COMPAT` | `STATIC`, `EVENT`, `NEG` | — |
 | CFG-14 | — | `STATIC`, `MIX`, `UNSOL`, `WRAP`, `TRANSPORT`, `LOSS`, `MALFORMED`, `TIME`, `TCP` | — |
 
@@ -71,7 +71,8 @@ A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The re
 | `AT-PROFILE-065-Q17-TX` | EXTERNAL_POLICY | Approve optional Outstation Q17 transmission for the selected large object family. Device Profile p12. Master reception stays in Host scope. |
 | `AT-CFG-03-PRODUCT` | EXTERNAL_POLICY | Approve concrete RX/TX limits for the product. Device Profile p2 sets RX >249 and conditional TX configurability above 2048, with product fields left open. |
 | `AT-CFG-08-PEER` | EXTERNAL_PEER | Repeat the selected security matrix with an independent peer. A second instance of the project cannot supply independent-peer evidence. |
-| `AT-CFG-09-PULSE-ON` | EXTERNAL_POLICY | Approve Pulse On policy. Device Profile p3 lists Sometimes. The legacy planning record used Never. |
 | `AT-CFG-09-RTU` | EXTERNAL_HARDWARE | Physical output, pulse timing and fail-safe evidence on the target. Device Profile p3. |
 
 The external allocation uses the two contractual PDFs and IEEE 1815-2012. The Security Addendum's product/peer constraints do not turn unbound Host SA cases into external gates.
+
+D-07 owner approved 2026-11-11: AT-CFG-09-PULSE-ON is HOST/PROCESS_TCP and NOT_RUN until an actual executable binding is implemented. Physical RTU mapping and timing remain external.

@@ -85,19 +85,16 @@ Project-owner direction: implement selected requirements according to IEEE 1815-
 - **External/deployment gate (if any):** `PRODUCT_OR_CONTRACT_DECISION`
 - **Remaining evidence or factual variance:** Defaults are Host policy; end-to-end timing and applicable timer ranges pending.
 
-## D-07 - Pulse On = Sometimes with missing explanation
+## D-07 - Owner-approved CROB point policy (Pulse On = Sometimes)
 
 - **Linked requirements:** CFG-09;PROFILE-019;CFG-08
-- **Classification:** `ENGINEERING_BASELINE_SELECTED`
-- **Implementation decision:** Support Trip/Close. Permit Pulse On only on explicitly configured eligible points with selected TCC/OpType, count=1 and interlocks; default deny.
-- **IEEE/source anchors:** 4.4.4 pp90-96; A.8.1.3.2 and Table A-1 pp550-552; Profile pp3,6
-- **Rationale:** Use fixed per-point IEEE control model; validate NUL/TRIP/CLOSE separately from PULSE_ON.
-- **Security/configuration boundary:** Reject reserved TCC, prohibited OpTypes, queue/clear and invalid timing/count; no actuation on SELECT.
-- **Permanent tests:** Test both eligible trip/close directions, NUL policy, denied bits, unauthorized/replayed and expired SELECT.
-- **Decision state:** `DISPOSITION_RECORDED`
-- **External/deployment gate (if any):** `PRODUCT_OR_CONTRACT_DECISION`
-- **Remaining evidence or factual variance:** Physical interlocks and actuator parameters outside Host.
-- **2026-11-10 reference gate:** Tavanir original PDF physical p3 explicitly says Pulse On = Sometimes. The historical Drive PDF_SCOPE.md Never wording is incorrect; use the selected PDF and this reference.
+- **Classification:** OWNER_APPROVED
+- **Project-owner authorization (2026-11-11):** Owner-approved D-07 (2026-11-11): support CLOSE 0x41 and TRIP 0x81 on configured Complementary points (Latch or Two-output as appropriate). Permit 0x01 NUL/PULSE_ON only on explicitly enabled Activation points; deny on Complementary, disabled or undefined points. Require count=1, no queue/clear, no Pulse Off or Latch OpType. Use the configured safe point pulse duration rather than Master-requested duration; preserve exact request/echo and validate timing semantics. SELECT validates and arms only, never actuates. Authenticate SA v5, authorize the user and recheck interlocks and safe execution conditions before every actuation. Preserve generic library capabilities.
+- **IEEE/source anchors:** 4.4.4 pp90-96; A.8.1.3.2, Tables A-1/A-2 pp550-552; Profile physical pp3,6.
+- **Permanent tests:** Test 0x41/0x81 on both Complementary models and 0x01 on enabled Activation; deny 0x01 on Complementary/disabled/unknown points, unsupported TCC/OpType, queue/clear, count=0 or >1 and invalid timing/configuration. Check configured pulse duration, no actuation on SELECT, authorization/interlock denial, expired/mismatched selection and duplicate/replay without extra execution. Exercise G12V1 Q17/Q28, FC3/4/5/6 under SA REQUIRED, exact acknowledged echo and no FC129 for FC6; record receiver effects and generic compatibility regression.
+- **Decision state:** OWNER_APPROVED_IMPLEMENTATION_PENDING
+- **External/deployment gate:** Actual RTU point indices, point models, safe pulse durations, physical output mapping and interlocks remain product/deployment inputs. Host may use explicit test-only fixtures. No new runtime test evidence; implementation pending. Overlapping pulse/busy policy remains PROPOSED, not approved.
+- **Source correction:** Tavanir Profile physical p3 selects Pulse On = Sometimes, not Never. The missing product-specific explanation does not block Host policy implementation after this owner decision.
 
 ## D-08 - Timed binary event variation policy / explanation missing
 
