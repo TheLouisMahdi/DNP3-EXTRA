@@ -5,6 +5,8 @@
 #include "dnp3mocks/RemoteUpdateKeyCredentials.h"
 #include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
 #include "dnp3mocks/UserIdentityCertificate.h"
+#include "dnp3mocks/MockSOEHandler.h"
+#include "../unit/utils/AcceptanceObservation.h"
 
 #include <opendnp3/DNP3Manager.h>
 #include <opendnp3/auth/SecurityStatistic.h>
@@ -16,6 +18,7 @@
 
 #include <catch.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <deque>
@@ -59,7 +62,9 @@ public:
     std::array<std::array<uint8_t, 32>, 2> keys{};
     size_t keyLength = 32;
     const uint64_t lifetimeMs;
-    explicit TcpCredentials(uint64_t lifetimeMs_ = 3600000) : lifetimeMs(lifetimeMs_)
+    const uint16_t expectedAssociation;
+    explicit TcpCredentials(uint64_t lifetimeMs_ = 3600000, uint16_t association = 7)
+        : lifetimeMs(lifetimeMs_), expectedAssociation(association)
     {
         for (auto& key : keys)
             REQUIRE(crypto::GenerateRandom(ser4cpp::wseq_t(key.data(), key.size())) == crypto::Result::OK);
@@ -72,7 +77,7 @@ public:
     bool ReadUpdateKey(
         uint16_t association, uint16_t user, uint8_t* output, size_t capacity, uint64_t& lifetime) override
     {
-        if (association != 7 || user < 1 || user > 2 || !output || capacity != keyLength)
+        if (association != expectedAssociation || user < 1 || user > 2 || !output || capacity != keyLength)
             return false;
         std::copy_n(keys[user - 1].begin(), capacity, output);
         lifetime = lifetimeMs;
@@ -81,11 +86,15 @@ public:
 };
 class TcpPolicy final : public IAuthenticationAuthorization
 {
+    const uint16_t expectedAssociation;
+
 public:
+    explicit TcpPolicy(uint16_t association = 7) : expectedAssociation(association) {}
+
     bool IsAuthorized(
         uint16_t association, uint16_t user, uint8_t function, const uint8_t* apdu, size_t size) const override
     {
-        return association == 7 && apdu && size >= 2 && apdu[1] == function
+        return association == expectedAssociation && apdu && size >= 2 && apdu[1] == function
             && ((user == 1 && (function == 0 || function == 1 || function == 2)) || user == 2);
     }
 };
@@ -240,6 +249,106 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     REQUIRE(commands->operated.load() == 5);
     manager.Shutdown();
 }
+
+TEST_CASE("AT-PROFILE-065-TCP", "[sa-tcp][security-statistics-tcp]")
+{
+    constexpr auto statistic = static_cast<uint8_t>(SecurityStatistic::AUTHORIZATION_FAILURES);
+    DNP3Manager manager(1, std::make_shared<AuthenticationTrace>());
+    struct Pair
+    {
+        std::shared_ptr<IMaster> master;
+        std::shared_ptr<IOutstation> outstation;
+        std::shared_ptr<TcpCommands> commands;
+    };
+    const auto connect = [&](uint16_t association) {
+        const auto suffix = std::to_string(association);
+        auto listener = std::make_shared<QueuedChannelListener>();
+        auto server = manager.AddTCPServer("stats-server-" + suffix, levels::NORMAL,
+                                           ServerAcceptMode::CloseExisting, IPEndpoint::Localhost(0), nullptr);
+        REQUIRE(server);
+        auto client = manager.AddTCPClient("stats-client-" + suffix, levels::NORMAL, ChannelRetry::Default(),
+            {IPEndpoint::Localhost(server->GetBoundPort())}, "127.0.0.1", listener);
+        REQUIRE(client);
+        OutstationStackConfig oc(DatabaseConfig{});
+        oc.link.LocalAddr = 10;
+        oc.link.RemoteAddr = 1;
+        auto& auth = oc.outstation.params.authentication;
+        auth.association = association;
+        auth.credentials = std::make_shared<TcpCredentials>(3600000, association);
+        auth.authorization = std::make_shared<TcpPolicy>(association);
+        oc.outstation.eventBufferConfig.maxSecurityStatEvents = 8;
+        oc.outstation.securityStatThresholds[statistic] = 1;
+        oc.outstation.securityStatConfig[statistic].evariation = EventSecurityStatVariation::Group122Var1;
+        MasterStackConfig mc;
+        mc.link.LocalAddr = 1;
+        mc.link.RemoteAddr = 10;
+        mc.master.disableUnsolOnStartup = false;
+        mc.master.startupIntegrityClassMask = ClassField::None();
+        mc.master.unsolClassMask = ClassField::None();
+        mc.master.ignoreRestartIIN = true;
+        mc.master.authentication = auth;
+        Pair pair;
+        pair.commands = std::make_shared<TcpCommands>();
+        pair.outstation = server->AddOutstation("stats-outstation-" + suffix, pair.commands,
+                                               DefaultOutstationApplication::Create(), oc);
+        pair.master = client->AddMaster("stats-master-" + suffix, NullSOEHandler::Create(),
+                                        DefaultMasterApplication::Create(), mc);
+        REQUIRE(pair.outstation);
+        REQUIRE(pair.master);
+        REQUIRE(pair.outstation->Enable());
+        REQUIRE(pair.master->Enable());
+        REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+        return pair;
+    };
+    const auto first = connect(7);
+    const auto second = connect(8);
+    const auto read = [&](const Pair& pair) {
+        auto soe = std::make_shared<MockSOEHandler>();
+        auto result = std::make_shared<ScanResult>();
+        auto future = result->result.get_future();
+        pair.master->ScanAllObjects(GroupVariationID(122, 1), soe, TaskConfig::With(result));
+        REQUIRE(future.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+        REQUIRE(future.get() == TaskCompletion::SUCCESS);
+        return soe;
+    };
+
+    const auto outcome = std::make_shared<std::promise<TaskCompletion>>();
+    auto future = outcome->get_future();
+    auto cfg = TaskConfig::Default();
+    cfg.authenticationUser = 1;
+    first.master->DirectOperate(ControlRelayOutputBlock(OperationType::LATCH_ON), 0,
+        [outcome](const ICommandTaskResult& result) { outcome->set_value(result.summary); }, cfg);
+    REQUIRE(future.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    REQUIRE(future.get() != TaskCompletion::SUCCESS);
+    acceptance::Observe("denied_operations", first.commands->operated.load());
+    REQUIRE(first.commands->operated.load() == 0);
+    REQUIRE(first.outstation->GetAuthenticationStatus().statistics[statistic] == 1);
+    REQUIRE(second.outstation->GetAuthenticationStatus().statistics[statistic] == 0);
+
+    const auto authorizationEvent = [](const MockSOEHandler::Record<Indexed<SecurityStat>>& value) {
+        return value.meas.index == static_cast<uint8_t>(SecurityStatistic::AUTHORIZATION_FAILURES);
+    };
+    const auto countAuthorization = [&](const MockSOEHandler& soe) {
+        return std::count_if(soe.securityStatSOE.begin(), soe.securityStatSOE.end(), authorizationEvent);
+    };
+    const auto accepted = read(first);
+    REQUIRE(countAuthorization(*accepted) == 1);
+    const auto& record = *std::find_if(accepted->securityStatSOE.begin(), accepted->securityStatSOE.end(),
+                                      authorizationEvent);
+    REQUIRE(record.info.gv == GroupVariation::Group122Var1);
+    REQUIRE(record.info.qualifier == QualifierCode::UINT16_CNT_UINT16_INDEX);
+    REQUIRE(record.meas.index == statistic);
+    REQUIRE(record.meas.value.associationId == 0);
+    REQUIRE(record.meas.value.value == 1);
+    REQUIRE_FALSE(record.meas.value.HasTime());
+    acceptance::Observe("typed_authz_events", countAuthorization(*accepted));
+    const auto isolated = read(second);
+    acceptance::Observe("foreign_authz_events", countAuthorization(*isolated));
+    REQUIRE(countAuthorization(*isolated) == 0);
+    REQUIRE(countAuthorization(*read(first)) == 0);
+    manager.Shutdown();
+}
+
 
 TEST_CASE("SecureAuthenticationTCP - remote update installs a key used by native commands and reconnect", "[sa-tcp][remote-update-tcp]")
 {

@@ -1,6 +1,62 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-065-TCP": {
+      "kind": "integration",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-R06Q17": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-R06Q28": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-R07Q17": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-R07Q28": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-R08Q17": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-R08Q28": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-UQ17": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-UQ28": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-NEG": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-THRESH": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-QUEUE": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-DISCONT": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-065-CLASS": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
     "AT-PROFILE-064-READ00": {
       "kind": "unit",
       "vectors": ["V1", "V2"]
@@ -1982,6 +2038,136 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-065-TCP/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Authenticated denial generates one event on its own TCP association",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["denied_operations", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["typed_authz_events", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["foreign_authz_events", "receiver", "EVENT", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-R06Q17/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Explicit G122V1 and selected response width",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-R06Q28/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Explicit G122V1 and selected response width",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 3, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["confirmed_batches", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-R07Q17/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Explicit G122V1 and selected response width",
+      "input_hex": "C0 01 7A 01 07 01",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-R07Q28/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Explicit G122V1 and selected response width",
+      "input_hex": "C0 01 7A 01 07 01",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["confirmed_batches", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-R08Q17/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Explicit G122V1 and selected response width",
+      "input_hex": "C0 01 7A 01 08 02 00",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 2, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-R08Q28/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Explicit G122V1 and selected response width",
+      "input_hex": "C0 01 7A 01 08 02 00",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 2, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["confirmed_batches", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-UQ17/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Native unsolicited receive and confirm",
+      "input_hex": "F1 82 80 00 7A 01 17 01 00 41 34 12 03 00 00 00",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-UQ28/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Native unsolicited receive and confirm",
+      "input_hex": "F1 82 80 00 7A 01 28 01 00 00 00 41 00 00 03 00 00 00",
+      "checks": [
+        ["typed_count", "receiver", "EVENT", "MASTER", 1, 0, 65535],
+        ["correct_confirm", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["confirmed_batches", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-NEG/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "Malformed selection and partial response",
+      "input_hex": "C0 01 7A 01 07 00",
+      "checks": [
+        ["rejected_requests", "receiver", "STATE", "OUTSTATION", 6, 0, 65535],
+        ["invalid_deliveries", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["invalid_confirms", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-THRESH/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "reporting equality and immutable occurrence",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["queued", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["report_pending", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-QUEUE/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "bounded overflow drops oldest same-type event",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["overflow_before_clear", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["overflow_after_clear", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-DISCONT/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "failed save marks later G122 events discontinuous permanently",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["retention_recovered", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-065-CLASS/V1": {
+      "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
+      "description": "class configuration and limited class polling",
+      "input_hex": "C0 01 7A 01 06",
+      "checks": [
+        ["selected_classes", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
     "AT-PROFILE-064-READ00/V1": {
       "reference": "Clause 7; 11.9.10; Annex A.46–A.47; Table 12-23; Device Profile p12",
       "description": "Resolve configured G122 variation and drain only confirmed selected events",

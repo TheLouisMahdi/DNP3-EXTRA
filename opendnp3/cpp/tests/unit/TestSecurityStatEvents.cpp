@@ -6,6 +6,7 @@
 #include "outstation/ReadHandler.h"
 #include "outstation/SecurityStatEventPublisher.h"
 #include "utils/OutstationTestObject.h"
+#include "utils/MasterTestFixture.h"
 #include "utils/BufferHelpers.h"
 #include "utils/AcceptanceObservation.h"
 #include "dnp3mocks/MockSOEHandler.h"
@@ -234,6 +235,194 @@ TEST_CASE("AT-PROFILE-064-BAD", "[security-stat-events][rtu-acceptance]")
     if (Selected("V1")) WildcardBadHeaders();
 }
 
+namespace
+{
+void CheckV1Receiver(const MockSOEHandler& soe, unsigned quantity, uint16_t association)
+{
+    REQUIRE(soe.securityStatSOE.size() == quantity);
+    for (unsigned n = 0; n < quantity; ++n)
+    {
+        const auto& record = soe.securityStatSOE[n];
+        REQUIRE(record.meas.index == 0);
+        REQUIRE(record.meas.value.value == 3 * (n + 1));
+        REQUIRE(record.meas.value.flags.value == 0x41);
+        REQUIRE(record.meas.value.associationId == association);
+        REQUIRE_FALSE(record.meas.value.HasTime());
+        REQUIRE(record.info.tsquality == TimestampQuality::INVALID);
+    }
+    Observe("typed_count", soe.securityStatSOE.size());
+}
+
+std::string V1Records(unsigned first, unsigned quantity, bool narrow)
+{
+    const std::string prefix = narrow ? " 00 41 34 12 " : " 00 00 41 00 00 ";
+    const char* wire[] = {"03 00 00 00", "06 00 00 00", "09 00 00 00"};
+    std::string result = std::string("7A 01 ") + (narrow ? "17 0" : "28 0") + std::to_string(quantity);
+    if (!narrow) result += " 00";
+    for (unsigned n = first; n < first + quantity; ++n) result += prefix + wire[n];
+    return result;
+}
+
+void ExplicitV1Read(unsigned qualifier, bool narrow)
+{
+    const auto quantity = qualifier == 6 ? 3u : qualifier == 7 ? 1u : 2u;
+    const std::string encoding = qualifier == 6 ? "06" : qualifier == 7 ? "07 01" : "08 02 00";
+    const auto request = "C0 01 7A 01 " + encoding;
+    const auto expected = std::string(quantity == 3 ? "E0 81 80 00 " : "E0 81 82 00 ") + V1Records(0, quantity, narrow);
+    MasterTestFixture master(NoStartupTasks());
+    REQUIRE(master.context->OnLowerLayerUp());
+    master.context->Scan([qualifier](HeaderWriter& w) {
+        const GroupVariationID gv(122, 1);
+        if (qualifier == 6) return w.WriteHeader(gv, QualifierCode::ALL_OBJECTS);
+        if (qualifier == 7) return w.WriteCountHeader<UInt8>(QualifierCode::UINT8_CNT, gv, 1);
+        return w.WriteCountHeader<UInt16>(QualifierCode::UINT16_CNT, gv, 2);
+    }, master.meas, TaskConfig::Default());
+    master.exe->run_many();
+    REQUIRE(master.lower->PopWriteAsHex() == request);
+    REQUIRE(master.context->OnTxReady());
+    NativeEvents f;
+    if (!narrow)
+    {
+        f.Generate(); f.Generate(); f.Generate();
+        REQUIRE(NativeRequest(f, request) == expected);
+        f.outstation.SendToOutstation("C1 00");
+        f.outstation.SendToOutstation("D0 00");
+        REQUIRE(NativeRequest(f, request) == expected);
+        REQUIRE(f.outstation.application->confirms.empty());
+    }
+    REQUIRE(master.SendToMaster(expected));
+    CheckV1Receiver(*master.meas, quantity, narrow ? 0x1234 : 0);
+    const auto confirm = master.lower->PopWriteAsHex();
+    Observe("correct_confirm", confirm == "C0 00");
+    REQUIRE(confirm == "C0 00");
+    if (!narrow)
+    {
+        f.outstation.SendToOutstation(confirm);
+        const auto remaining = 3 - quantity;
+        const auto follow = NativeRequest(f, "C1 01 7A 01 06");
+        REQUIRE(follow == (remaining ? "E1 81 80 00 " + V1Records(quantity, remaining, false)
+                                    : "C1 81 80 00"));
+        Observe("confirmed_batches", f.outstation.application->confirms.size());
+        REQUIRE(f.outstation.application->confirms.size() == 1);
+        if (remaining) f.outstation.SendToOutstation("C1 00");
+        REQUIRE(NativeRequest(f, "C2 01 7A 01 06") == "C2 81 80 00");
+    }
+}
+
+void ExplicitV1Unsolicited(bool narrow)
+{
+    auto config = NativeEvents::Config();
+    config.params.allowUnsolicited = true;
+    config.params.unsolClassMask = ClassField::AllEventClasses();
+    config.params.unsolConfirmTimeout = TimeDuration::Seconds(1);
+    NativeEvents f(config);
+    MasterTestFixture master(NoStartupTasks());
+    REQUIRE(master.context->OnLowerLayerUp());
+    const auto startup = f.outstation.lower->PopWriteAsHex();
+    REQUIRE(startup == "F0 82 80 00");
+    f.outstation.OnTxReady();
+    REQUIRE(master.SendToMaster(startup));
+    REQUIRE(master.lower->PopWriteAsHex() == "D0 00");
+    REQUIRE(master.context->OnTxReady());
+    f.outstation.SendToOutstation("D0 00");
+    const auto expected = "F1 82 80 00 " + V1Records(0, 1, narrow);
+    if (!narrow)
+    {
+        f.Generate();
+        f.outstation.AdvanceTime(TimeDuration::Milliseconds(1));
+        REQUIRE(f.outstation.lower->PopWriteAsHex() == expected);
+        f.outstation.OnTxReady();
+        f.outstation.SendToOutstation("C1 00");
+        REQUIRE(f.outstation.application->confirms.size() == 1);
+        f.outstation.AdvanceTime(TimeDuration::Seconds(1));
+        REQUIRE(f.outstation.lower->PopWriteAsHex() == expected);
+        f.outstation.OnTxReady();
+    }
+    REQUIRE(master.SendToMaster(expected));
+    CheckV1Receiver(*master.meas, 1, narrow ? 0x1234 : 0);
+    const auto confirm = master.lower->PopWriteAsHex();
+    Observe("correct_confirm", confirm == "D1 00");
+    REQUIRE(confirm == "D1 00");
+    if (!narrow)
+    {
+        f.outstation.SendToOutstation(confirm);
+        Observe("confirmed_batches", f.outstation.application->confirms.size());
+        REQUIRE(f.outstation.application->confirms.size() == 2);
+        REQUIRE(NativeRequest(f, "C0 01 7A 01 06") == "C0 81 80 00");
+    }
+}
+
+void ExplicitV1Negative()
+{
+    NativeEvents f;
+    f.Generate();
+    unsigned rejected = 0;
+    for (const std::string qualifier : {"00 00 00", "17 01 00", "07", "08 01", "07 00", "08 00 00"})
+    {
+        REQUIRE(NativeRequest(f, "C0 01 7A 01 " + qualifier) == "C0 81 82 04");
+        ++rejected;
+    }
+    Observe("rejected_requests", rejected);
+    REQUIRE(NativeRequest(f, "C1 01 7A 01 06") == "E1 81 80 00 " + V1Records(0, 1, false));
+    REQUIRE(f.outstation.application->confirms.empty());
+    f.outstation.SendToOutstation("C1 00");
+    REQUIRE(NativeRequest(f, "C2 01 7A 01 06") == "C2 81 80 00");
+    MasterTestFixture master(NoStartupTasks());
+    REQUIRE(master.context->OnLowerLayerUp());
+    REQUIRE(master.SendToMaster("F0 82 00 00 01 02 00 00 00 81 7A 01 28 01 00 00 00 41"));
+    Observe("invalid_deliveries", master.meas->TotalReceived());
+    Observe("invalid_confirms", !master.lower->HasNoData());
+    REQUIRE(master.meas->TotalReceived() == 0);
+    REQUIRE(master.lower->HasNoData());
+}
+} // namespace
+
+
+TEST_CASE("AT-PROFILE-065-R06Q17", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Read(6, true);
+}
+
+TEST_CASE("AT-PROFILE-065-R06Q28", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Read(6, false);
+}
+
+TEST_CASE("AT-PROFILE-065-R07Q17", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Read(7, true);
+}
+
+TEST_CASE("AT-PROFILE-065-R07Q28", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Read(7, false);
+}
+
+TEST_CASE("AT-PROFILE-065-R08Q17", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Read(8, true);
+}
+
+TEST_CASE("AT-PROFILE-065-R08Q28", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Read(8, false);
+}
+
+TEST_CASE("AT-PROFILE-065-UQ17", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Unsolicited(true);
+}
+
+TEST_CASE("AT-PROFILE-065-UQ28", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Unsolicited(false);
+}
+
+TEST_CASE("AT-PROFILE-065-NEG", "[security-stat-events][rtu-acceptance]")
+{
+    if (Selected("V1")) ExplicitV1Negative();
+}
+
 TEST_CASE("SecurityStatEvents - exact codecs and truncation", "[security-stat-events]")
 {
     SecurityStat value(0x12345678, Flags(0xFF), 0xABCD, DNPTime(0x060504030201ULL));
@@ -297,24 +486,26 @@ TEST_CASE("SecurityStatEvents - generated serializers support both response pref
     }
 }
 
-TEST_CASE("SecurityStatEvents - reporting equality and immutable occurrence", "[security-stat-events]")
+TEST_CASE("AT-PROFILE-065-THRESH", "[security-stat-events]")
 {
     EventsFixture f;
     f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES, 2);
     REQUIRE(f.events.NumEvents(EventClass::EC1) == 0);
     f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     REQUIRE(f.events.NumEvents(EventClass::EC1) == 1);
+    Observe("queued", f.events.NumEvents(EventClass::EC1));
     REQUIRE_FALSE(f.statistics.ReportPending(SecurityStatistic::UNEXPECTED_MESSAGES));
     f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
     f.application.currentTime = DNPTime(99);
     REQUIRE(f.Select("7A 02 06") == IINField::Empty());
     REQUIRE(f.Write() == "E0 81 00 00 7A 02 28 01 00 00 00 41 00 00 03 00 00 00 01 02 03 04 05 06");
+    Observe("report_pending", f.statistics.ReportPending(SecurityStatistic::UNEXPECTED_MESSAGES));
     f.events.Unselect();
     REQUIRE(f.Select("7A 01 06") == IINField::Empty());
     REQUIRE(f.Write() == "E0 81 00 00 7A 01 28 01 00 00 00 41 00 00 03 00 00 00");
 }
 
-TEST_CASE("SecurityStatEvents - failed save marks later G122 events discontinuous permanently",
+TEST_CASE("AT-PROFILE-065-DISCONT",
           "[security-stat-events]")
 {
     auto store = std::make_shared<EventStore>();
@@ -331,6 +522,7 @@ TEST_CASE("SecurityStatEvents - failed save marks later G122 events discontinuou
 
     store->available = true;
     f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES);
+    Observe("retention_recovered", f.statistics.Retained());
     REQUIRE(f.statistics.Retained());
     REQUIRE(f.Select("7A 01 06") == IINField::Empty());
     REQUIRE(f.Write()
@@ -398,7 +590,7 @@ TEST_CASE("SecurityStatEvents - zero capacity preserves baseline and pending sta
     REQUIRE(accepted.NumEvents(EventClass::EC1) == 1);
 }
 
-TEST_CASE("SecurityStatEvents - bounded overflow drops oldest same-type event", "[security-stat-events]")
+TEST_CASE("AT-PROFILE-065-QUEUE", "[security-stat-events]")
 {
     EventsFixture f(1);
     f.Increment(SecurityStatistic::UNEXPECTED_MESSAGES, 6);
@@ -407,7 +599,9 @@ TEST_CASE("SecurityStatEvents - bounded overflow drops oldest same-type event", 
     REQUIRE_FALSE(f.statistics.ReportPending(SecurityStatistic::UNEXPECTED_MESSAGES));
     REQUIRE(f.Select("7A 01 06") == IINField::Empty());
     REQUIRE(f.Write() == "E0 81 00 00 7A 01 28 01 00 00 00 41 00 00 06 00 00 00");
+    Observe("overflow_before_clear", f.events.IsOverflown());
     f.events.ClearWritten();
+    Observe("overflow_after_clear", f.events.IsOverflown());
     REQUIRE_FALSE(f.events.IsOverflown());
 }
 
@@ -460,8 +654,9 @@ TEST_CASE("SecurityStatEvents - rejects forbidden and malformed READ headers", "
     }
 }
 
-TEST_CASE("SecurityStatEvents - class configuration and limited class polling", "[security-stat-events]")
+TEST_CASE("AT-PROFILE-065-CLASS", "[security-stat-events]")
 {
+    unsigned selected = 0;
     for (auto clazz : {PointClass::Class1, PointClass::Class2, PointClass::Class3})
     {
         auto config = NativeEvents::Config();
@@ -474,7 +669,9 @@ TEST_CASE("SecurityStatEvents - class configuration and limited class polling", 
         f.outstation.SendToOutstation(poll);
         REQUIRE(f.outstation.lower->PopWriteAsHex()
                 == "E0 81 80 00 7A 02 28 01 00 00 00 41 00 00 03 00 00 00 01 02 03 04 05 06");
+        ++selected;
     }
+    Observe("selected_classes", selected);
     for (auto clazz : {PointClass::Class0, static_cast<PointClass>(0xFF)})
     {
         auto config = NativeEvents::Config();
