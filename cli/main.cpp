@@ -1029,12 +1029,18 @@ struct LocalPoints
 class OutstationApplication final : public DefaultOutstationApplication
 {
     mutable std::mutex mutex;
+    const bool rtuIoProfile;
 public:
+    explicit OutstationApplication(bool rtuIoProfile) : rtuIoProfile(rtuIoProfile) {}
+
     DNPTime Now() override { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::Now(); }
     bool WriteAbsoluteTime(const UTCTimestamp& time) override
     { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::WriteAbsoluteTime(time); }
     bool ClearNeedTime() override
-    { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::ClearNeedTime(); }
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return !rtuIoProfile && DefaultOutstationApplication::ClearNeedTime();
+    }
     ApplicationIIN GetApplicationIIN() const override
     { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::GetApplicationIIN(); }
     void RecordClassAssignment(AssignClassType type, PointClass clazz, uint16_t start, uint16_t stop) override
@@ -1106,7 +1112,7 @@ int RunOutstation(const diagnostic::Options& o)
         config.outstation.params.numUnsolRetries = NumRetries::Fixed(o.unsolRetries);
     ConfigureLink(config.link, o);
     config.link.KeepAliveTimeout = TimeDuration::Max();
-    auto application = std::make_shared<OutstationApplication>();
+    auto application = std::make_shared<OutstationApplication>(o.rtuIoProfile);
     if (o.trustedTime) application->WriteAbsoluteTime(UTCTimestamp(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())));
     auto commands = std::make_shared<SimulatedCommands>(o);
     auto outstation = channel->AddOutstation("cli-outstation-stack", commands, application, config);

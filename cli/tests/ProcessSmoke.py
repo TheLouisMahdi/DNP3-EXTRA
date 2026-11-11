@@ -1094,6 +1094,34 @@ def profile_binary_wire(exe):
         stop(out)
     print("PASS binary profile: real TCP READ, ASSIGN_CLASS and G0 attributes", flush=True)
     profile_binary_event_wire(exe)
+    profile_iin_write_wire(exe)
+
+
+def profile_iin_write_wire(exe):
+    """Check the RTU's G80V1 write policy over FT3/TCP."""
+    for rtu_profile in (True, False):
+        options = ["--auth", "compat", *loopback_port()]
+        port = int(options[-1])
+        if rtu_profile:
+            options.append("--rtu-io-profile")
+        out = Peer(exe, "outstation", options)
+        try:
+            out.wait(r"\[HELP\]")
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+                exchanges = (
+                    ("02 50 01 00 04 04 00", "90 01" if rtu_profile else "80 00"),
+                    ("02 50 01 01 07 00 07 00 00", "90 04" if rtu_profile else "80 04"),
+                    ("01 50 01 00 07 07", ("90" if rtu_profile else "80") + " 00 50 01 00 07 07 01"),
+                    ("02 50 01 00 07 07 00", "10 00" if rtu_profile else "00 00"),
+                )
+                for seq, (request, expected) in enumerate(exchanges):
+                    control = 0xC0 | seq
+                    raw.sendall(f01_link_frame(bytes([control]) + bytes.fromhex(request), seq))
+                    _, response = f01_receive_apdu(raw)
+                    assert response == bytes([control, 0x81]) + bytes.fromhex(expected), (request, response.hex(" "))
+        finally:
+            stop(out)
+    print("PASS G80V1 WRITE qualifier and selected index policy over real TCP", flush=True)
 
 
 def profile_binary_event_wire(exe):
