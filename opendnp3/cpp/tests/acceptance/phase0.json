@@ -1,6 +1,62 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-PROFILE-043-ASSIGN": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-043-ILLEGAL": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-044-ASSIGN": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-044-ILLEGAL": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-044-ENABLE": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-044-DISABLE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-045-ASSIGN": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-045-ILLEGAL": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-045-ENABLE": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-045-DISABLE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-PROFILE-046-ASSIGN": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-046-ILLEGAL": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-046-ENABLE": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-PROFILE-046-DISABLE": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
     "AT-PROFILE-041-RESTART": {
       "kind": "unit",
       "vectors": ["V1", "V2"]
@@ -1870,6 +1926,154 @@
     }
   },
   "fixtures": {
+    "AT-PROFILE-043-ASSIGN/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.1; Device Profile p9",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 16 3C 01 06 01 00 06 03 00 06 3C 04 06 1E 00 06",
+      "checks": [
+        ["assignments", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-043-ILLEGAL/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.1; Device Profile p9",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 14 3C 01 07 01",
+      "checks": [
+        ["invalid_headers", "receiver", "STATE", "OUTSTATION", 16, 0, 65535],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-044-ASSIGN/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.2; Device Profile p9",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 16 3C 02 06 01 00 06 03 00 06 3C 04 06 1E 00 06",
+      "checks": [
+        ["assignments", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-044-ILLEGAL/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.2; Device Profile p9",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 14 3C 02 07 01",
+      "checks": [
+        ["invalid_headers", "receiver", "STATE", "OUTSTATION", 14, 0, 65535],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-044-ENABLE/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.2; Device Profile p9",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C1 14 3C 02 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-044-DISABLE/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.2; Device Profile p9",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C1 15 3C 02 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-044-DISABLE/V2": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.2; Device Profile p9",
+      "description": "Disable target class while its first event is awaiting confirmation",
+      "input_hex": "C1 15 3C 02 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-045-ASSIGN/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.3; Device Profile p9|10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 16 3C 03 06 01 00 06 03 00 06 3C 04 06 1E 00 06",
+      "checks": [
+        ["assignments", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-045-ILLEGAL/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.3; Device Profile p9|10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 14 3C 03 07 01",
+      "checks": [
+        ["invalid_headers", "receiver", "STATE", "OUTSTATION", 14, 0, 65535],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-045-ENABLE/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.3; Device Profile p9|10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C1 14 3C 03 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-045-DISABLE/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.3; Device Profile p9|10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C1 15 3C 03 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-045-DISABLE/V2": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.3; Device Profile p9|10",
+      "description": "Disable target class while its first event is awaiting confirmation",
+      "input_hex": "C1 15 3C 03 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-046-ASSIGN/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.4; Device Profile p10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 16 3C 04 06 01 00 06 03 00 06 3C 04 06 1E 00 06",
+      "checks": [
+        ["assignments", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-046-ILLEGAL/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.4; Device Profile p10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C0 14 3C 04 07 01",
+      "checks": [
+        ["invalid_headers", "receiver", "STATE", "OUTSTATION", 14, 0, 65535],
+        ["assignments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-046-ENABLE/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.4; Device Profile p10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C1 14 3C 04 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-046-DISABLE/V1": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.4; Device Profile p10",
+      "description": "Receiver class routing and event retention",
+      "input_hex": "C1 15 3C 04 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-PROFILE-046-DISABLE/V2": {
+      "reference": "4.1.5.3; 4.4.2.1; 4.4.13–4.4.14; Annex A.26.4; Device Profile p10",
+      "description": "Disable target class while its first event is awaiting confirmation",
+      "input_hex": "C1 15 3C 04 06",
+      "checks": [
+        ["matching_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
     "AT-PROFILE-041-RESTART/V1": {
       "reference": "Annex A.25.1; Table 12-23; 4.4.9 (restart); 4.4.15 and 10.3 (delay); Device Profile p9",
       "description": "Master receives delay after exactly one Outstation restart hook",

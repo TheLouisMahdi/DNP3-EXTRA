@@ -1123,6 +1123,192 @@ void ReadReject(unsigned group, unsigned variation, bool event, std::initializer
     CheckFrame("unchanged_readback", reply, expected);
     CheckPoints(group, reply, points, event && ((group != 32 && variation != 1) || (group == 32 && variation == 4)));
 }
+std::string ClassSelector(unsigned clazz)
+{
+    return "3C 0" + std::to_string(clazz + 1) + " 06";
+}
+
+std::string ClassIin(unsigned classes)
+{
+    return std::string("8") + "0123456789ABCDEF"[classes];
+}
+
+void ClassAssignmentRouting(unsigned clazz)
+{
+    OutstationConfig cfg;
+    cfg.eventBufferConfig = EventBufferConfig::AllTypes(5);
+    const unsigned originalClass = clazz == 1 ? 2 : 1;
+    const auto dbClass = static_cast<PointClass>(1u << originalClass);
+    auto db = Points(1, 2, {{7, 0, 1}});
+    db.binary_input[7].clazz = dbClass;
+    db.double_binary[8].clazz = dbClass;
+    db.double_binary[8].evariation = EventDoubleBinaryVariation::Group4Var1;
+    db.analog_input[9].evariation = EventAnalogVariation::Group32Var1;
+    OutstationTestObject t(cfg, db);
+    t.application->supportsAssignClass = true;
+    t.LowerLayerUp();
+    Update(t, 1, {{7, 0, 1}}, true);
+    const auto request = "C0 16 " + ClassSelector(clazz) + " 01 00 06 03 00 06 "
+        + ClassSelector(3) + " 1E 00 06";
+    REQUIRE(Request(t, request.c_str()) == "C0 81 " + ClassIin(1u << originalClass) + " 00");
+    const auto& assignments = t.application->classAssignments;
+    REQUIRE(assignments.size() == 3);
+    const auto target = static_cast<PointClass>(1u << clazz);
+    REQUIRE(assignments[0] == std::make_tuple(AssignClassType::BinaryInput, target, 7, 7));
+    REQUIRE(assignments[1] == std::make_tuple(AssignClassType::DoubleBinaryInput, target, 8, 8));
+    REQUIRE(assignments[2] == std::make_tuple(AssignClassType::AnalogInput, PointClass::Class3, 9, 9));
+    Observe("assignments", assignments.size());
+
+    REQUIRE(Request(t, ("C1 01 " + ClassSelector(originalClass)).c_str())
+            == "E1 81 80 00 02 01 28 01 00 07 00 01");
+    t.SendToOutstation("C1 00");
+    Update(t, 1, {{7, 1, 1}}, true);
+    Update(t, 4, {{8, 2, 1}}, true);
+    const auto selected = clazz ? ClassSelector(clazz) : "3C 02 06 3C 03 06 3C 04 06";
+    const auto routed = Request(t, ("C2 01 " + selected).c_str());
+    REQUIRE(routed == (clazz ? "E2 81 80 00 02 01 28 01 00 07 00 81 04 01 28 01 00 08 00 81"
+                             : "C2 81 80 00"));
+    if (clazz) t.SendToOutstation("C2 00");
+    Update(t, 32, {{9, 17, 1}}, true);
+    REQUIRE(Request(t, "C3 01 3C 04 06") == "E3 81 80 00 20 01 28 01 00 09 00 01 11 00 00 00");
+    t.SendToOutstation("C3 00");
+    REQUIRE(Request(t, "C4 01 01 02 00 07 07") == "C4 81 80 00 01 02 00 07 07 81");
+    Observe("matching_confirms", t.application->confirms.size());
+    REQUIRE(t.application->confirms.size() == (clazz ? 3 : 2));
+}
+
+void ClassUnsolicitedMask(unsigned clazz, bool disable)
+{
+    OutstationConfig cfg;
+    cfg.params.allowUnsolicited = true;
+    cfg.params.unsolConfirmTimeout = TimeDuration::Seconds(1);
+    cfg.eventBufferConfig = EventBufferConfig::AllTypes(5);
+    const unsigned other = clazz == 1 ? 2 : 1;
+    auto db = Points(1, 2, {{7, 0, 1},{8, 0, 1}});
+    db.binary_input[7].clazz = static_cast<PointClass>(1u << clazz);
+    db.binary_input[8].clazz = static_cast<PointClass>(1u << other);
+    OutstationTestObject t(cfg, db);
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == "F0 82 80 00");
+    t.OnTxReady();
+    t.SendToOutstation("D0 00");
+    const auto target = ClassSelector(clazz);
+    const auto unrelated = ClassSelector(other);
+    if (disable)
+    {
+        REQUIRE(Request(t, ("C0 14 " + target + " " + unrelated).c_str()) == "C0 81 80 00");
+        REQUIRE(Request(t, ("C1 15 " + target).c_str()) == "C1 81 80 00");
+    }
+    Update(t, 1, {{7, 1, 1}}, true);
+    REQUIRE(t.lower->HasNoData());
+    Update(t, 1, {{8, 1, 1}}, true);
+    if (!disable)
+    {
+        REQUIRE(t.lower->HasNoData());
+        REQUIRE(Request(t, ("C1 14 " + target).c_str())
+                == "C1 81 " + ClassIin((1u << clazz) | (1u << other)) + " 00");
+    }
+    const auto retained = disable ? clazz : other;
+    const auto transmitted = disable ? "08" : "07";
+    const auto unsol = "F1 82 " + ClassIin(1u << retained) + " 00 02 01 28 01 00 " + transmitted + " 00 81";
+    REQUIRE(t.lower->PopWriteAsHex() == unsol);
+    t.OnTxReady();
+    t.SendToOutstation("C1 00");
+    REQUIRE(t.application->confirms.size() == 1);
+    t.AdvanceTime(TimeDuration::Seconds(1));
+    REQUIRE(t.lower->PopWriteAsHex() == unsol);
+    t.OnTxReady();
+    t.SendToOutstation("D1 00");
+    const auto remaining = disable ? "07" : "08";
+    REQUIRE(Request(t, ("C2 01 " + ClassSelector(retained)).c_str())
+            == std::string("E2 81 80 00 02 01 28 01 00 ") + remaining + " 00 81");
+    t.SendToOutstation("C2 00");
+    REQUIRE(Request(t, ("C3 01 " + target + " " + unrelated).c_str()) == "C3 81 80 00");
+    Observe("matching_confirms", t.application->confirms.size());
+    REQUIRE(t.application->confirms.size() == 3);
+}
+
+void DisableDuringUnsolicited(unsigned clazz)
+{
+    OutstationConfig cfg;
+    cfg.params.allowUnsolicited = true;
+    cfg.params.unsolConfirmTimeout = TimeDuration::Seconds(1);
+    cfg.eventBufferConfig = EventBufferConfig::AllTypes(5);
+    auto db = Points(1, 2, {{7, 0, 1}});
+    db.binary_input[7].clazz = static_cast<PointClass>(1u << clazz);
+    OutstationTestObject t(cfg, db);
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == "F0 82 80 00");
+    t.OnTxReady();
+    t.SendToOutstation("D0 00");
+    const auto selector = ClassSelector(clazz);
+    REQUIRE(Request(t, ("C0 14 " + selector).c_str()) == "C0 81 80 00");
+    Update(t, 1, {{7, 1, 1}}, true);
+    const std::string original = "F1 82 80 00 02 01 28 01 00 07 00 81";
+    REQUIRE(t.lower->PopWriteAsHex() == original);
+    t.OnTxReady();
+    REQUIRE(Request(t, ("C1 15 " + selector).c_str()) == "C1 81 80 00");
+    Update(t, 1, {{7, 0, 1}}, true);
+    t.SendToOutstation("C1 00");
+    REQUIRE(t.application->confirms.size() == 1);
+    t.AdvanceTime(TimeDuration::Seconds(1));
+    REQUIRE(t.lower->PopWriteAsHex() == original);
+    t.OnTxReady();
+    t.SendToOutstation("D1 00");
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(Request(t, ("C2 01 " + selector).c_str()) == "E2 81 80 00 02 01 28 01 00 07 00 01");
+    t.SendToOutstation("C2 00");
+    Observe("matching_confirms", t.application->confirms.size());
+    REQUIRE(t.application->confirms.size() == 3);
+}
+
+void IllegalClassHeaders(unsigned clazz)
+{
+    OutstationConfig cfg;
+    cfg.params.allowUnsolicited = true;
+    cfg.eventBufferConfig = EventBufferConfig::AllTypes(5);
+    auto db = Points(1, 2, {{7, 0, 1}});
+    const auto normalClass = clazz == 0 ? 1u : clazz;
+    db.binary_input[7].clazz = static_cast<PointClass>(1u << normalClass);
+    OutstationTestObject t(cfg, db);
+    t.application->supportsAssignClass = true;
+    t.LowerLayerUp();
+    REQUIRE(t.lower->PopWriteAsHex() == "F0 82 80 00");
+    t.OnTxReady();
+    t.SendToOutstation("D0 00");
+    const auto header = "3C 0" + std::to_string(clazz + 1);
+    unsigned invalid = 0;
+    for (const std::string function : {"14", "15", "16"})
+    {
+        for (const std::string qualifier : {"00 00 01", "01 00 00 01 00", "07 01", "08 01 00"})
+        {
+            const auto req = "C0 " + function + " " + header + " " + qualifier;
+            const auto iin = function == "16" && (qualifier[1] == '7' || qualifier[1] == '8') ? "01" : "04";
+            REQUIRE(Request(t, req.c_str()) == std::string("C0 81 80 ") + iin);
+            ++invalid;
+        }
+    }
+    if (clazz == 0)
+    {
+        REQUIRE(Request(t, "C0 14 3C 01 06") == "C0 81 80 01");
+        REQUIRE(Request(t, "C0 15 3C 01 06") == "C0 81 80 01");
+        invalid += 2;
+    }
+    REQUIRE(Request(t, ("C1 16 " + header + " 06").c_str()) == "C1 81 80 04");
+    REQUIRE(Request(t, ("C2 16 " + header + " 06 01 00 06 3C").c_str()) == "C2 81 80 04");
+    invalid += 2;
+    REQUIRE(t.application->classAssignments.empty());
+    Update(t, 1, {{7, 1, 1}}, true);
+    REQUIRE(t.lower->HasNoData());
+    REQUIRE(Request(t, ("C3 01 " + ClassSelector(normalClass)).c_str())
+            == "E3 81 80 00 02 01 28 01 00 07 00 81");
+    t.SendToOutstation("C3 00");
+    Observe("invalid_headers", invalid);
+    Observe("assignments", t.application->classAssignments.size());
+    Observe("matching_confirms", t.application->confirms.size());
+    REQUIRE(t.application->confirms.size() == 2);
+}
+
 void ClassRead(unsigned clazz, bool counted, std::initializer_list<Point> points,
                std::initializer_list<Point> selected, const char* request, const char* expected,
                const char* otherRequest, const char* otherExpected)

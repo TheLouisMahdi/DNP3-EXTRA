@@ -2158,10 +2158,41 @@ TEST_CASE("AT-PROFILE-030-NEG", "[rtu-acceptance]")
         RejectMeasurement("20 05 28 01 00 07");
 }
 
+TEST_CASE("AT-PROFILE-043-ASSIGN", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassAssignmentRouting(0);
+}
+
+TEST_CASE("AT-PROFILE-043-ILLEGAL", "[rtu-acceptance]")
+{
+    if (Selected("V1")) IllegalClassHeaders(0);
+}
+
 TEST_CASE("AT-PROFILE-043-READ06", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         ClassRead(0, false, {{7, 1, 1}, {8, 0, 1}, {9, 1, 1}}, {{7, 1, 1}, {8, 0, 1}, {9, 1, 1}, {30, 1, 1}}, "C0 01 3C 01 06", "C0 81 82 00 01 02 00 07 09 81 01 81 01 02 00 1E 1E 81", "C1 01 3C 02 06", "E1 81 80 00 02 01 28 01 00 1E 00 81");
+}
+
+TEST_CASE("AT-PROFILE-044-ASSIGN", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassAssignmentRouting(1);
+}
+
+TEST_CASE("AT-PROFILE-044-ILLEGAL", "[rtu-acceptance]")
+{
+    if (Selected("V1")) IllegalClassHeaders(1);
+}
+
+TEST_CASE("AT-PROFILE-044-ENABLE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassUnsolicitedMask(1, false);
+}
+
+TEST_CASE("AT-PROFILE-044-DISABLE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassUnsolicitedMask(1, true);
+    if (Selected("V2")) DisableDuringUnsolicited(1);
 }
 
 TEST_CASE("AT-PROFILE-044-READ06", "[rtu-acceptance]")
@@ -2182,6 +2213,27 @@ TEST_CASE("AT-PROFILE-044-READ08", "[rtu-acceptance]")
         ClassRead(1, true, {{7, 1, 1}, {8, 0, 1}, {9, 1, 1}}, {{7, 1, 1}, {8, 0, 1}}, "C0 01 3C 02 08 02 00", "E0 81 86 00 02 01 28 02 00 07 00 81 08 00 01", "C1 01 3C 03 06", "E1 81 82 00 02 01 28 01 00 1E 00 81");
 }
 
+TEST_CASE("AT-PROFILE-045-ASSIGN", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassAssignmentRouting(2);
+}
+
+TEST_CASE("AT-PROFILE-045-ILLEGAL", "[rtu-acceptance]")
+{
+    if (Selected("V1")) IllegalClassHeaders(2);
+}
+
+TEST_CASE("AT-PROFILE-045-ENABLE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassUnsolicitedMask(2, false);
+}
+
+TEST_CASE("AT-PROFILE-045-DISABLE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassUnsolicitedMask(2, true);
+    if (Selected("V2")) DisableDuringUnsolicited(2);
+}
+
 TEST_CASE("AT-PROFILE-045-READ06", "[rtu-acceptance]")
 {
     if (Selected("V1"))
@@ -2198,6 +2250,27 @@ TEST_CASE("AT-PROFILE-045-READ08", "[rtu-acceptance]")
 {
     if (Selected("V1"))
         ClassRead(2, true, {{7, 1, 1}, {8, 0, 1}, {9, 1, 1}}, {{7, 1, 1}, {8, 0, 1}}, "C0 01 3C 03 08 02 00", "E0 81 86 00 02 01 28 02 00 07 00 81 08 00 01", "C1 01 3C 02 06", "E1 81 84 00 02 01 28 01 00 1E 00 81");
+}
+
+TEST_CASE("AT-PROFILE-046-ASSIGN", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassAssignmentRouting(3);
+}
+
+TEST_CASE("AT-PROFILE-046-ILLEGAL", "[rtu-acceptance]")
+{
+    if (Selected("V1")) IllegalClassHeaders(3);
+}
+
+TEST_CASE("AT-PROFILE-046-ENABLE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassUnsolicitedMask(3, false);
+}
+
+TEST_CASE("AT-PROFILE-046-DISABLE", "[rtu-acceptance]")
+{
+    if (Selected("V1")) ClassUnsolicitedMask(3, true);
+    if (Selected("V2")) DisableDuringUnsolicited(3);
 }
 
 TEST_CASE("AT-PROFILE-046-READ06", "[rtu-acceptance]")

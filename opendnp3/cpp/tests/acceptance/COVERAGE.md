@@ -1,6 +1,6 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 294 Host scenarios have executable bindings (541 vectors). 147 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 308 Host scenarios have executable bindings (558 vectors). 133 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
@@ -45,10 +45,10 @@ A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The re
 | PROFILE-040 | `F129G2`, `F129G4`, `F130G2`, `F130G4`, `NEG` | — | — |
 | PROFILE-041 | `RESTART`, `NEG` | — | `RTU` |
 | PROFILE-042 | `DELAY`, `RESTART`, `NEG` | — | `MEASURED` |
-| PROFILE-043 | `READ06` | `ASSIGN`, `ILLEGAL` | — |
-| PROFILE-044 | `READ06`, `READ07`, `READ08` | `ASSIGN`, `ENABLE`, `DISABLE`, `ILLEGAL` | — |
-| PROFILE-045 | `READ06`, `READ07`, `READ08` | `ASSIGN`, `ENABLE`, `DISABLE`, `ILLEGAL` | — |
-| PROFILE-046 | `READ06`, `READ07`, `READ08` | `ASSIGN`, `ENABLE`, `DISABLE`, `ILLEGAL` | — |
+| PROFILE-043 | `READ06`, `ASSIGN`, `ILLEGAL` | — | — |
+| PROFILE-044 | `READ06`, `READ07`, `READ08`, `ASSIGN`, `ILLEGAL`, `ENABLE`, `DISABLE` | — | — |
+| PROFILE-045 | `READ06`, `READ07`, `READ08`, `ASSIGN`, `ILLEGAL`, `ENABLE`, `DISABLE` | — | — |
+| PROFILE-046 | `READ06`, `READ07`, `READ08`, `ASSIGN`, `ILLEGAL`, `ENABLE`, `DISABLE` | — | — |
 | PROFILE-063 | `RX00`, `RX01`, `RX17`, `RX28` | `READ00`, `READ01`, `READ06`, `READ17`, `READ28`, `IIN`, `SNAP`, `RET` | `WIDE-TX` |
 | PROFILE-064 | — | `READ00`, `READ01`, `READ06`, `READ17`, `READ28`, `BAD` | — |
 | PROFILE-065 | — | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `THRESH`, `QUEUE`, `DISCONT`, `CLASS`, `TCP` | `Q17-TX` |
