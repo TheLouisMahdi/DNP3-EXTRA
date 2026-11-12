@@ -1,6 +1,22 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-SEC-T1-07-CONFIG": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7"]
+    },
+    "AT-SEC-T1-07-ISOLATION": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-SEC-T1-07-FAIL": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-SEC-T1-07-TCP": {
+      "kind": "integration",
+      "vectors": ["V1"]
+    },
     "AT-CFG-14-MIX": {
       "kind": "unit",
       "vectors": ["V1"]
@@ -2346,6 +2362,96 @@
     }
   },
   "fixtures": {
+    "AT-SEC-T1-07-CONFIG/V1": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 2, 0, 65535],
+        ["session_lifetime_ms", "receiver", "TIMEOUT", "MASTER", 900000, 0, 10000000]
+      ]
+    },
+    "AT-SEC-T1-07-CONFIG/V2": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 2, 0, 65535],
+        ["session_lifetime_ms", "receiver", "TIMEOUT", "MASTER", 7200000, 0, 10000000]
+      ]
+    },
+    "AT-SEC-T1-07-CONFIG/V3": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 2, 0, 65535],
+        ["session_lifetime_ms", "receiver", "TIMEOUT", "MASTER", 901000, 0, 10000000]
+      ]
+    },
+    "AT-SEC-T1-07-CONFIG/V4": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-07-CONFIG/V5": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-07-CONFIG/V6": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 2, 0, 65535],
+        ["session_lifetime_ms", "receiver", "TIMEOUT", "MASTER", 10000000, 0, 10000000]
+      ]
+    },
+    "AT-SEC-T1-07-CONFIG/V7": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Whole-second generic session renewal bounds and selected interval configuration.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["loaded_roles", "receiver", "STATE", "RUNNER", 2, 0, 65535],
+        ["session_lifetime_ms", "receiver", "TIMEOUT", "MASTER", 899000, 0, 10000000]
+      ]
+    },
+    "AT-SEC-T1-07-ISOLATION/V1": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Two users installed at different times; asymmetric role intervals, rekey and disconnect.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["other_user_deadline", "receiver", "TIMEOUT", "OUTSTATION", 901600, 0, 10000000],
+        ["changed_user_epochs", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["ready_users_after_reconnect", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-07-FAIL/V1": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "At expiry, corrupted and replayed V6 cannot install keys; fresh negotiation restores both.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["usable_keys_after_bad_renewal", "receiver", "STATE", "RUNNER", 0, 0, 65535],
+        ["usable_keys_after_fresh_exchange", "receiver", "STATE", "RUNNER", 2, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-07-TCP/V1": {
+      "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
+      "description": "Two real TCP commands bracket elapsed renewal, with a fresh key installation for both users.",
+      "input_hex": "C0 20 78 04 07 01 02 00",
+      "checks": [
+        ["master_key_changes", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["outstation_key_changes", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["receiver_actuations", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
     "AT-CFG-14-MIX/V1": {
       "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
       "description": "Timed events across fragments share an APDU with static points; only correlated confirmations remove events.",

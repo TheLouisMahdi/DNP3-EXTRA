@@ -1178,3 +1178,27 @@ TEST_CASE("AT-SEC-T1-07-T16", "[rtu-acceptance]") { AcceptanceInterval(960000); 
 TEST_CASE("AT-SEC-T1-07-T30", "[rtu-acceptance]") { AcceptanceInterval(1800000); }
 TEST_CASE("AT-SEC-T1-07-T60", "[rtu-acceptance]") { AcceptanceInterval(3600000); }
 TEST_CASE("AT-SEC-T1-07-T120", "[rtu-acceptance]") { AcceptanceInterval(7200000); }
+
+TEST_CASE("AT-SEC-T1-07-FAIL", "[rtu-acceptance][session-keys][sa-renewal]")
+{
+    KeyPair pair;
+    pair.Exchange();
+    const auto prior = pair.change;
+    const auto deadline = pair.master.ValidUntil();
+    REQUIRE(pair.outstation.ValidUntil() == deadline);
+    pair.now = deadline;
+    pair.ToChange();
+    pair.change.bytes[pair.change.size - 1] ^= 1;
+    REQUIRE(pair.outstation.Process(7, pair.change.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            != R::INSTALLED);
+    REQUIRE(pair.outstation.Process(7, prior.Read(), pair.now, pair.confirmation.Write(), pair.confirmation.size)
+            != R::INSTALLED);
+    REQUIRE(pair.master.ControlKey(pair.now).is_empty());
+    REQUIRE(pair.outstation.ControlKey(pair.now).is_empty());
+    acceptance::Observe("usable_keys_after_bad_renewal", unsigned(pair.master.Ready(pair.now))
+                                                          + unsigned(pair.outstation.Ready(pair.now)));
+    pair.now += pair.config.replyTimeoutMs;
+    pair.Exchange();
+    acceptance::Observe("usable_keys_after_fresh_exchange", unsigned(pair.master.Ready(pair.now))
+                                                             + unsigned(pair.outstation.Ready(pair.now)));
+}

@@ -1008,10 +1008,13 @@ TEST_CASE("SecureAuthenticationTCP - default and configured counts replace each 
     pair.Read(); pair.Control();
 }
 
-TEST_CASE("SecureAuthenticationTCP - elapsed interval installs replacement keys", "[sa-tcp][sa-renewal-tcp]")
+TEST_CASE("AT-SEC-T1-07-TCP", "[rtu-acceptance][sa-tcp][sa-renewal-tcp]")
 {
     const uint32_t interval = 3000;
     RenewalTcpPair pair(1000, interval);
+    pair.Read();
+    pair.Control();
+    REQUIRE(pair.commands->operated.load() == 1);
     const auto m = pair.master->GetAuthenticationStatus(), o = pair.outstation->GetAuthenticationStatus();
     const auto wire = pair.trace->Counts();
     pair.Until([&] {
@@ -1022,8 +1025,17 @@ TEST_CASE("SecureAuthenticationTCP - elapsed interval installs replacement keys"
     REQUIRE(pair.trace->Counts().first >= wire.first + 2);
     REQUIRE(pair.trace->Counts().second >= wire.second + 2);
     REQUIRE(pair.trace->LastRequest() >= pair.enabled + std::chrono::milliseconds(interval));
-    REQUIRE(pair.commands->operated.load() == 0);
-    pair.Read(); pair.Control();
+    REQUIRE(pair.commands->operated.load() == 1);
+    const auto masterChanges = KeyChanges(pair.master->GetAuthenticationStatus()) - KeyChanges(m);
+    const auto outstationChanges = KeyChanges(pair.outstation->GetAuthenticationStatus()) - KeyChanges(o);
+    REQUIRE(masterChanges == 2);
+    REQUIRE(outstationChanges == 2);
+    acceptance::Observe("master_key_changes", masterChanges);
+    acceptance::Observe("outstation_key_changes", outstationChanges);
+    pair.Read();
+    pair.Control();
+    REQUIRE(pair.commands->operated.load() == 2);
+    acceptance::Observe("receiver_actuations", pair.commands->operated.load());
 }
 
 TEST_CASE("SecureAuthenticationTCP - interrupted renewal cannot authorize and reconnect negotiates fresh keys", "[sa-tcp][sa-renewal-tcp]")

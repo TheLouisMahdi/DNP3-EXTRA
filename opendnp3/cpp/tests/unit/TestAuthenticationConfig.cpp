@@ -1,6 +1,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root.
 #include "auth/AuthenticationSession.h"
 #include "crypto/CryptoProvider.h"
+#include "utils/AcceptanceObservation.h"
 
 #include "opendnp3/auth/WindowsAuthenticationCredentials.h"
 
@@ -60,17 +61,17 @@ AuthenticationConfig Config(const std::shared_ptr<Credentials>& source, const st
     c.authorization = policy;
     return c;
 }
-void Exchange(SessionKeys& master, SessionKeys& outstation)
+void Exchange(SessionKeys& master, SessionKeys& outstation, uint64_t now = 1000)
 {
     std::array<uint8_t, 2048> a{}, b{};
     size_t na = 0, nb = 0;
-    REQUIRE(master.Begin(7, 0, 1000, wseq_t(a.data(), a.size()), na) == SessionKeys::Result::OK);
-    REQUIRE(outstation.Process(7, rseq_t(a.data(), na), 1000, wseq_t(b.data(), b.size()), nb)
+    REQUIRE(master.Begin(7, 0, now, wseq_t(a.data(), a.size()), na) == SessionKeys::Result::OK);
+    REQUIRE(outstation.Process(7, rseq_t(a.data(), na), now, wseq_t(b.data(), b.size()), nb)
             == SessionKeys::Result::OK);
-    REQUIRE(master.Process(7, rseq_t(b.data(), nb), 1000, wseq_t(a.data(), a.size()), na) == SessionKeys::Result::OK);
-    REQUIRE(outstation.Process(7, rseq_t(a.data(), na), 1000, wseq_t(b.data(), b.size()), nb)
+    REQUIRE(master.Process(7, rseq_t(b.data(), nb), now, wseq_t(a.data(), a.size()), na) == SessionKeys::Result::OK);
+    REQUIRE(outstation.Process(7, rseq_t(a.data(), na), now, wseq_t(b.data(), b.size()), nb)
             == SessionKeys::Result::INSTALLED);
-    REQUIRE(master.Process(7, rseq_t(b.data(), nb), 1000, wseq_t(a.data(), a.size()), na)
+    REQUIRE(master.Process(7, rseq_t(b.data(), nb), now, wseq_t(a.data(), a.size()), na)
             == SessionKeys::Result::INSTALLED);
     crypto::Clear(wseq_t(a.data(), a.size()));
     crypto::Clear(wseq_t(b.data(), b.size()));
@@ -252,4 +253,83 @@ TEST_CASE("AuthenticationConfig - invalid renewal settings fail closed for both 
     REQUIRE_FALSE(session.Load(1000));
     REQUIRE_FALSE(session.Find(1)->Ready(1000));
     REQUIRE_FALSE(session.Find(2)->Ready(1000));
+}
+
+
+TEST_CASE("AT-SEC-T1-07-CONFIG", "[rtu-acceptance][auth-config][sa-renewal]")
+{
+    const std::array<uint32_t, 7> intervals{{900000, 7200000, 901000, 899999, 7200001, 0, 899000}};
+    for (size_t i = 0; i < intervals.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        auto source = std::make_shared<Credentials>();
+        auto config = Config(source, std::make_shared<Authorization>());
+        config.renewalIntervalMs = intervals[i];
+        AuthenticationSession master(SessionKeys::Role::MASTER, config), outstation(SessionKeys::Role::OUTSTATION, config);
+        const auto masterLoaded = master.Load(1000);
+        const auto outstationLoaded = outstation.Load(1000);
+        const bool accepted = i != 3 && i != 4;
+        REQUIRE(masterLoaded == accepted);
+        REQUIRE(outstationLoaded == accepted);
+        acceptance::Observe("loaded_roles", unsigned(masterLoaded) + unsigned(outstationLoaded));
+        if (!accepted)
+        {
+            REQUIRE_FALSE(master.Find(2)->Ready(1000));
+            REQUIRE_FALSE(outstation.Find(2)->Ready(1000));
+            REQUIRE_FALSE(outstation.Authorize(2, 3, 1000));
+            continue;
+        }
+        Exchange(*master.Find(2), *outstation.Find(2));
+        const uint64_t lifetime = intervals[i] ? intervals[i] : source->expiry;
+        REQUIRE(master.Find(2)->ValidUntil() == 1000 + lifetime);
+        REQUIRE(outstation.Find(2)->ValidUntil() == 1000 + lifetime);
+        REQUIRE(outstation.Authorize(2, 3, 1000 + lifetime - 1));
+        REQUIRE_FALSE(outstation.Authorize(2, 3, 1000 + lifetime));
+        acceptance::Observe("session_lifetime_ms", master.Find(2)->ValidUntil() - 1000);
+    }
+}
+
+TEST_CASE("AT-SEC-T1-07-ISOLATION", "[rtu-acceptance][auth-config][sa-renewal]")
+{
+    auto masterConfig = Config(std::make_shared<Credentials>(), std::make_shared<Authorization>());
+    auto outstationConfig = masterConfig;
+    masterConfig.renewalIntervalMs = 901000;
+    outstationConfig.renewalIntervalMs = 900000;
+    AuthenticationSession master(SessionKeys::Role::MASTER, masterConfig), outstation(SessionKeys::Role::OUTSTATION, outstationConfig);
+    REQUIRE(master.Load(1000));
+    REQUIRE(outstation.Load(1000));
+    Exchange(*master.Find(1), *outstation.Find(1), 1000);
+    Exchange(*master.Find(2), *outstation.Find(2), 1600);
+    const auto masterOtherEpoch = master.Find(2)->Sequence();
+    const auto outstationOtherEpoch = outstation.Find(2)->Sequence();
+    const auto originalCommonEpoch = master.Find(1)->Sequence();
+    REQUIRE(master.Find(1)->ValidUntil() == 902000);
+    REQUIRE(outstation.Find(1)->ValidUntil() == 901000);
+    REQUIRE(master.Find(2)->ValidUntil() == 902600);
+    REQUIRE(outstation.Find(2)->ValidUntil() == 901600);
+
+    REQUIRE(outstation.Authorize(1, 2, 900999));
+    REQUIRE_FALSE(outstation.Authorize(1, 2, 901000));
+    REQUIRE(master.Find(1)->Ready(901000));
+    REQUIRE(outstation.Authorize(2, 3, 901000));
+    master.Find(1)->RequestRenewal(901000);
+    Exchange(*master.Find(1), *outstation.Find(1), 901000);
+    REQUIRE(master.Find(2)->Sequence() == masterOtherEpoch);
+    REQUIRE(outstation.Find(2)->Sequence() == outstationOtherEpoch);
+    REQUIRE(master.Find(1)->Sequence() != originalCommonEpoch);
+    REQUIRE(outstation.Authorize(1, 2, 901600));
+    acceptance::Observe("other_user_deadline", outstation.Find(2)->ValidUntil());
+    REQUIRE_FALSE(outstation.Authorize(2, 3, 901600));
+    acceptance::Observe("changed_user_epochs", unsigned(master.Find(1)->Sequence() != originalCommonEpoch)
+                                                  + unsigned(master.Find(2)->Sequence() != masterOtherEpoch));
+
+    master.Disconnect();
+    outstation.Disconnect();
+    REQUIRE_FALSE(outstation.Authorize(1, 2, 901600));
+    REQUIRE_FALSE(outstation.Authorize(2, 3, 901600));
+    Exchange(*master.Find(2), *outstation.Find(2), 901601);
+    REQUIRE(outstation.Authorize(2, 3, 901601));
+    REQUIRE_FALSE(outstation.Authorize(1, 2, 901601));
+    acceptance::Observe("ready_users_after_reconnect", unsigned(outstation.Find(1)->Ready(901601))
+                                                          + unsigned(outstation.Find(2)->Ready(901601)));
 }

@@ -1,6 +1,6 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 413 Host scenarios have executable bindings (767 vectors). 28 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 417 Host scenarios have executable bindings (777 vectors). 24 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
@@ -52,7 +52,7 @@ A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The re
 | PROFILE-063 | `RX00`, `RX01`, `RX17`, `RX28`, `READ00`, `READ01`, `READ06`, `READ17`, `READ28`, `IIN`, `SNAP`, `RET` | — | `WIDE-TX` |
 | PROFILE-064 | `READ00`, `READ01`, `READ06`, `READ17`, `READ28`, `BAD` | — | — |
 | PROFILE-065 | `R06Q17`, `R06Q28`, `R07Q17`, `R07Q28`, `R08Q17`, `R08Q28`, `UQ17`, `UQ28`, `NEG`, `THRESH`, `QUEUE`, `DISCONT`, `CLASS`, `TCP` | — | `Q17-TX` |
-| SEC-T1-07 | `T15`, `T16`, `T30`, `T60`, `T120` | `CONFIG`, `ISOLATION`, `FAIL`, `TCP` | — |
+| SEC-T1-07 | `T15`, `T16`, `T30`, `T60`, `T120`, `CONFIG`, `ISOLATION`, `FAIL`, `TCP` | — | — |
 | SEC-T1-14 | — | `SERVER-CA1`, `SERVER-CA2`, `SERVER-CA3`, `SERVER-CA4`, `CLIENT-CA1`, `CLIENT-CA2`, `CLIENT-CA3`, `CLIENT-CA4`, `REMOVE`, `UNTRUSTED`, `BAD-BUNDLE`, `CHAIN` | — |
 | CFG-03 | `TPDU`, `TIMEOUT`, `MASTER-CLI`, `OUTSTATION-CLI`, `MASTER-RX`, `OUTSTATION-RX`, `MASTER-TX`, `OUTSTATION-TX` | — | `PRODUCT` |
 | CFG-05 | `MASTER-NEVER-249`, `MASTER-NEVER-250`, `MASTER-ALWAYS-249`, `MASTER-ALWAYS-250`, `MASTER-MULTIFRAME-249`, `MASTER-MULTIFRAME-250`, `OUTSTATION-NEVER-249`, `OUTSTATION-NEVER-250`, `OUTSTATION-ALWAYS-249`, `OUTSTATION-ALWAYS-250`, `OUTSTATION-MULTIFRAME-249`, `OUTSTATION-MULTIFRAME-250`, `RETRY`, `OWNER`, `DFC`, `BCAST`, `TCP` | `STALE` | — |
