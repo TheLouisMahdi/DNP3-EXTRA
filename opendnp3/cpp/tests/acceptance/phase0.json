@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-08-NOACK": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15", "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24", "V25"]
+    },
+    "AT-CFG-08-TIMEOUT": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12"]
+    },
     "AT-CFG-08-M4-CHALLENGE-G12V1-SBO": {
       "kind": "process",
       "vectors": ["V1"]
@@ -2282,6 +2290,389 @@
     }
   },
   "fixtures": {
+    "AT-CFG-08-NOACK/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 1",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 2",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V3": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 3",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V4": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 4",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V5": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 5",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V6": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 6",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V7": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 7",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V8": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 8",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V9": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 9",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V10": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 10",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V11": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 11",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V12": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 12",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V13": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 13",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V14": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 14",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V15": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 15",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V16": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 16",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V17": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 17",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V18": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 18",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V19": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 19",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V20": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 20",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V21": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 21",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V22": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 22",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V23": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 23",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V24": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Required SA FC6 variant 24",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-NOACK/V25": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Compatibility FC6",
+      "input_hex": "CF 06",
+      "checks": [
+        ["accepted_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ordinary_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["next_sequence", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["actuations_after_next_sbo", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 0, expiry",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 3, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 0, disconnect/reconnect",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 255, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V3": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 1, expiry",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V4": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 1, disconnect/reconnect",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 255, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V5": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 2, expiry",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V6": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 2, disconnect/reconnect",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 255, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V7": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 3, expiry",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V8": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 3, disconnect/reconnect",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 255, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V9": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 4, expiry",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V10": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 4, disconnect/reconnect",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 255, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V11": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 5, expiry",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-TIMEOUT/V12": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "FC6 phase 5, disconnect/reconnect",
+      "input_hex": "C0 06",
+      "checks": [
+        ["local_task_completion", "receiver", "STATE", "MASTER", 255, 0, 65535],
+        ["actuations_after_abort", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
     "AT-CFG-08-M4-CHALLENGE-G12V1-SBO/V1": {
       "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
       "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",

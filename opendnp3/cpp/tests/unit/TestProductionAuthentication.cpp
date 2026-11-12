@@ -4,6 +4,7 @@
 #include "crypto/CryptoProvider.h"
 #include "gen/objects/Group121.h"
 #include "master/TaskPriority.h"
+#include "utils/AcceptanceObservation.h"
 #include "utils/BufferHelpers.h"
 #include "utils/CommandCallbackQueue.h"
 #include "utils/MasterTestFixture.h"
@@ -4200,13 +4201,60 @@ void RequireOnlyAuthenticationErrors(RuntimePair& pair)
 }
 }
 
-TEST_CASE("ProductionAuthentication - FC6 authenticates selected typed forms and completes only its protected TX",
-          "[production-sa][sa-fc6][profile-controls]")
+TEST_CASE("AT-CFG-08-NOACK", "[rtu-acceptance][production-sa][sa-fc6][profile-controls]")
 {
-    const auto type = GENERATE(0u, 1u, 2u, 3u);
+    const auto type = GENERATE(0u, 1u, 2u, 3u, 4u);
+    if (type == 4) // Compatibility uses the same native FC6 path without an SA envelope.
+    {
+        if (!acceptance::Selected("V25")) return;
+        MasterTestFixture master(NoStartupTasks(), Addresses());
+        OutstationTestObject outstation(OutstationConfig{});
+        CommandCallbackQueue results;
+        REQUIRE(master.context->OnLowerLayerUp());
+        outstation.LowerLayerUp();
+        master.context->solSeq = 15;
+        REQUIRE(master.context->DirectOperateNoAck(FC6Commands(0, 3), results.Callback(), TaskConfig::Default()));
+        master.exe->run_many();
+        const auto request = master.lower->PopWriteAsHex();
+        REQUIRE(request.substr(0, 8) == "CF 06 0C");
+        REQUIRE(results.values.empty());
+        outstation.SendToOutstation(request);
+        REQUIRE(outstation.cmdHandler->NumOperate() == 1);
+        REQUIRE(outstation.lower->HasNoData());
+        acceptance::Observe("accepted_actuations", outstation.cmdHandler->NumOperate());
+        acceptance::Observe("ordinary_responses", outstation.lower->NumWrites());
+        REQUIRE(master.context->OnTxReady());
+        master.exe->run_many();
+        REQUIRE(results.values.size() == 1);
+        REQUIRE(results.values.front().summary == TaskCompletion::SUCCESS);
+        REQUIRE(results.values.front().results.front().status == CommandStatus::UNDEFINED);
+        REQUIRE(master.context->solSeq.Get() == 0);
+        acceptance::Observe("next_sequence", master.context->solSeq.Get());
+        master.exe->advance_time(master.context->params.responseTimeout.value);
+        master.exe->run_many();
+        REQUIRE(master.lower->HasNoData());
+
+        master.context->SelectAndOperate(FC6Commands(0, 3), results.Callback(), TaskConfig::Default());
+        master.exe->run_many();
+        for (const auto* prefix : {"C0 03", "C1 04"})
+        {
+            const auto control = master.lower->PopWriteAsHex();
+            REQUIRE(control.substr(0, 5) == prefix);
+            REQUIRE(master.context->OnTxReady());
+            outstation.SendToOutstation(control);
+            REQUIRE(master.SendToMaster(outstation.lower->PopWriteAsHex()));
+            outstation.OnTxReady();
+        }
+        REQUIRE(outstation.cmdHandler->NumOperate() == 2);
+        acceptance::Observe("actuations_after_next_sbo", outstation.cmdHandler->NumOperate());
+        return;
+    }
+
     const bool wide = GENERATE(false, true);
     const bool aggressive = GENERATE(false, true);
     const bool earlyChallenge = !aggressive ? GENERATE(false, true) : false;
+    const auto vector = 1 + type * 6 + (wide ? 3 : 0) + (aggressive ? 2 : earlyChallenge ? 1 : 0);
+    if (!acceptance::Selected(("V" + std::to_string(vector)).c_str())) return;
     CAPTURE(type, wide, aggressive, earlyChallenge);
     RuntimePair pair(false, aggressive, false, nullptr, false, nullptr, 2, false, 2000, 2000, false,
                      IndexQualifierMode::allow_one_byte);
@@ -4266,10 +4314,13 @@ TEST_CASE("ProductionAuthentication - FC6 authenticates selected typed forms and
     pair.outstation.SendToOutstation(protectedWire);
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
     REQUIRE(pair.outstation.lower->NumWrites() == 0);
+    acceptance::Observe("accepted_actuations", pair.outstation.cmdHandler->NumOperate() - operations);
+    acceptance::Observe("ordinary_responses", pair.outstation.lower->NumWrites());
     REQUIRE(pair.results.values.empty());
     REQUIRE(pair.master.context->OnTxReady());
     RequireLocalFC6Result(pair, TaskCompletion::SUCCESS);
     REQUIRE(pair.master.context->solSeq.Get() == 0);
+    acceptance::Observe("next_sequence", pair.master.context->solSeq.Get());
     REQUIRE(pair.master.lower->NumWrites() == 0);
     REQUIRE_FALSE(pair.master.context->activeTask);
     pair.master.exe->advance_time(std::chrono::milliseconds(2000));
@@ -4279,6 +4330,7 @@ TEST_CASE("ProductionAuthentication - FC6 authenticates selected typed forms and
     pair.SelectOperate();
     pair.Pump(); // Existing FC3/4 still operate after FC6 sequence wrap and responder release.
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 2);
+    acceptance::Observe("actuations_after_next_sbo", pair.outstation.cmdHandler->NumOperate() - operations);
 }
 
 TEST_CASE("ProductionAuthentication - FC6 rejects invalid or unauthorized protected traffic without execution",
@@ -4632,12 +4684,12 @@ TEST_CASE("ProductionAuthentication - disconnect while waiting for G41 OPERATE R
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == 1);
 }
 
-TEST_CASE("ProductionAuthentication - FC6 timeout and disconnect are terminal in every submission phase",
-          "[production-sa][sa-fc6]")
+TEST_CASE("AT-CFG-08-TIMEOUT", "[rtu-acceptance][production-sa][sa-fc6]")
 {
     // Startup key gate, initial TX, Challenge wait, queued Reply, Reply TX, Aggressive TX.
     const auto phase = GENERATE(0, 1, 2, 3, 4, 5);
     const bool disconnect = GENERATE(false, true);
+    if (!acceptance::Selected(("V" + std::to_string(1 + phase * 2 + disconnect)).c_str())) return;
     CAPTURE(phase, disconnect);
     RuntimePair pair(false, phase == 5);
     if (phase != 0) pair.Pump();
@@ -4690,6 +4742,18 @@ TEST_CASE("ProductionAuthentication - FC6 timeout and disconnect are terminal in
         REQUIRE(packet.ToRSeq()[1] != 6);
     }
     REQUIRE(pair.results.values.size() == 1);
+    acceptance::Observe("local_task_completion", static_cast<uint8_t>(pair.results.values.front().summary));
+    if (disconnect)
+    {
+        pair.outstation.LowerLayerDown();
+        pair.outstation.LowerLayerUp();
+        REQUIRE(pair.master.context->OnLowerLayerUp());
+        pair.master.exe->run_many();
+        pair.Pump();
+        REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations);
+        REQUIRE(pair.results.values.size() == 1);
+    }
+    acceptance::Observe("actuations_after_abort", pair.outstation.cmdHandler->NumOperate() - operations);
 }
 
 TEST_CASE("ProductionAuthentication - FC6 ignores foreign Challenges and rejects delayed or invalid owned Challenges",
