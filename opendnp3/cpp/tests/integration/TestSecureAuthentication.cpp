@@ -2,6 +2,7 @@
 #include "crypto/CryptoProvider.h"
 #include "mocks/NullSOEHandler.h"
 #include "mocks/QueuedChannelListener.h"
+#include "mocks/QueuingSOEHandler.h"
 #include "dnp3mocks/RemoteUpdateKeyCredentials.h"
 #include "dnp3mocks/AsymmetricUpdateKeyCredentials.h"
 #include "dnp3mocks/UserIdentityCertificate.h"
@@ -15,6 +16,7 @@
 #include <opendnp3/master/ICommandTaskResult.h>
 #include <opendnp3/outstation/DefaultOutstationApplication.h>
 #include <opendnp3/outstation/SimpleCommandHandler.h>
+#include <opendnp3/outstation/UpdateBuilder.h>
 
 #include <catch.hpp>
 
@@ -123,6 +125,31 @@ public:
     {
         ++coldRestarts;
         return 2;
+    }
+};
+
+class TcpRestartObserver final : public IMasterApplication
+{
+public:
+    std::atomic<bool> sawRestart{false};
+    std::atomic<bool> restartSet{false};
+    SynchronizedQueue<TaskInfo> tasks;
+
+    UTCTimestamp Now() override { return DefaultMasterApplication().Now(); }
+
+    void OnReceiveIIN(const IINField& iin) override
+    {
+        restartSet = iin.IsSet(IINBit::DEVICE_RESTART);
+        if (restartSet) sawRestart = true;
+    }
+
+    void OnTaskComplete(const TaskInfo& info) override
+    {
+        if (info.type == MasterTaskType::CLEAR_RESTART || info.type == MasterTaskType::STARTUP_INTEGRITY_POLL
+            || info.type == MasterTaskType::ENABLE_UNSOLICITED)
+        {
+            tasks.Add(info);
+        }
     }
 };
 
@@ -272,6 +299,148 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     read();
     REQUIRE(commands->selected.load() == 4);
     REQUIRE(commands->operated.load() == 5);
+    manager.Shutdown();
+}
+
+TEST_CASE("PROFILE-068 - strict SA cold restart restores startup sequence over TCP", "[sa-tcp][profile-restart]")
+{
+    using namespace remote_update_test;
+    const auto masterCredentials = std::make_shared<RemoteCredentials>();
+    const auto outstationCredentials = std::make_shared<RemoteCredentials>();
+    // Table 7-12 configuration role authorizes FC2, FC13 and FC20.
+    masterCredentials->users[1].role = outstationCredentials->users[1].role = 2;
+    const auto policy = std::make_shared<RemotePolicy>();
+    const auto authority = std::make_shared<RemoteAuthority>();
+    const auto trace = std::make_shared<AuthenticationTrace>();
+    const auto listener = std::make_shared<QueuedChannelListener>();
+    const auto restartApp = std::make_shared<TcpRestartApplication>();
+    const auto commands = std::make_shared<TcpCommands>();
+    const auto observer = std::make_shared<TcpRestartObserver>();
+    const auto soe = std::make_shared<QueuingSOEHandler>();
+    DNP3Manager manager(1, trace);
+    const auto logLevels = levels::NORMAL | flags::APP_HEADER_RX | flags::APP_HEADER_TX | flags::APP_OBJECT_TX;
+
+    DatabaseConfig database;
+    database.binary_input[0] = BinaryConfig{};
+    OutstationStackConfig oc(database);
+    oc.link.LocalAddr = 10;
+    oc.link.RemoteAddr = 1;
+    oc.outstation.params.allowUnsolicited = true;
+    oc.outstation.eventBufferConfig.maxBinaryEvents = 4;
+    oc.outstation.params.authentication = RemoteSettings(outstationCredentials, policy, authority, 2);
+    auto server = manager.AddTCPServer("restart-server", logLevels, ServerAcceptMode::CloseExisting,
+                                       IPEndpoint::Localhost(0), nullptr);
+    REQUIRE(server);
+    const auto port = server->GetBoundPort();
+    auto outstation = server->AddOutstation("restart-initial", commands, restartApp, oc);
+    REQUIRE(outstation);
+
+    MasterStackConfig mc;
+    mc.link.LocalAddr = 1;
+    mc.link.RemoteAddr = 10;
+    mc.master.disableUnsolOnStartup = false;
+    mc.master.startupAuthenticationUser = 2;
+    mc.master.startupIntegrityClassMask = ClassField(PointClass::Class0);
+    mc.master.unsolClassMask = ClassField(PointClass::Class1);
+    mc.master.authentication = RemoteSettings(masterCredentials, policy, authority, 2);
+    mc.master.authentication.updateKeyTrust.reset();
+    auto client = manager.AddTCPClient("restart-client", logLevels, ChannelRetry::Default(),
+                                       {IPEndpoint::Localhost(port)}, "127.0.0.1", listener);
+    REQUIRE(client);
+    auto master = client->AddMaster("restart-master", soe, observer, mc);
+    REQUIRE(master);
+    REQUIRE(outstation->Enable());
+    REQUIRE(master->Enable());
+
+    const auto expectStartup = [&](bool value) {
+        using Task = MasterTaskType;
+        const std::array<Task, 3> expected{{Task::CLEAR_RESTART, Task::STARTUP_INTEGRITY_POLL,
+                                            Task::ENABLE_UNSOLICITED}};
+        std::vector<TaskInfo> completed;
+        bool preempted = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (completed.size() < expected.size())
+        {
+            std::vector<TaskInfo> batch;
+            const auto count = observer->tasks.DrainTo(batch, deadline - std::chrono::steady_clock::now());
+            INFO(trace->Snapshot());
+            REQUIRE(count > 0);
+            for (const auto& info : batch)
+            {
+                // A task admitted before the startup NULL can be requeued by restart processing.
+                if (info.type == Task::STARTUP_INTEGRITY_POLL && completed.empty()
+                    && info.result == TaskCompletion::FAILURE_NO_COMMS)
+                {
+                    REQUIRE_FALSE(preempted);
+                    preempted = true;
+                    continue;
+                }
+                REQUIRE(info.result == TaskCompletion::SUCCESS);
+                completed.push_back(info);
+            }
+        }
+        INFO(trace->Snapshot());
+        REQUIRE(completed.size() == expected.size());
+        for (size_t i = 0; i < expected.size(); ++i) REQUIRE(completed[i].type == expected[i]);
+        REQUIRE(observer->sawRestart.load());
+        REQUIRE_FALSE(observer->restartSet.load());
+        std::vector<ExpectedValue> values;
+        REQUIRE(soe->values.DrainTo(values, std::chrono::seconds(5)) == 1);
+        REQUIRE(values[0].Equals(ExpectedValue(Binary(value), 0)));
+    };
+    REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    expectStartup(false);
+
+    const auto completion = std::make_shared<std::promise<RestartOperationResult>>();
+    auto restarted = completion->get_future();
+    auto task = TaskConfig::Default();
+    task.authenticationUser = 2;
+    master->Restart(RestartType::COLD,
+        [completion](const RestartOperationResult& result) { completion->set_value(result); }, task);
+    REQUIRE(restarted.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    const auto result = restarted.get();
+    REQUIRE(result.summary == TaskCompletion::SUCCESS);
+    REQUIRE(result.restartTime == TimeDuration::Milliseconds(2));
+    REQUIRE(restartApp->coldRestarts.load() == 1);
+    server->Shutdown();
+    REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));
+    observer->sawRestart = false;
+
+    server = manager.AddTCPServer("restart-replacement", logLevels, ServerAcceptMode::CloseExisting,
+                                  IPEndpoint::Localhost(port), nullptr);
+    REQUIRE(server);
+    outstation = server->AddOutstation("restart-rebooted", commands, restartApp, oc);
+    REQUIRE(outstation);
+    UpdateBuilder restored;
+    restored.Update(Binary(true, Flags(1)), 0, EventMode::Suppress);
+    outstation->Apply(restored.Build());
+    REQUIRE(outstation->Enable());
+    REQUIRE(listener->WaitForState(ChannelState::OPEN, std::chrono::seconds(5)));
+    expectStartup(true);
+
+    const auto wire = trace->Snapshot();
+    INFO(wire);
+    auto position = wire.find("restart-rebooted FIR: 1 FIN: 1 CON: 1 UNS: 1 SEQ: 0 FUNC: UNSOLICITED_RESPONSE");
+    REQUIRE(position != std::string::npos);
+    for (const auto* step : {"restart-master FIR: 1 FIN: 1 CON: 0 UNS: 1 SEQ: 0 FUNC: CONFIRM",
+                             "restart-master 120,006 - free format",
+                             "restart-master 080,001 Internal Indications - Packed Format, 8-bit start stop [7, 7]",
+                             "restart-master 060,001 - Class Data - Class 0 - all objects",
+                             "restart-master 060,002 - Class Data - Class 1 - all objects"})
+    {
+        position = wire.find(step, position + 1);
+        REQUIRE(position != std::string::npos);
+    }
+
+    // No ad hoc poll uses this handler. A new event must be received unsolicited after FC20.
+    UpdateBuilder event;
+    event.Update(Binary(false, Flags(1)), 0, EventMode::Force);
+    outstation->Apply(event.Build());
+    std::vector<ExpectedValue> events;
+    REQUIRE(soe->values.DrainTo(events, std::chrono::seconds(5)) == 1);
+    REQUIRE(events[0].Equals(ExpectedValue(Binary(false), 0)));
+    REQUIRE(commands->operated.load() == 0);
+    REQUIRE(restartApp->coldRestarts.load() == 1);
     manager.Shutdown();
 }
 

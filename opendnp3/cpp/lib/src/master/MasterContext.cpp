@@ -2120,6 +2120,8 @@ bool MContext::RouteAuthentication(const ser4cpp::rseq_t& apdu, const APDURespon
                 statistics->ResetMaximum(SecurityStatistic::REPLY_TIMEOUTS);
                 for (size_t n = 0; n < auth.sessions->Size(); ++n)
                     auth.sessions->At(n)->PeerRestart(now);
+                // A reboot may reuse an old KSQ. The next installed key must start a fresh CSQ epoch.
+                auth.keyEpoch.fill(0);
                 ResetAuthentication();
                 auth.exchangeIndex = auth.SessionCount();
                 auth.exchangeSequence = (auth.exchangeSequence + 1) & 15;
