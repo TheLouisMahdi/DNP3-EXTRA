@@ -1,6 +1,42 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-09-CLOSE": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-TRIP": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-COUNT": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-PULSE-OFF": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-LATCH-ON": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-LATCH-OFF": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-QUEUE": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-CLEAR": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-BADCODE": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
     "AT-SEC-T1-14-SERVER-CA1": {
       "kind": "process",
       "vectors": ["V1", "V2"]
@@ -2410,6 +2446,168 @@
     }
   },
   "fixtures": {
+    "AT-CFG-09-CLOSE/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 12, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-CLOSE/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 12, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-TRIP/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 12, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-TRIP/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 12, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-COUNT/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 72, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-COUNT/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 72, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-PULSE-OFF/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 12, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-PULSE-OFF/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 12, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-LATCH-ON/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 12, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-LATCH-ON/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 12, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-LATCH-OFF/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 12, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-LATCH-OFF/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 12, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-QUEUE/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 24, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-QUEUE/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 24, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-CLEAR/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 24, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-CLEAR/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 24, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-BADCODE/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 17",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 24, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-BADCODE/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Method 4/68 test-only profiles, qualifier Q28, selected paths and both receiver models.",
+      "input_hex": "C0 05 0C 01 28",
+      "checks": [
+        ["rejected_commands", "receiver", "STATE", "OUTSTATION", 24, 0, 65535],
+        ["verified_controls", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
     "AT-SEC-T1-14-SERVER-CA1/V1": {
       "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
       "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",

@@ -1157,6 +1157,105 @@ def acceptance_sa_control(exe, match, narrow):
             run(exe, "test-cleanup", *provision)
 
 
+CROB_POLICY_SCENARIO = re.compile(r"AT-CFG-09-(CLOSE|TRIP|COUNT|PULSE-OFF|LATCH-ON|LATCH-OFF|QUEUE|CLEAR|BADCODE)")
+
+
+def acceptance_crob_policy(exe, scenario, narrow):
+    rejected_forms = {
+        "COUNT": [(code, repeat) for code in (0x41, 0x81) for repeat in (0, 2, 255)],
+        "PULSE-OFF": [(0x02, 1)], "LATCH-ON": [(0x03, 1)], "LATCH-OFF": [(0x04, 1)],
+        "QUEUE": [(0x51, 1), (0x91, 1)], "CLEAR": [(0x61, 1), (0xA1, 1)],
+        "BADCODE": [(0x00, 1), (0xFF, 1)],
+    }
+    forms = rejected_forms.get(scenario, [])
+    rejected = verified = 0
+
+    def command(master, index, code, repeat, mode, valid):
+        request = f"crob {index} raw {mode} {code} {repeat}"
+        if mode == "noack":
+            master.noack(request)
+        else:
+            cursor = master.task(request, success=valid)
+            if not valid:
+                master.wait(r"status=NOT_SUPPORTED\b", cursor)
+
+    def readback(master, latch, pulse):
+        cursor = master.task("read 10 2 3 4")
+        master.wait(rf"BinaryOutput\[3\]={latch}\b", cursor)
+        master.wait(rf"BinaryOutput\[4\]={pulse}\b", cursor)
+
+    for method in ("method4", "method68"):
+        profile = "cfg09-" + uuid.uuid4().hex[:12]
+        provision = ["--test-only", "--profile", profile, "--auth", method]
+        run(exe, "test-provision", *provision)
+        master = out = None
+        try:
+            master, out = connected(exe, [*provision, "--trust-system-time", "--rtu-io-profile", "--reply-ms", "5000"],
+                master_options=["--control-q17"] if narrow else [],
+                out_options=["--rtu-crob-latch", "3", "--rtu-crob-two-output", "4:250"])
+            for index in (3, 4):
+                cursor = out.send(f"crob-interlock {index} allow")
+                out.wait(rf"\[INTERLOCK\] CROB\[{index}\] allow$", cursor)
+
+            if forms:
+                command(master, 3, 0x41, 1, "direct", True)
+                out.executed(1)
+                readback(master, "ON", "OFF")
+                for index in (3, 4):
+                    for code, repeat in forms:
+                        for mode in ("sbo", "direct", "noack"):
+                            command(master, index, code, repeat, mode, False)
+                            readback(master, "ON", "OFF")
+                            out.executed(1)
+                            rejected += 1
+                command(master, 3, 0x81, 1, "sbo", True)
+                readback(master, "OFF", "OFF")
+                out.executed(2)
+                verified += 1
+                continue
+
+            close = scenario == "CLOSE"
+            code = 0x41 if close else 0x81
+            drive = "close" if close else "trip"
+            state = "ON" if close else "OFF"
+            initial = "OFF" if close else "ON"
+            executions = 0
+            for mode in ("sbo", "direct", "noack"):
+                command(master, 3, 0x81 if close else 0x41, 1, "direct", True)
+                executions += 1
+                readback(master, initial, "OFF")
+                command(master, 3, code, 1, mode, True)
+                executions += 1
+                readback(master, state, "OFF")
+                out.executed(executions)
+                verified += 1
+
+                with out.cv:
+                    cursor = len(out.lines)
+                command(master, 4, code, 1, mode, True)
+                executions += 1
+                out.wait(rf"\[CROB-PULSE\] started point=4 drive={drive} configured-ms=250 "
+                         rf"request-on-ms=100 request-off-ms=0 executed={executions}$", cursor)
+                # Inspect both outputs while the selected drive is active.
+                cursor = out.send("crob-pulse advance 249")
+                out.wait(r"\[CROB-CLOCK\] advanced-ms=249 ", cursor)
+                cursor = out.send("status")
+                outputs = "close=active trip=inactive" if close else "close=inactive trip=active"
+                out.wait(rf"point=4 model=complementary-two-output interlock=allowed {outputs} executed={executions}$", cursor)
+                cursor = out.send("crob-pulse advance 1")
+                out.wait(rf"\[CROB-PULSE\] expired point=4 drive={drive}$", cursor)
+                readback(master, state, "OFF")
+                out.executed(executions)
+                verified += 1
+        finally:
+            try:
+                stop(out, master)
+            finally:
+                run(exe, "test-cleanup", *provision)
+    for name, actual in (("rejected_commands", rejected), ("verified_controls", verified)):
+        print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
+
+
 def acceptance_counter_profile(exe):
     """Two fresh native TCP pairs, with and without the RTU profile."""
     def observed(name, actual, expected):
@@ -3458,10 +3557,13 @@ def main():
             parser.error("an acceptance scenario requires --vector and no smoke-suite filter")
         control = SA_CONTROL_SCENARIO.fullmatch(args.scenario)
         tls_trust = TLS_TRUST_SCENARIO.fullmatch(args.scenario)
+        crob_policy = CROB_POLICY_SCENARIO.fullmatch(args.scenario)
         if control and (args.vector == "V1" or control[4] == "DO"):
             acceptance_sa_control(args.exe, control, args.vector == "V1")
         elif tls_trust and (args.vector == "V1" or tls_trust[1].startswith(("SERVER-CA", "CLIENT-CA")) or tls_trust[1] == "CHAIN"):
             acceptance_tls_trust(args.exe, args.work_dir, tls_trust[1], args.vector)
+        elif crob_policy:
+            acceptance_crob_policy(args.exe, crob_policy[1], args.vector == "V1")
         elif args.vector == "V1" and args.scenario == "AT-CFG-14-TCP":
             f01_solicited_fragments(args.exe, observe=True)
         elif args.vector == "V1" and args.scenario == "AT-CFG-13-COMPAT":
