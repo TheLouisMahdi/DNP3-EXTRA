@@ -1,6 +1,54 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-SEC-T1-14-SERVER-CA1": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-SERVER-CA2": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-SERVER-CA3": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-SERVER-CA4": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-CLIENT-CA1": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-CLIENT-CA2": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-CLIENT-CA3": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-CLIENT-CA4": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-SEC-T1-14-REMOVE": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-SEC-T1-14-UNTRUSTED": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-SEC-T1-14-BAD-BUNDLE": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-SEC-T1-14-CHAIN": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
     "AT-SEC-T1-07-CONFIG": {
       "kind": "unit",
       "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7"]
@@ -2362,6 +2410,195 @@
     }
   },
   "fixtures": {
+    "AT-SEC-T1-14-SERVER-CA1/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA1/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA2/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA2/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA3/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA3/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA4/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-SERVER-CA4/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA1/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA1/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA2/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA2/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA3/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA3/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA4/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CLIENT-CA4/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 0, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-REMOVE/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 4, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 1, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-UNTRUSTED/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 2, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-BAD-BUNDLE/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 4, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CHAIN/V1": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 2, 0, 65535]
+      ]
+    },
+    "AT-SEC-T1-14-CHAIN/V2": {
+      "reference": "IEEE 1815-2012 7.8 (TLS context); numeric minimum comes from the addendum; Security Addendum PDF p4, Table 1, row 14",
+      "description": "Fresh synthetic roots and leaves, fixed verifier during rotation, receiver checks over TLS.",
+      "input_hex": "C0 01",
+      "checks": [
+        ["verified_tls_actions", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["rejected_tls_inputs", "receiver", "STATE", "RUNNER", 2, 0, 65535]
+      ]
+    },
     "AT-SEC-T1-07-CONFIG/V1": {
       "reference": "7.6.1.4.3; 7.6.1.4.5; 7.5 and Table 7-13; Security Addendum PDF p3, Table 1, row 7",
       "description": "Whole-second generic session renewal bounds and selected interval configuration.",

@@ -18,6 +18,8 @@ int ProvisionTLS(const Options& options)
 {
 #if defined(CLI_SA) && defined(CLI_TLS)
     if (!options.testOnly || options.directory.empty()) throw std::runtime_error("test-tls requires --test-only --directory <new-local-directory>");
+    if (options.intermediateTestCA && options.selfSignedTestCertificate)
+        throw std::runtime_error("An intermediate test CA requires CA-signed leaves");
     // Create a new directory with a protected DACL for current user and SYSTEM.
     // No existing directory, certificate or key is overwritten.
     HANDLE token = nullptr;
@@ -59,7 +61,9 @@ int ProvisionTLS(const Options& options)
         if (X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(name), -1, -1, 0) != 1
             || X509_set_issuer_name(cert.get(), issuer ? X509_get_subject_name(issuer) : subject) != 1)
             throw std::runtime_error("Test certificate identity failed");
-        extension(cert.get(), issuer ? issuer : cert.get(), NID_basic_constraints, ca ? "critical,CA:TRUE,pathlen:0" : "critical,CA:FALSE");
+        const auto constraints = !ca ? "critical,CA:FALSE"
+            : options.intermediateTestCA && !issuer ? "critical,CA:TRUE,pathlen:1" : "critical,CA:TRUE,pathlen:0";
+        extension(cert.get(), issuer ? issuer : cert.get(), NID_basic_constraints, constraints);
         extension(cert.get(), issuer ? issuer : cert.get(), NID_key_usage, ca ? "critical,keyCertSign,cRLSign" : "critical,digitalSignature,keyEncipherment");
         extension(cert.get(), issuer ? issuer : cert.get(), NID_subject_key_identifier, "hash");
         if (issuer) extension(cert.get(), issuer, NID_authority_key_identifier, "keyid:always");
@@ -92,10 +96,21 @@ int ProvisionTLS(const Options& options)
     Key ca(EVP_RSA_gen(2048), EVP_PKEY_free), server(EVP_RSA_gen(2048), EVP_PKEY_free), client(EVP_RSA_gen(2048), EVP_PKEY_free);
     if (!ca || !server || !client) throw std::runtime_error("Test RSA provider unavailable");
     auto caCert = make(ca.get(), nullptr, ca.get(), "DNP3-EXTRA TEST CA", 1, true);
-    auto serverCert = make(server.get(), options.selfSignedTestCertificate ? nullptr : caCert.get(),
-        options.selfSignedTestCertificate ? server.get() : ca.get(), "outstation.test", 2, false);
-    auto clientCert = make(client.get(), options.selfSignedTestCertificate ? nullptr : caCert.get(),
-        options.selfSignedTestCertificate ? client.get() : ca.get(), "master.test", 3, false);
+    Key intermediate(nullptr, EVP_PKEY_free);
+    Certificate intermediateCert(nullptr, X509_free);
+    if (options.intermediateTestCA)
+    {
+        intermediate.reset(EVP_RSA_gen(2048));
+        if (!intermediate) throw std::runtime_error("Test intermediate RSA provider unavailable");
+        intermediateCert = make(intermediate.get(), caCert.get(), ca.get(), "DNP3-EXTRA TEST Intermediate", 4, true);
+        write("intermediate.pem", intermediateCert.get(), nullptr);
+    }
+    auto* issuer = intermediateCert ? intermediateCert.get() : caCert.get();
+    auto* signer = intermediate ? intermediate.get() : ca.get();
+    auto serverCert = make(server.get(), options.selfSignedTestCertificate ? nullptr : issuer,
+        options.selfSignedTestCertificate ? server.get() : signer, "outstation.test", 2, false);
+    auto clientCert = make(client.get(), options.selfSignedTestCertificate ? nullptr : issuer,
+        options.selfSignedTestCertificate ? client.get() : signer, "master.test", 3, false);
     write("ca.pem", caCert.get(), nullptr); write("server.pem", serverCert.get(), nullptr); write("client.pem", clientCert.get(), nullptr);
     write("server-key.pem", nullptr, server.get()); write("client-key.pem", nullptr, client.get());
     std::cout << "TEST TLS files created with current-user/SYSTEM ACL; CA private key was not persisted. Validity: 24 hours.\n";

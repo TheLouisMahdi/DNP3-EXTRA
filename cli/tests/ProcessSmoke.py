@@ -13,6 +13,7 @@ import socket
 import struct
 import subprocess
 import threading
+from tempfile import TemporaryDirectory
 import time
 import uuid
 
@@ -837,6 +838,126 @@ def tls_cases(exe, root):
         run(exe, "master", "--tls", *peer_options("master"), option, value, success=False)
     run(exe, "master", "--tls", "--ca", str(material / "ca.pem"), success=False)
     print("PASS TLS1.2/1.3 mTLS/identity/validity/reconnect and invalid certificate/cipher/key-material rejection", flush=True)
+
+
+TLS_TRUST_SCENARIO = re.compile(r"AT-SEC-T1-14-(SERVER-CA[1-4]|CLIENT-CA[1-4]|REMOVE|UNTRUSTED|BAD-BUNDLE|CHAIN)")
+
+
+def acceptance_tls_trust(exe, root, scenario, vector):
+    root.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="pc-tls-trust-", dir=root.resolve()) as directory:
+        tls_trust_cases(exe, Path(directory), scenario, vector)
+
+
+def tls_trust_cases(exe, root, scenario, vector):
+    anchors = [root / f"ca{i}" for i in range(1, 5)]
+    for i, directory in enumerate(anchors):
+        flags = ["--intermediate-test-ca"] if i == 0 and scenario == "CHAIN" else []
+        run(exe, "test-tls", "--test-only", "--directory", str(directory), *flags)
+    roots = [(directory / "ca.pem").read_bytes() for directory in anchors]
+    assert len(set(roots)) == 4
+    bundle = root / "bundle.pem"
+    bundle.write_bytes(b"\n".join(roots))
+    version = "1.2" if vector == "V1" else "1.3"
+    common = ["--auth", "compat", "--tls", "--tls-version", version]
+    common += ["--ciphers", "ECDHE-RSA-AES128-GCM-SHA256"] if version == "1.2" else ["--suites", "TLS_AES_128_GCM_SHA256"]
+
+    def credentials(role, folder, trust, chained=False):
+        name, identity = ("client", "outstation.test") if role == "master" else ("server", "master.test")
+        certificate = folder / (name + ".pem")
+        if chained:
+            chain = folder / (name + "-chain.pem")
+            if not chain.exists():
+                chain.write_bytes(certificate.read_bytes() + (folder / "intermediate.pem").read_bytes())
+            certificate = chain
+        return ["--ca", str(trust), "--cert", str(certificate), "--key", str(folder / (name + "-key.pem")),
+                "--peer-name", identity]
+
+    def exchange(master, out, count, value):
+        master.task(f"crob 0 {value} direct")
+        out.executed(count)
+        cursor = master.task("read 10 2 0 0")
+        master.wait(rf"BinaryOutput\[0\]={value.upper()}\b", cursor)
+
+    def rotation(verifier, candidates, trust=bundle):
+        rotated_role = "master" if verifier == "outstation" else "outstation"
+        port = loopback_port()
+        fixed = Peer(exe, verifier, [*common, *port, *credentials(verifier, anchors[1], trust)])
+        accepted = rejected = fixed_executed = 0
+        try:
+            fixed.wait(r"\[HELP\]")
+            for material, chained, valid in candidates:
+                with fixed.cv:
+                    cursor = len(fixed.lines)
+                rotated = Peer(exe, rotated_role, [*common, *port, *credentials(rotated_role, material, bundle, chained)])
+                try:
+                    master, out = (fixed, rotated) if verifier == "master" else (rotated, fixed)
+                    if valid:
+                        fixed.wait(r"\[LINK\] OPEN$", cursor)
+                        rotated.wait(r"\[LINK\] OPEN$")
+                        expected = fixed_executed + 1 if verifier == "outstation" else 1
+                        exchange(master, out, expected, "on" if expected % 2 else "off")
+                        if verifier == "outstation":
+                            fixed_executed = expected
+                        accepted += 1
+                    else:
+                        master.send("crob 0 on direct")
+                        failure = (r"Error Connecting: certificate verify failed" if verifier == "master"
+                                   else r"TLS handshake failed:.*certificate")
+                        fixed.wait(failure, cursor)
+                        out.executed(fixed_executed if verifier == "outstation" else 0)
+                        with fixed.cv:
+                            assert not any("[LINK] OPEN" in line and not "[LINK] OPENING" in line
+                                           for line in fixed.lines[cursor:]), fixed.lines[cursor:]
+                        rejected += 1
+                finally:
+                    with fixed.cv:
+                        closed = len(fixed.lines)
+                    stop(rotated)
+                    if valid:
+                        fixed.wait(r"\[LINK\] CLOSED$", closed)
+        finally:
+            stop(fixed)
+        return accepted, rejected
+
+    role_anchor = re.fullmatch(r"(SERVER|CLIENT)-CA([1-4])", scenario)
+    if role_anchor:
+        verifier = "outstation" if role_anchor[1] == "SERVER" else "master"
+        index = int(role_anchor[2]) - 1
+        baseline = (index + 1) % 4
+        accepted, rejected = rotation(verifier, [(anchors[baseline], False, True), (anchors[index], False, True)])
+    elif scenario == "REMOVE":
+        reduced = root / "without-ca3.pem"
+        reduced.write_bytes(b"\n".join(roots[i] for i in (0, 1, 3)))
+        accepted, rejected = rotation("outstation", [(anchors[2], False, False),
+            (anchors[0], False, True), (anchors[1], False, True), (anchors[3], False, True)], reduced)
+        restored, _ = rotation("outstation", [(anchors[2], False, True)])
+        accepted += restored
+    elif scenario == "BAD-BUNDLE":
+        malformed = root / "bad.pem"
+        malformed.write_text("-----BEGIN CERTIFICATE-----\nbroken\n-----END CERTIFICATE-----\n", encoding="ascii")
+        rejected = 0
+        for role in ("master", "outstation"):
+            for path in (root / "missing.pem", malformed):
+                result = run(exe, role, *common, *loopback_port(), *credentials(role, anchors[0], path), success=False)
+                assert "ERROR:" in result.stderr and "[HELP]" not in result.stdout, result
+                rejected += 1
+        accepted, _ = rotation("outstation", [(anchors[0], False, True)])
+    else:
+        outside = root / "outside"
+        flags = ["--intermediate-test-ca"] if scenario == "CHAIN" else []
+        run(exe, "test-tls", "--test-only", "--directory", str(outside), *flags)
+        if scenario == "CHAIN":
+            verifier = "outstation" if vector == "V1" else "master"
+            accepted, rejected = rotation(verifier, [(anchors[0], False, False), (outside, True, False),
+                                                       (anchors[0], True, True)])
+        else:
+            outcomes = [rotation(role, [(outside, False, False), (anchors[0], False, True)])
+                        for role in ("outstation", "master")]
+            accepted, rejected = map(sum, zip(*outcomes))
+
+    for name, actual in (("verified_tls_actions", accepted), ("rejected_tls_inputs", rejected)):
+        print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
 
 
 def asio_fixtures(exe, asio, root):
@@ -3336,8 +3457,11 @@ def main():
         if not args.vector or args.only != "all":
             parser.error("an acceptance scenario requires --vector and no smoke-suite filter")
         control = SA_CONTROL_SCENARIO.fullmatch(args.scenario)
+        tls_trust = TLS_TRUST_SCENARIO.fullmatch(args.scenario)
         if control and (args.vector == "V1" or control[4] == "DO"):
             acceptance_sa_control(args.exe, control, args.vector == "V1")
+        elif tls_trust and (args.vector == "V1" or tls_trust[1].startswith(("SERVER-CA", "CLIENT-CA")) or tls_trust[1] == "CHAIN"):
+            acceptance_tls_trust(args.exe, args.work_dir, tls_trust[1], args.vector)
         elif args.vector == "V1" and args.scenario == "AT-CFG-14-TCP":
             f01_solicited_fragments(args.exe, observe=True)
         elif args.vector == "V1" and args.scenario == "AT-CFG-13-COMPAT":

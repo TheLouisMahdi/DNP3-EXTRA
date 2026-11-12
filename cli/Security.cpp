@@ -477,6 +477,12 @@ Options ParseOptions(int argc, char** argv)
         if (option == "--tls") { o.tls = true; continue; }
         if (option == "--expired-test-certificate") { o.expiredTestCertificate = true; continue; }
         if (option == "--self-signed-test-certificate") { o.selfSignedTestCertificate = true; continue; }
+        if (option == "--intermediate-test-ca")
+        {
+            if (o.role != "test-tls") throw std::runtime_error("--intermediate-test-ca requires test-tls");
+            o.intermediateTestCA = true;
+            continue;
+        }
         if (++n == argc) throw std::runtime_error("Missing option value");
         const std::string value = argv[n];
         if (option == "--host") o.host = value;

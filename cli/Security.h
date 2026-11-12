@@ -34,7 +34,7 @@ struct Options
     std::bitset<10> rtuCrobTwoOutputs;
     std::bitset<10> rtuCrobActivation;
     std::array<uint32_t, 10> rtuCrobPulseMs{};
-    bool expiredTestCertificate = false, selfSignedTestCertificate = false;
+    bool expiredTestCertificate = false, selfSignedTestCertificate = false, intermediateTestCA = false;
 };
 Options ParseOptions(int argc, char** argv);
 opendnp3::AuthenticationConfig Authentication(const Options& options, bool master);
