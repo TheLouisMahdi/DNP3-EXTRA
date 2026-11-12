@@ -114,6 +114,18 @@ private:
         ++operated;
     }
 };
+class TcpRestartApplication final : public DefaultOutstationApplication
+{
+public:
+    std::atomic<unsigned> coldRestarts{0};
+    RestartMode ColdRestartSupport() const override { return RestartMode::SUPPORTED_DELAY_FINE; }
+    uint16_t ColdRestart() override
+    {
+        ++coldRestarts;
+        return 2;
+    }
+};
+
 class ScanResult final : public ITaskCallback
 {
 public:
@@ -167,7 +179,8 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     mc.master.unsolClassMask = ClassField::None();
     mc.master.ignoreRestartIIN = true;
     mc.master.authentication = oc.outstation.params.authentication;
-    auto outstation = server->AddOutstation("sa-outstation", commands, DefaultOutstationApplication::Create(), oc);
+    auto restartApplication = std::make_shared<TcpRestartApplication>();
+    auto outstation = server->AddOutstation("sa-outstation", commands, restartApplication, oc);
     auto master = client->AddMaster("sa-master", NullSOEHandler::Create(), DefaultMasterApplication::Create(), mc);
     REQUIRE(outstation);
     REQUIRE(master);
@@ -214,6 +227,18 @@ TEST_CASE("SecureAuthenticationTCP - session keys authenticated READ CONTROL and
     control();
     REQUIRE(commands->selected.load() == 3);
     REQUIRE(commands->operated.load() == 3);
+    // The application supplies the delay and the test simulates its later reboot.
+    const auto restarted = std::make_shared<std::promise<RestartOperationResult>>();
+    auto restartFuture = restarted->get_future();
+    auto restartTask = TaskConfig::Default();
+    restartTask.authenticationUser = 2;
+    master->Restart(RestartType::COLD,
+        [restarted](const RestartOperationResult& result) { restarted->set_value(result); }, restartTask);
+    REQUIRE(restartFuture.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    const auto restartResult = restartFuture.get();
+    REQUIRE(restartResult.summary == TaskCompletion::SUCCESS);
+    REQUIRE(restartResult.restartTime == TimeDuration::Milliseconds(2));
+    REQUIRE(restartApplication->coldRestarts.load() == 1);
     // A new Outstation instance loses session material and resets its KSQ.
     server->Shutdown();
     REQUIRE(listener->WaitForState(ChannelState::CLOSED, std::chrono::seconds(5)));

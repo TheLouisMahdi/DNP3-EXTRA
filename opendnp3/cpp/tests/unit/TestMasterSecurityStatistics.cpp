@@ -246,6 +246,28 @@ TEST_CASE("MasterSecurityStatistics - unsolicited observations and association i
     REQUIRE(second.lower->PopWriteAsHex() == "D0 00");
 }
 
+TEST_CASE("PROFILE-066 - native timed statistics retain u48 occurrence on unsolicited receive", "[master-security-statistics]")
+{
+    const bool narrow = GENERATE(false, true);
+    const auto prefix = narrow ? "17 01 01 " : "28 01 00 01 01 ";
+    const std::string event = std::string("F0 82 00 00 7A 02 ") + prefix + "41 34 12 78 56 34 12 FF FF FF FF FF FF";
+    MasterTestFixture master(NoStartupTasks());
+    REQUIRE(master.context->OnLowerLayerUp());
+    REQUIRE(master.SendToMaster(event));
+    REQUIRE(master.meas->securityStatSOE.size() == 1);
+    const auto& record = master.meas->securityStatSOE.front();
+    Check(record, narrow ? 1 : 257, 0x1234, 0x12345678, 0x41);
+    REQUIRE(record.meas.value.HasTime());
+    REQUIRE(record.meas.value.time.value == 0xFFFFFFFFFFFFULL);
+    REQUIRE(master.lower->PopWriteAsHex() == "D0 00");
+    REQUIRE(master.context->OnTxReady());
+    master.meas->Clear();
+    REQUIRE(master.SendToMaster("F1" + event.substr(2, event.size() - 5)));
+    REQUIRE(master.meas->TotalReceived() == 0);
+    REQUIRE(master.lower->HasNoData());
+}
+
+
 TEST_CASE("MasterSecurityStatistics - malformed unsolicited fragment is not delivered or confirmed", "[master-security-statistics]")
 {
     MasterTestFixture t(NoStartupTasks());

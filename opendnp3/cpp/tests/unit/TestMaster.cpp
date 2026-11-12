@@ -20,6 +20,7 @@
 #include "utils/APDUHexBuilders.h"
 #include "utils/CallbackQueue.h"
 #include "utils/MasterTestFixture.h"
+#include "utils/OutstationTestObject.h"
 #include "utils/MeasurementComparisons.h"
 
 #include <ser4cpp/util/HexConversions.h>
@@ -1019,8 +1020,20 @@ TEST_CASE("ProfileTime - clock synchronization never retries an expired request"
     REQUIRE(t.lower->PopWriteAsHex() == hex::MeasureDelay(0));
     t.context->OnTxReady();
 
-    SECTION("lost delay result")
+    SECTION("lost delay request or response")
     {
+        const bool dropRequest = GENERATE(false, true);
+        OutstationTestObject station(OutstationConfig{});
+        station.LowerLayerUp();
+        if (!dropRequest)
+        {
+            station.SendToOutstation("C0 17");
+            REQUIRE(station.lower->NextWriteIsUnconfirmed());
+            REQUIRE(station.lower->PopWriteAsHex() == "C0 81 80 00 34 02 07 01 00 00");
+            station.OnTxReady();
+        }
+        station.AdvanceTime(TimeDuration::Milliseconds(500));
+        REQUIRE(station.lower->HasNoData());
         t.exe->advance_time(std::chrono::milliseconds(500));
         t.exe->run_many();
         REQUIRE(t.lower->HasNoData());
