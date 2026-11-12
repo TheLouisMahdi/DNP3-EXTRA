@@ -1,6 +1,198 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-08-M4-CHALLENGE-G12V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G12V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G12V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-SBO": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-DO": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-NR": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
     "AT-CFG-05-TCP": {
       "kind": "integration",
       "vectors": ["V1"]
@@ -2090,6 +2282,710 @@
     }
   },
   "fixtures": {
+    "AT-CFG-08-M4-CHALLENGE-G12V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G12V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G12V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 28 01 00 03 00 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G12V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 28 01 00 02 00 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 28 01 00 03 00 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V2-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 28 01 00 04 00 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-CHALLENGE-G41V3-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 28 01 00 03 00 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G12V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 28 01 00 02 00 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 28 01 00 03 00 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V2-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 28 01 00 04 00 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M4-AGGRESSIVE-G41V3-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 28 01 00 03 00 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G12V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 28 01 00 02 00 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 28 01 00 03 00 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V2-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 28 01 00 04 00 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-CHALLENGE-G41V3-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 0C 01 28 01 00 03 00 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G12V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 0C 01 17 01 03 41 01 64 00 00 00 00 00 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 01 28 01 00 02 00 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V1-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 01 17 01 02 D2 04 00 00 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 02 28 01 00 03 00 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V2-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 02 17 01 03 85 FF 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-SBO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 03 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-DO/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-DO/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 05 29 03 28 01 00 04 00 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-M68-AGGRESSIVE-G41V3-NR/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "Native command body before authentication wrapping; process TCP relay checks the actual transcript.",
+      "input_hex": "C0 06 29 03 17 01 04 00 00 88 40 00",
+      "checks": [
+        ["authenticated_requests", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["command_responses", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["outstation_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["receiver_readback", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
     "AT-CFG-05-TCP/V1": {
       "reference": "8.2; 9.2.4.1.3.5; 9.3.1/9.3.2 and Table 9-6; Device Profile p2 / original 42",
       "description": "Native Always links over real TCP, gated request ACK, two response segments and reconnect.",
