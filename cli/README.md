@@ -26,6 +26,14 @@ command invocation counts. Existing Catch tests check malformed messages,
 ownership, expiry, replay, tamper and interrupted exchanges. The ASIO suite
 receives fresh test certificates without storing private keys in Git.
 
+The D-27 Host-only Cold Restart fixture is enabled with `--test-cold-restart`.
+It returns FC13's G52V2/Q07 delay of 1000 ms before the test harness exits and
+relaunches the Outstation process. The process test checks reconnection,
+reauthentication, restart indication, and restored safe output state. This is
+an approved Host simulation, **not** proof of physical RTU restart timing,
+nonvolatile data behavior, or hardware fail-safe acceptance. See
+[decision #2](https://github.com/TheLouisMahdi/DNP3-EXTRA/issues/2).
+
 ## Launch two terminals
 
 Use the same `$cli` executable path in each terminal, or the executable in the
@@ -250,6 +258,16 @@ The new millisecond options accept 1..120000. These are diagnostic limits.
 Link retries resend the same link transaction and do not resubmit an
 application command. Retry exhaustion, a NACK, or a rejected link exchange
 ends the channel. An application-level FC6 still has no command response.
+
+For TCP, the outbound default is `never` (IEEE 1815-2012 section 10.2.1).
+`always` and `multi-frame` remain explicit options. The receiver still ACKs
+valid incoming confirmed frames regardless of its outbound mode. A confirmed
+send that exhausts retries or fails terminally closes its link session; it
+must not be reported as delivered. This does **not** resolve
+`AT-CFG-05-STALE`: a late duplicate `SEC_ACK` has no segment identifier and
+can be mistaken for a current ACK. Keep this acceptance scenario BLOCKED
+pending an approved delay/abort assumption and matching tests; see
+[decision #2](https://github.com/TheLouisMahdi/DNP3-EXTRA/issues/2).
 
 Pass `--event-q17` on the outstation to prefer 8-bit count and index
 headers for G2, G4 and G32. A header holds at most 255 events. A header
