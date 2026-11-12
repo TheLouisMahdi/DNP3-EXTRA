@@ -24,6 +24,10 @@
 #include "utils/OutstationTestObject.h"
 
 #include <dnp3mocks/DatabaseHelpers.h>
+#include <dnp3mocks/MockLogHandler.h>
+#include <dnp3mocks/MockSOEHandler.h>
+
+#include "master/MeasurementHandler.h"
 
 #include <catch.hpp>
 
@@ -829,6 +833,88 @@ TEST_CASE(SUITE("ReadGrp2Var2"))
 
     TestEventRead("C0 01 02 02 06", "E0 81 80 00 02 02 28 01 00 03 00 01 71 45 00 00 00 00",
                   update); // 1 byte count == 1, ONLINE quality
+}
+
+TEST_CASE(SUITE("Binary event default variation selects G2V2 or configured G2V3 with CTO"))
+{
+    const uint64_t base = 0x010203040506;
+    MockLogHandler log;
+    MockSOEHandler soe;
+    const auto decode = [&](const std::string& response) {
+        const HexSequence bytes(response);
+        REQUIRE(MeasurementHandler::ProcessMeasurements(ResponseInfo(false, true, true),
+                                                       bytes.ToRSeq().skip(4), log.logger, &soe)
+                == ParseResult::OK);
+    };
+
+    SECTION("a G2V0 read resolves to the configured G2V2 default")
+    {
+        OutstationConfig config;
+        config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+        DatabaseConfig database = configure::by_count_of::all_types(5);
+        database.binary_input[0].evariation = EventBinaryVariation::Group2Var2;
+        OutstationTestObject t(config, std::move(database));
+        t.LowerLayerUp();
+        t.Transaction([&](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01), DNPTime(base)), 0); });
+
+        t.SendToOutstation("C0 01 02 00 06");
+        const auto reply = t.lower->PopWriteAsHex();
+        REQUIRE(reply == "E0 81 80 00 02 02 28 01 00 00 00 81 06 05 04 03 02 01");
+        decode(reply);
+        REQUIRE(soe.TotalReceived() == 1);
+        REQUIRE(soe.binarySOE.at(0).meas.time.value == base);
+    }
+
+    SECTION("a G2V0 read resolves to the configured G2V3 default with a G51 CTO")
+    {
+        OutstationConfig config;
+        config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+        DatabaseConfig database = configure::by_count_of::all_types(5);
+        for (auto& point : database.binary_input)
+            point.second.evariation = EventBinaryVariation::Group2Var3;
+        OutstationTestObject t(config, std::move(database));
+        t.LowerLayerUp();
+        t.Transaction([&](IUpdateHandler& db) {
+            db.Update(Binary(true, Flags(0x01), DNPTime(base)), 0);
+            db.Update(Binary(false, Flags(0x01), DNPTime(base + 65535)), 1);
+            db.Update(Binary(true, Flags(0x01), DNPTime(base + 65536)), 2);
+        });
+
+        t.SendToOutstation("C0 01 02 00 06");
+        const auto reply = t.lower->PopWriteAsHex();
+        REQUIRE(reply
+                == "E0 81 80 00 33 01 07 01 06 05 04 03 02 01 02 03 28 02 00 00 00 81 00 00 01 00 01 FF FF "
+                   "33 01 07 01 06 05 05 03 02 01 02 03 28 01 00 02 00 81 00 00");
+        decode(reply);
+        REQUIRE(soe.TotalReceived() == 3);
+        REQUIRE(soe.binarySOE.at(0).meas.time.value == base);
+        REQUIRE(soe.binarySOE.at(1).meas.time.value == base + 65535);
+        REQUIRE(soe.binarySOE.at(2).meas.time.value == base + 65536);
+        for (const auto& record : soe.binarySOE)
+            REQUIRE(record.second.info.tsquality == TimestampQuality::SYNCHRONIZED);
+    }
+
+    SECTION("an explicit G2V1 read leaves the configured G2V3 default intact")
+    {
+        OutstationConfig config;
+        config.eventBufferConfig = EventBufferConfig::AllTypes(10);
+        DatabaseConfig database = configure::by_count_of::all_types(5);
+        database.binary_input[0].evariation = EventBinaryVariation::Group2Var3;
+        OutstationTestObject t(config, std::move(database));
+        t.LowerLayerUp();
+        t.Transaction([&](IUpdateHandler& db) { db.Update(Binary(true, Flags(0x01), DNPTime(base)), 0); });
+
+        t.SendToOutstation("C0 01 02 01 06");
+        REQUIRE(t.lower->PopWriteAsHex() == "E0 81 80 00 02 01 28 01 00 00 00 81");
+        t.OnTxReady();
+        t.SendToOutstation(hex::SolicitedConfirm(0));
+        REQUIRE(t.application->confirms.size() == 1);
+
+        t.Transaction([&](IUpdateHandler& db) { db.Update(Binary(false, Flags(0x01), DNPTime(base)), 0); });
+        t.SendToOutstation("C1 01 02 00 06");
+        REQUIRE(t.lower->PopWriteAsHex()
+                == "E1 81 80 00 33 01 07 01 06 05 04 03 02 01 02 03 28 01 00 00 00 01 00 00");
+    }
 }
 
 TEST_CASE(SUITE("ReadGrp2Var3SingleValue"))

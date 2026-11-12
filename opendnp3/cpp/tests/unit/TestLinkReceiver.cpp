@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstring>
+#include <string>
 
 using namespace opendnp3;
 using namespace ser4cpp;
@@ -382,6 +383,62 @@ TEST_CASE(SUITE("HeaderCRCCorruptionOfMaximumFrameIsRejected"))
     t.WriteData(rseq_t(bytes.data(), bytes.size()), 37);
     REQUIRE(t.sink.m_num_frames == 0);
     REQUIRE(t.parser.Statistics().numHeaderCrcError == 1);
+}
+
+TEST_CASE(SUITE("LengthFieldMaximumFrameAndRecovery"))
+{
+    // Hand-authored FT3 frame: LENGTH = 255 counts the five link fields and 250 user
+    // octets, so the frame occupies 292 wire octets. User octet 0 is the transport header
+    // and octets 1..249 are application data.
+    std::string body = "05 64 FF C4 01 00 00 04 FF FF";
+    std::string expected = "C0";
+    for (unsigned i = 0; i < 250; ++i)
+    {
+        body += i == 0 ? " C0" : " 00";
+        if (i > 0)
+            expected += " 00";
+        if ((i + 1) % 16 == 0 || i + 1 == 250)
+            body += " FF FF";
+    }
+    const auto frame = RepairCRC(body);
+    REQUIRE(HexSequence(frame).Size() == 292);
+
+    LinkParserTest t;
+    t.WriteData(frame);
+    REQUIRE(t.sink.m_num_frames == 1);
+    REQUIRE(t.sink.CheckLast(LinkFunction::PRI_UNCONFIRMED_USER_DATA, true, 1, 1024));
+    REQUIRE(t.sink.received.Size() == 250);
+    REQUIRE(t.sink.received.AsHex() == expected);
+
+    // The same 250 user octets are inconsistent with a function code that carries none.
+    std::string inconsistent = "05 64 FF C9 01 00 00 04 FF FF";
+    for (unsigned i = 0; i < 250; ++i)
+    {
+        inconsistent += " 00";
+        if ((i + 1) % 16 == 0 || i + 1 == 250)
+            inconsistent += " FF FF";
+    }
+    LinkParserTest rejected;
+    rejected.WriteData(RepairCRC(inconsistent));
+    REQUIRE(rejected.sink.m_num_frames == 0);
+    REQUIRE(rejected.sink.received.IsEmpty());
+    REQUIRE(rejected.parser.Statistics().numBadLength == 1);
+
+    // A corrupt final block CRC must not be delivered, and the next valid frame must be.
+    HexSequence valid(frame);
+    std::array<uint8_t, 292> corrupted{};
+    std::memcpy(corrupted.data(), valid, valid.Size());
+    corrupted[corrupted.size() - 1] ^= 0x01;
+
+    LinkParserTest corrupt;
+    corrupt.WriteData(rseq_t(corrupted.data(), corrupted.size()));
+    REQUIRE(corrupt.sink.m_num_frames == 0);
+    REQUIRE(corrupt.sink.received.IsEmpty());
+    REQUIRE(corrupt.parser.Statistics().numBodyCrcError == 1);
+
+    corrupt.WriteData(frame);
+    REQUIRE(corrupt.sink.m_num_frames == 1);
+    REQUIRE(corrupt.sink.received.AsHex() == expected);
 }
 
 //////////////////////////////////////////
