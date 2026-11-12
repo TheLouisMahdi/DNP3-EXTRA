@@ -18,12 +18,15 @@
  * limitations under the License.
  */
 #include "utils/LinkHex.h"
+#include "utils/AcceptanceObservation.h"
 #include "utils/LinkLayerTest.h"
 #include "utils/MockTransportSegment.h"
 
 #include <ser4cpp/util/HexConversions.h>
 
 #include <catch.hpp>
+
+#include <array>
 
 #include <chrono>
 #include <iostream>
@@ -457,13 +460,15 @@ TEST_CASE(SUITE("Outbound confirmation modes select eligible single and multi-fr
     }
 }
 
-TEST_CASE(SUITE("Confirmed retries are bounded and start after transmit completion"))
+TEST_CASE("AT-CFG-05-RETRY", "[rtu-acceptance][confirmed-link]")
 {
     const uint8_t retryLimits[] = {0, 1, 5};
     const auto timeout = std::chrono::milliseconds(10);
 
-    for (const auto retries : retryLimits)
+    for (size_t i = 0; i < sizeof(retryLimits) / sizeof(retryLimits[0]); ++i)
     {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        const auto retries = retryLimits[i];
         LinkConfig config(true);
         config.ConfirmMode = LinkConfirmMode::Always;
         config.NumRetries = retries;
@@ -501,6 +506,56 @@ TEST_CASE(SUITE("Confirmed retries are bounded and start after transmit completi
         }
 
         REQUIRE(t.upper->GetCounters().numTxReady == 0);
+        acceptance::Observe("reset_transmissions", t.NumTotalWrites());
+
+        // Allow the reset, then lose every data ACK. The receiver ACKs the
+        // repeated FCB and delivers only the first copy, even in Never mode.
+        LinkConfig rx(false);
+        rx.LocalAddr = config.RemoteAddr;
+        rx.RemoteAddr = config.LocalAddr;
+        LinkLayerTest receiver(rx);
+        LinkLayerTest sender(config);
+        REQUIRE(receiver.link.OnLowerLayerUp());
+        REQUIRE(sender.link.OnLowerLayerUp());
+        const ByteStr payload(1, 0xAA);
+        MockTransportSegment data(1, "AA", config.GetAddresses());
+        REQUIRE(sender.upper->SendDown(data));
+        REQUIRE(sender.PopLastWriteAsHex() == initial);
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, true, false, false, rx.LocalAddr, rx.RemoteAddr));
+        const auto ack = LinkHex::Ack(false, false, rx.RemoteAddr, rx.LocalAddr);
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        // A reset ACK may arrive before the sender's own completion callback.
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(sender.link.OnTxReady());
+        const auto frame = LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA");
+        for (uint8_t attempt = 0; attempt <= retries; ++attempt)
+        {
+            REQUIRE(sender.PopLastWriteAsHex() == frame);
+            REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, rx.LocalAddr,
+                                     rx.RemoteAddr, payload.ToRSeq()));
+            REQUIRE(receiver.PopLastWriteAsHex() == ack);
+            REQUIRE(receiver.link.OnTxReady());
+            REQUIRE(sender.link.OnTxReady());
+            sender.exe->advance_time(timeout);
+            sender.exe->run_many();
+        }
+        REQUIRE(sender.NumTotalWrites() == retries + 2);
+        REQUIRE(sender.NumTransmitFailures() == 1);
+        REQUIRE(sender.upper->GetCounters().numTxReady == 0);
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+        REQUIRE(receiver.upper->receivedQueue.front() == "AA");
+        acceptance::Observe("data_transmissions", sender.NumTotalWrites() - 1);
+        acceptance::Observe("sender_completions", sender.upper->GetCounters().numTxReady);
+        acceptance::Observe("receiver_deliveries", receiver.upper->receivedQueue.size());
+    }
+    if (acceptance::Selected("V4"))
+    {
+        LinkConfig config(true);
+        config.ConfirmMode = LinkConfirmMode::Always;
+        config.NumRetries = 6;
+        REQUIRE_THROWS_AS(LinkLayerTest(config), std::invalid_argument);
+        acceptance::Observe("invalid_retry_limit_rejected", 1);
     }
 }
 
@@ -664,6 +719,81 @@ TEST_CASE(SUITE("Confirmed DFC one and reset NACK fail without recovery"))
     }
 }
 
+TEST_CASE("AT-CFG-05-DFC", "[rtu-acceptance][confirmed-link]")
+{
+    const std::array<LinkFunction, 4> functions{{LinkFunction::SEC_ACK, LinkFunction::SEC_NACK,
+                                                 LinkFunction::SEC_NOT_SUPPORTED, LinkFunction::SEC_LINK_STATUS}};
+    for (size_t i = 0; i < functions.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        LinkConfig config(true);
+        config.ConfirmMode = LinkConfirmMode::Always;
+        config.Timeout = TimeDuration::Milliseconds(10);
+        LinkLayerTest t(config);
+        REQUIRE(t.link.OnLowerLayerUp());
+        MockTransportSegment segments(1, "AA", config.GetAddresses());
+        REQUIRE(t.upper->SendDown(segments));
+        REQUIRE(t.PopLastWriteAsHex() == LinkHex::ResetLinkStates(true, config.RemoteAddr, config.LocalAddr));
+        REQUIRE(t.link.OnTxReady());
+        REQUIRE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.PopLastWriteAsHex() == LinkHex::ConfirmedUserData(true, true, config.RemoteAddr, config.LocalAddr, "AA"));
+        REQUIRE(t.link.OnTxReady());
+        REQUIRE(t.OnFrame(functions[i], false, false, true, config.LocalAddr, config.RemoteAddr));
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+        REQUIRE(t.NumTransmitFailures() == (i == 3 ? 0 : 1));
+        acceptance::Observe("failures_before_timeout", t.NumTransmitFailures());
+        t.exe->advance_time(std::chrono::milliseconds(10));
+        t.exe->run_many();
+        REQUIRE(t.NumTotalWrites() == 2);
+        REQUIRE(t.NumTransmitFailures() == 1);
+        REQUIRE(t.upper->GetCounters().numTxReady == 0);
+        acceptance::Observe("failures_after_timeout", t.NumTransmitFailures());
+        acceptance::Observe("sender_completions", t.upper->GetCounters().numTxReady);
+    }
+}
+
+TEST_CASE("AT-CFG-05-BCAST", "[rtu-acceptance][confirmed-link]")
+{
+    LinkConfig master(true);
+    master.ConfirmMode = LinkConfirmMode::Always;
+    LinkLayerTest tx(master);
+    REQUIRE(tx.link.OnLowerLayerUp());
+    for (uint16_t address : {uint16_t(LinkBroadcastAddress::ShallConfirm), uint16_t(LinkSelfAddress)})
+    {
+        MockTransportSegment segment(1, "AA", Addresses(master.LocalAddr, address));
+        REQUIRE(tx.upper->SendDown(segment));
+        REQUIRE(tx.PopLastWriteAsHex() == LinkHex::UnconfirmedUserData(true, address, master.LocalAddr, "AA"));
+        REQUIRE(tx.link.OnTxReady());
+        tx.exe->run_many();
+    }
+    acceptance::Observe("unconfirmed_transmissions", tx.NumTotalWrites());
+
+    LinkConfig outstation(false);
+    outstation.acceptSelfAddress = true;
+    LinkLayerTest rx(outstation);
+    REQUIRE(rx.link.OnLowerLayerUp());
+    REQUIRE(rx.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, true, false, false, outstation.LocalAddr, outstation.RemoteAddr));
+    REQUIRE(rx.link.OnTxReady());
+    const ByteStr bytes(1, 0xAB);
+    for (unsigned copy = 0; copy < 2; ++copy)
+        REQUIRE(rx.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, LinkBroadcastAddress::ShallConfirm,
+                           outstation.RemoteAddr, bytes.ToRSeq()));
+    REQUIRE(rx.NumTotalWrites() == 1);
+    REQUIRE(rx.upper->receivedQueue.size() == 1);
+    REQUIRE(rx.upper->receivedQueue.front() == "AB");
+    acceptance::Observe("broadcast_link_acks", rx.NumTotalWrites() - 1);
+    acceptance::Observe("broadcast_deliveries", rx.upper->receivedQueue.size());
+    REQUIRE(rx.OnFrame(LinkFunction::PRI_UNCONFIRMED_USER_DATA, true, false, false, LinkSelfAddress,
+                        outstation.RemoteAddr, bytes.ToRSeq()));
+    REQUIRE(rx.upper->receivedQueue.size() == 2);
+    REQUIRE(rx.upper->lastReceivedAddresses.destination == outstation.LocalAddr);
+    REQUIRE(rx.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, false, true, outstation.LocalAddr,
+                        outstation.RemoteAddr, bytes.ToRSeq()));
+    REQUIRE(rx.NumTotalWrites() == 2);
+    REQUIRE(rx.upper->receivedQueue.size() == 3);
+    acceptance::Observe("unicast_deliveries", rx.upper->receivedQueue.size() - 2);
+}
+
 TEST_CASE(SUITE("Confirmed recovery allowance is shared across segments"))
 {
     LinkConfig config(true);
@@ -790,14 +920,6 @@ TEST_CASE(SUITE("Confirmed early NACK waits for TX completion and reconnect rese
     REQUIRE(t.NumTransmitFailures() == 0);
 }
 
-TEST_CASE(SUITE("Confirmed link rejects retry limits above five"))
-{
-    LinkConfig config(true);
-    config.ConfirmMode = LinkConfirmMode::Always;
-    config.NumRetries = 6;
-    REQUIRE_THROWS_AS(LinkLayerTest(config), std::invalid_argument);
-}
-
 TEST_CASE(SUITE("Confirmed frames retain bytes and FCB until ACK"))
 {
     LinkConfig config(true);
@@ -831,7 +953,7 @@ TEST_CASE(SUITE("Confirmed frames retain bytes and FCB until ACK"))
     REQUIRE(t.upper->GetCounters().numTxReady == 1);
 }
 
-TEST_CASE(SUITE("Confirmed response ownership rejects wrong peer and stale status"))
+TEST_CASE("AT-CFG-05-OWNER", "[rtu-acceptance][confirmed-link]")
 {
     LinkConfig config(true);
     config.ConfirmMode = LinkConfirmMode::Always;
@@ -848,8 +970,13 @@ TEST_CASE(SUITE("Confirmed response ownership rejects wrong peer and stale statu
     REQUIRE(t.link.OnTxReady());
 
     REQUIRE_FALSE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr, 999));
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, config.LocalAddr + 1, config.RemoteAddr));
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::SEC_ACK, true, false, false, config.LocalAddr, config.RemoteAddr));
+    REQUIRE_FALSE(t.OnFrame(LinkFunction::SEC_ACK, false, false, false, LinkBroadcastAddress::ShallConfirm,
+                            config.RemoteAddr));
     REQUIRE(t.OnFrame(LinkFunction::SEC_LINK_STATUS, false, false, false, config.LocalAddr, config.RemoteAddr));
     REQUIRE(t.NumTotalWrites() == 1);
+    acceptance::Observe("reset_transmissions_before_timeout", t.NumTotalWrites());
     REQUIRE(t.exe->advance_time(std::chrono::milliseconds(10)) > 0);
     REQUIRE(t.exe->run_many() > 0);
     REQUIRE(t.PopLastWriteAsHex() == reset);
@@ -872,6 +999,10 @@ TEST_CASE(SUITE("Confirmed response ownership rejects wrong peer and stale statu
     REQUIRE(t.upper->GetCounters().numTxReady == 1);
     REQUIRE(t.exe->advance_time(std::chrono::milliseconds(20)) == 0);
     REQUIRE(t.NumTotalWrites() == 4);
+    REQUIRE(t.upper->receivedQueue.empty());
+    acceptance::Observe("transmissions", t.NumTotalWrites());
+    acceptance::Observe("sender_completions", t.upper->GetCounters().numTxReady);
+    acceptance::Observe("foreign_deliveries", t.upper->receivedQueue.size());
 }
 
 TEST_CASE(SUITE("Confirmed ACK received before TX callback completes the reset exchange"))
