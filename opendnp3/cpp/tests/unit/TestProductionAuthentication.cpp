@@ -5397,15 +5397,23 @@ TEST_CASE("ProductionAuthentication - B07 selected FC3 FC4 FC5 envelopes retain 
     REQUIRE(pair.outstation.cmdHandler->NumSelect() == selections + (direct ? 0 : 1));
 }
 
-TEST_CASE("ProductionAuthentication - G41 FC3 FC4 FC5 reject invalid MAC and replay",
-          "[production-sa][g41-sa-replay]")
+namespace
 {
-    const auto type = GENERATE(1u, 2u, 3u);
-    const bool wide = GENERATE(false, true);
-    const bool aggressive = GENERATE(false, true);
-    const auto target = GENERATE(3u, 4u, 5u);
-    const bool badMac = GENERATE(false, true);
-    CAPTURE(type, wide, aggressive, target, badMac);
+enum class ControlFault
+{
+    Replay,
+    InvalidMac,
+    ForeignAssociation,
+    WrongSequence,
+    DeniedPolicy,
+    ExpiredKeys,
+    UnknownUser,
+    NoKeys
+};
+
+void CheckAuthenticatedControlFault(unsigned type, bool wide, bool aggressive, unsigned target, ControlFault fault)
+{
+    CAPTURE(type, wide, aggressive, target, static_cast<unsigned>(fault));
 
     RuntimePair pair(false, aggressive, false, nullptr, false,
                      nullptr, 2, false, 2000, 2000, false,
@@ -5452,8 +5460,8 @@ TEST_CASE("ProductionAuthentication - G41 FC3 FC4 FC5 reject invalid MAC and rep
 
         REQUIRE(native.size() >= 5);
         REQUIRE(native[1] == fc);
-        REQUIRE(native[2] == 41);
-        REQUIRE(native[3] == type);
+        REQUIRE(native[2] == (type == 0 ? 12 : 41));
+        REQUIRE(native[3] == (type == 0 ? 1 : type));
         REQUIRE(native[4] == (wide ? 0x28 : 0x17));
 
         const auto beforeSelect = pair.outstation.cmdHandler->NumSelect();
@@ -5482,18 +5490,51 @@ TEST_CASE("ProductionAuthentication - G41 FC3 FC4 FC5 reject invalid MAC and rep
             REQUIRE(pair.master.context->OnTxReady());
         }
 
-        if (fc == target && badMac)
+        if (fc == target && fault != ControlFault::Replay)
         {
             HexSequence authentic(protectedWire);
-            std::vector<uint8_t> tampered(
+            std::vector<uint8_t> wire(
                 static_cast<const uint8_t*>(authentic.ToRSeq()),
-                static_cast<const uint8_t*>(authentic.ToRSeq())
-                    + authentic.ToRSeq().length());
+                static_cast<const uint8_t*>(authentic.ToRSeq()) + authentic.ToRSeq().length());
+            switch (fault)
+            {
+            case ControlFault::Replay: break;
+            case ControlFault::InvalidMac: wire.back() ^= 1; break;
+            case ControlFault::WrongSequence: wire[0] ^= 1; break;
+            case ControlFault::DeniedPolicy: pair.policy->allowControl = false; break;
+            case ControlFault::ExpiredKeys: {
+                const auto expiry = ProductionAuthenticationTestAccess::Session(pair.outstation.context, 2).ValidUntil();
+                pair.outstation.AdvanceTime(TimeDuration::Milliseconds(
+                    expiry - ProductionAuthenticationTestAccess::Now(pair.outstation.context)));
+                break;
+            }
+            case ControlFault::UnknownUser:
+                wire[aggressive ? 10 : 12] = 99;
+                wire[aggressive ? 11 : 13] = 0;
+                break;
+            case ControlFault::ForeignAssociation: break;
+            case ControlFault::NoKeys: {
+                OutstationTestObject fresh(OutSettings(pair.source, pair.policy, false, aggressive));
+                fresh.LowerLayerUp();
+                fresh.SendToOutstation(protectedWire);
+                REQUIRE(fresh.cmdHandler->NumInvocations() == 0);
+                while (!fresh.lower->HasNoData())
+                {
+                    const HexSequence response(fresh.lower->PopWriteAsHex());
+                    REQUIRE(response.ToRSeq()[1] == 0x83);
+                    REQUIRE(response.ToRSeq()[4] == 120);
+                    REQUIRE(response.ToRSeq()[5] == 7);
+                    fresh.OnTxReady();
+                }
+                break;
+            }
+            }
 
-            tampered.back() ^= 1;
-            pair.outstation.SendToOutstation(
-                HexConversions::to_hex(
-                    rseq_t(tampered.data(), tampered.size())));
+            const rseq_t frame(wire.data(), wire.size());
+            if (fault == ControlFault::ForeignAssociation)
+                ProductionAuthenticationTestAccess::ReceiveOtherAssociation(pair.outstation.context, frame);
+            else if (fault != ControlFault::NoKeys)
+                pair.outstation.SendToOutstation(HexConversions::to_hex(frame));
 
             REQUIRE(pair.outstation.cmdHandler->NumSelect() == beforeSelect);
             REQUIRE(pair.outstation.cmdHandler->NumOperate() == beforeOperate);
@@ -5558,7 +5599,7 @@ TEST_CASE("ProductionAuthentication - G41 FC3 FC4 FC5 reject invalid MAC and rep
             const auto operates = pair.outstation.cmdHandler->NumOperate();
             const auto results = pair.results.values.size();
 
-            // Replay the exact authenticated bytes, not a fresh request.
+            REQUIRE(fault == ControlFault::Replay);
             pair.outstation.SendToOutstation(protectedWire);
 
             REQUIRE(pair.outstation.cmdHandler->NumSelect() == selects);
@@ -5575,6 +5616,37 @@ TEST_CASE("ProductionAuthentication - G41 FC3 FC4 FC5 reject invalid MAC and rep
     REQUIRE(pair.outstation.cmdHandler->NumOperate() == operations + 1);
     REQUIRE(pair.outstation.cmdHandler->NumSelect()
             == selections + (target == 5 ? 0 : 1));
+}
+
+void ObserveAuthenticatedControlFaults(const std::array<ControlFault, 4>& faults)
+{
+    for (size_t i = 0; i < faults.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        unsigned receiverChecks = 0;
+        for (unsigned type : {0u, 1u, 2u, 3u})
+            for (const bool wide : {false, true})
+                for (const bool aggressive : {false, true})
+                    for (unsigned target : {3u, 4u, 5u})
+                    {
+                        CheckAuthenticatedControlFault(type, wide, aggressive, target, faults[i]);
+                        ++receiverChecks;
+                    }
+        acceptance::Observe("receiver_checks", receiverChecks);
+    }
+}
+} // namespace
+
+TEST_CASE("AT-CFG-08-REPLAY", "[rtu-acceptance][production-sa][g41-sa-replay]")
+{
+    ObserveAuthenticatedControlFaults({{ControlFault::Replay, ControlFault::InvalidMac,
+                                       ControlFault::ForeignAssociation, ControlFault::WrongSequence}});
+}
+
+TEST_CASE("AT-CFG-08-DENY", "[rtu-acceptance][production-sa][profile-controls]")
+{
+    ObserveAuthenticatedControlFaults({{ControlFault::DeniedPolicy, ControlFault::ExpiredKeys,
+                                       ControlFault::UnknownUser, ControlFault::NoKeys}});
 }
 
 TEST_CASE("ProductionAuthentication - B07 selected non-command functions traverse native Aggressive routing",

@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-08-REPLAY": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4"]
+    },
+    "AT-CFG-08-DENY": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4"]
+    },
     "AT-CFG-08-NOACK": {
       "kind": "unit",
       "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15", "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24", "V25"]
@@ -2290,6 +2298,70 @@
     }
   },
   "fixtures": {
+    "AT-CFG-08-REPLAY/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "exact replay across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-REPLAY/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "invalid MAC across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-REPLAY/V3": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "foreign association across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-REPLAY/V4": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "wrong application sequence across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-DENY/V1": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "denied policy across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-DENY/V2": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "expired keys across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-DENY/V3": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "unknown user across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
+    "AT-CFG-08-DENY/V4": {
+      "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
+      "description": "no receiving keys across FC3/4/5, G12V1 and G41V1-3, two qualifier widths and two SA modes.",
+      "input_hex": "C0 03",
+      "checks": [
+        ["receiver_checks", "receiver", "STATE", "OUTSTATION", 48, 0, 65535]
+      ]
+    },
     "AT-CFG-08-NOACK/V1": {
       "reference": "4.4.4–4.4.5; 11.7; Clause 7; Annex A.8.1/A.20; Device Profile p3 / original 43",
       "description": "Required SA FC6 variant 1",
