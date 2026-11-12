@@ -19,6 +19,7 @@
  */
 
 #include "mocks/StackPair.h"
+#include "../unit/utils/AcceptanceObservation.h"
 
 #include <opendnp3/ConsoleLogger.h>
 #include <opendnp3/DNP3Manager.h>
@@ -29,6 +30,8 @@
 
 #include <catch.hpp>
 
+#include <condition_variable>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -95,6 +98,151 @@ TEST_CASE(SUITE("TestEventIntegration"))
 
     std::cout << total_events_transferred << " in " << milliseconds.count() << " ms == " << rate << " events per/sec"
               << std::endl;
+}
+
+namespace
+{
+class ConfirmedTcpTrace final : public ILogHandler
+{
+public:
+    void log(ModuleId, const char* id, LogLevel level, const char*, const char* message) override
+    {
+        if (!(level == flags::LINK_RX) || !std::strstr(message, "Function: SEC_ACK ")) return;
+        std::unique_lock<std::mutex> lock(mutex);
+        if (std::strcmp(id, "confirmed-client") == 0)
+        {
+            if (++masterAcks != 2) return;
+            cv.notify_all();
+            cv.wait_for(lock, std::chrono::seconds(3), [this] { return released; });
+        }
+        else if (std::strcmp(id, "confirmed-server") == 0)
+        {
+            ++outstationAcks;
+            cv.notify_all();
+        }
+    }
+
+    bool WaitForRequestAck()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(3), [this] { return masterAcks >= 2; });
+    }
+
+    void Release()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+        cv.notify_all();
+    }
+
+    bool WaitForOutstationAcks(size_t expected)
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(3), [this, expected] { return outstationAcks >= expected; });
+    }
+
+    std::pair<size_t, size_t> Counts()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return {masterAcks, outstationAcks};
+    }
+
+private:
+    std::mutex mutex;
+    std::condition_variable cv;
+    size_t masterAcks = 0, outstationAcks = 0;
+    bool released = false;
+};
+} // namespace
+
+TEST_CASE("AT-CFG-05-TCP", "[f01-tcp][confirmed-link]")
+{
+    constexpr uint16_t points = 300;
+    const auto timeout = std::chrono::seconds(5);
+    const auto trace = std::make_shared<ConfirmedTcpTrace>();
+    const auto clientListener = std::make_shared<QueuedChannelListener>();
+    const auto serverListener = std::make_shared<QueuedChannelListener>();
+    DNP3Manager manager(2, trace);
+    const auto logLevels = levels::NORMAL | flags::LINK_RX;
+    auto server = manager.AddTCPServer("confirmed-server", logLevels, ServerAcceptMode::CloseExisting,
+                                       IPEndpoint::Localhost(0), serverListener);
+    REQUIRE(server);
+    auto client = manager.AddTCPClient("confirmed-client", logLevels, ChannelRetry::Default(),
+                                       {IPEndpoint::Localhost(server->GetBoundPort())}, "127.0.0.1", clientListener);
+    REQUIRE(client);
+
+    DatabaseConfig database;
+    UpdateBuilder update;
+    for (uint16_t index = 0; index < points; ++index)
+    {
+        database.binary_input[index].svariation = StaticBinaryVariation::Group1Var2;
+        update.Update(Binary(index % 2 == 0, Flags(1)), index, EventMode::Suppress);
+    }
+    OutstationStackConfig outConfig(database);
+    outConfig.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    outConfig.link.ConfirmMode = LinkConfirmMode::Always;
+    outConfig.link.Timeout = TimeDuration::Seconds(5);
+    auto outstation = server->AddOutstation("confirmed-outstation", SuccessCommandHandler::Create(),
+                                            DefaultOutstationApplication::Create(), outConfig);
+    REQUIRE(outstation);
+    outstation->Apply(update.Build());
+    outstation->GetStackStatistics();
+
+    MasterStackConfig masterConfig;
+    masterConfig.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    masterConfig.master.disableUnsolOnStartup = false;
+    masterConfig.master.unsolClassMask = ClassField::None();
+    masterConfig.master.startupIntegrityClassMask = ClassField::None();
+    masterConfig.master.ignoreRestartIIN = true;
+    masterConfig.link.ConfirmMode = LinkConfirmMode::Always;
+    masterConfig.link.Timeout = TimeDuration::Seconds(5);
+    auto soe = std::make_shared<QueuingSOEHandler>();
+    auto master = client->AddMaster("confirmed-master", soe, DefaultMasterApplication::Create(), masterConfig);
+    REQUIRE(master);
+    REQUIRE(outstation->Enable());
+    REQUIRE(master->Enable());
+
+    size_t totalPoints = 0;
+    for (size_t connection = 1; connection <= 2; ++connection)
+    {
+        REQUIRE(serverListener->WaitForState(ChannelState::OPEN, timeout));
+        REQUIRE(clientListener->WaitForState(ChannelState::OPEN, timeout));
+        master->ScanAllObjects(GroupVariationID(1, 2), soe);
+        std::vector<ExpectedValue> received;
+        if (connection == 1)
+        {
+            const bool gated = trace->WaitForRequestAck();
+            const auto early = soe->values.DrainTo(received, std::chrono::milliseconds(0));
+            trace->Release();
+            REQUIRE(gated);
+            REQUIRE(early == 0);
+            acceptance::Observe("measurements_before_ack", early);
+        }
+
+        REQUIRE(soe->values.DrainTo(received, timeout) == points);
+        for (uint16_t index = 0; index < points; ++index)
+            REQUIRE(received[index].Equals(ExpectedValue(Binary(index % 2 == 0), index)));
+        totalPoints += received.size();
+        // An ACK for link reset, one ACK per data frame, no application CONFIRM for static data.
+        REQUIRE(trace->WaitForOutstationAcks(3 * connection));
+        outstation->GetStackStatistics();
+        const auto counts = trace->Counts();
+        REQUIRE(counts.first == 2 * connection);
+        REQUIRE(counts.second == 3 * connection);
+        if (connection == 1)
+        {
+            REQUIRE(master->Disable());
+            REQUIRE(clientListener->WaitForState(ChannelState::CLOSED, timeout));
+            REQUIRE(serverListener->WaitForState(ChannelState::CLOSED, timeout));
+            REQUIRE(master->Enable());
+        }
+    }
+
+    const auto counts = trace->Counts();
+    acceptance::Observe("master_link_acks", counts.first);
+    acceptance::Observe("outstation_link_acks", counts.second);
+    acceptance::Observe("delivered_points", totalPoints);
+    manager.Shutdown();
 }
 
 TEST_CASE(SUITE("One solicited APDU above 2048 octets survives TCP transport segmentation"), "[f01-tcp]")
