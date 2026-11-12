@@ -200,7 +200,10 @@ public:
 
 class MasterObserver final : public IMasterApplication
 {
+    const bool logStartup;
+
 public:
+    explicit MasterObserver(bool logStartup) : logStartup(logStartup) {}
     UTCTimestamp Now() override
     {
         const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -222,7 +225,7 @@ public:
 
     void OnTaskComplete(const TaskInfo& info) override
     {
-        if (info.type != MasterTaskType::USER_TASK && info.result == TaskCompletion::SUCCESS) return;
+        if (!logStartup && info.type != MasterTaskType::USER_TASK && info.result == TaskCompletion::SUCCESS) return;
         Console::Print(info.result == TaskCompletion::SUCCESS ? "OK" : "WARN",
                        std::string("Task ") + MasterTaskTypeSpec::to_string(info.type)
                        + ": " + TaskCompletionSpec::to_string(info.result));
@@ -869,9 +872,16 @@ int RunMaster(diagnostic::Options o)
     config.master.unsolClassMask = ClassField::None(); // Enable only on the explicit CLI command.
     config.master.startupIntegrityClassMask = ClassField::AllClasses();
     config.master.timeSyncMode = TimeSyncMode::NonLAN;
+    if (o.testColdRestart)
+    {
+        config.master.disableUnsolOnStartup = false;
+        config.master.startupAuthenticationUser = 3; // Provisioned TEST engineer.
+        config.master.startupIntegrityClassMask = ClassField(PointClass::Class0);
+        config.master.unsolClassMask = ClassField(PointClass::Class1);
+    }
     ConfigureLink(config.link, o);
     auto soe = std::make_shared<SoePrinter>();
-    auto master = channel->AddMaster("cli-master-stack", soe, std::make_shared<MasterObserver>(), config);
+    auto master = channel->AddMaster("cli-master-stack", soe, std::make_shared<MasterObserver>(o.testColdRestart), config);
     if (!master || !master->Enable()) throw std::runtime_error("Master could not enable");
     Help(true, o.rtuIoProfile);
     std::string line;
@@ -1046,8 +1056,11 @@ int RunMaster(diagnostic::Options o)
                 master->PerformFunction("unsol", w[1] == "on" ? FunctionCode::ENABLE_UNSOLICITED : FunctionCode::DISABLE_UNSOLICITED,
                     {Header::AllObjects(60, 2), Header::AllObjects(60, 3), Header::AllObjects(60, 4)}, task);
             else if (w[0] == "restart" && w.size() == 2 && (w[1] == "cold" || w[1] == "warm"))
-                master->Restart(w[1] == "cold" ? RestartType::COLD : RestartType::WARM, [](const RestartOperationResult& result) {
-                    Console::Print("RESTART", TaskCompletionSpec::to_string(result.summary)); }, task);
+                master->Restart(w[1] == "cold" ? RestartType::COLD : RestartType::WARM, [reportDelay = o.testColdRestart](const RestartOperationResult& result) {
+                    std::string message = TaskCompletionSpec::to_string(result.summary);
+                    if (reportDelay && result.summary == TaskCompletion::SUCCESS)
+                        message += " delay-ms=" + result.restartTime.ToString();
+                    Console::Print("RESTART", message); }, task);
             else if (Is(w, {"time"})) master->Scan({Header::Count8(50, 1, 1)}, soe, task);
             else { Console::Print("ERROR", "Unknown command. Type help."); continue; }
             Console::Print("SUBMITTED", line + (fc6NoAck
@@ -1069,8 +1082,21 @@ class OutstationApplication final : public DefaultOutstationApplication
 {
     mutable std::mutex mutex;
     const bool rtuIoProfile;
+    const bool testColdRestart;
 public:
-    explicit OutstationApplication(bool rtuIoProfile) : rtuIoProfile(rtuIoProfile) {}
+    explicit OutstationApplication(const diagnostic::Options& options)
+        : rtuIoProfile(options.rtuIoProfile), testColdRestart(options.testColdRestart) {}
+
+    RestartMode ColdRestartSupport() const override
+    {
+        return testColdRestart ? RestartMode::SUPPORTED_DELAY_FINE : RestartMode::UNSUPPORTED;
+    }
+
+    uint16_t ColdRestart() override
+    {
+        Console::Print("RESTART", "TEST cold restart requested");
+        return 1000; // The process fixture performs the simulated reboot.
+    }
 
     DNPTime Now() override { std::lock_guard<std::mutex> lock(mutex); return DefaultOutstationApplication::Now(); }
     bool WriteAbsoluteTime(const UTCTimestamp& time) override
@@ -1128,7 +1154,7 @@ int RunOutstation(const diagnostic::Options& o)
     config.outstation.params.maxRxFragSize = o.rxFragmentBytes;
     config.outstation.params.maxTxFragSize = o.txFragmentBytes;
     config.outstation.eventBufferConfig = EventBufferConfig::AllTypes(100);
-    config.outstation.eventBufferConfig.maxSecurityStatEvents = 100;
+    config.outstation.eventBufferConfig.maxSecurityStatEvents = o.testColdRestart ? 0 : 100;
     if (o.rtuIoProfile)
     {
         config.outstation.eventBufferConfig.maxCounterEvents = 0;
@@ -1151,7 +1177,7 @@ int RunOutstation(const diagnostic::Options& o)
         config.outstation.params.numUnsolRetries = NumRetries::Fixed(o.unsolRetries);
     ConfigureLink(config.link, o);
     config.link.KeepAliveTimeout = TimeDuration::Max();
-    auto application = std::make_shared<OutstationApplication>(o.rtuIoProfile);
+    auto application = std::make_shared<OutstationApplication>(o);
     if (o.trustedTime) application->WriteAbsoluteTime(UTCTimestamp(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())));
     auto commands = std::make_shared<SimulatedCommands>(o);
     auto outstation = channel->AddOutstation("cli-outstation-stack", commands, application, config);

@@ -1759,6 +1759,71 @@ def profile_binary_event_wire(exe):
     print("PASS binary events: real TCP G2/G4 variation, time, and confirmation", flush=True)
 
 
+def profile_cold_restart(exe):
+    provision = ["--test-only", "--profile", "cold-" + uuid.uuid4().hex[:12], "--auth", "method4"]
+    options = [*provision, *loopback_port(), "--test-cold-restart", "--trust-system-time", "--trace"]
+    out_options = ["--unsolicited"]
+    master = out = None
+    run(exe, "test-provision", *provision)
+
+    def startup(peer, cursor):
+        for pattern in (r"\[SA-OBJECT\] TX G120V6$", r"Task CLEAR_RESTART: SUCCESS$",
+                        r"Task STARTUP_INTEGRITY_POLL: SUCCESS$", r"Task ENABLE_UNSOLICITED: SUCCESS$"):
+            line = peer.wait(pattern, cursor)
+            with peer.cv:
+                cursor = peer.lines.index(line, cursor) + 1
+
+    def output(peer, state):
+        cursor = peer.task("read 10 2 0 0")
+        peer.wait(rf"BinaryOutput\[0\]={state}\b", cursor)
+
+    try:
+        master, out = connected(exe, options, out_options=out_options)
+        startup(master, 0)
+        master.task("crob 0 on direct")
+        out.executed(1)
+        output(master, "ON")
+
+        master.send("user 3")
+        with out.cv:
+            restart = len(out.lines)
+        cursor = master.send("restart cold")
+        master.wait(r"\[RESTART\] SUCCESS delay-ms=1000$", cursor)
+        out.wait(r"\[RESTART\] TEST cold restart requested$", restart)
+        with out.cv:
+            assert sum("[RESTART] TEST cold restart requested" in line for line in out.lines[restart:]) == 1
+        original = out.process
+        with master.cv:
+            cursor = len(master.lines)
+        out.close()
+        out = None
+        assert original.poll() == 0
+        master.wait(r"\[LINK\] CLOSED$", cursor)
+        time.sleep(1)  # Advertised Host simulation delay, with the Master still running.
+        out = Peer(exe, "outstation", [*options, *out_options])
+        master.wait(r"\[LINK\] OPEN$", cursor)
+        out.wait(r"\[LINK\] OPEN$")
+        master.wait(r"IIN=8[0-9a-f] 00\b", cursor)
+        startup(master, cursor)
+        out.executed(0)
+        output(master, "OFF")
+
+        with master.cv:
+            cursor = len(master.lines)
+        out.send("set binary 0 on force")
+        master.wait(r"Group2Var2 EVENT Binary\[0\]=ON\b", cursor)
+        master.send("user 2")
+        master.task("crob 0 on direct")
+        out.executed(1)
+        output(master, "ON")
+    finally:
+        try:
+            stop(out, master)
+        finally:
+            run(exe, "test-cleanup", *provision)
+    print("PASS PROFILE-068 authenticated FC13 and separate-process TCP recovery", flush=True)
+
+
 def profile_class_restart(exe):
     """Route events through FC22, a link reconnect, and an Outstation process restart."""
     options = ["--auth", "compat", "--rtu-io-profile", *loopback_port()]
@@ -3707,7 +3772,7 @@ def main():
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
-    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-class-restart", "profile-time-wire", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
+    parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-class-restart", "profile-cold-restart", "profile-time-wire", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
     parser.add_argument("--scenario")
     parser.add_argument("--vector", choices=("V1", "V2"))
     parser.add_argument("--seed", type=int, default=1741815)
@@ -3752,6 +3817,7 @@ def main():
     if args.only in ("f01-required-fragments", "all"): f01_required_fragments(args.exe)
     if args.only in ("profile-binary-wire", "all"): profile_binary_wire(args.exe)
     if args.only in ("profile-class-restart", "all"): profile_class_restart(args.exe)
+    if args.only in ("profile-cold-restart", "all"): profile_cold_restart(args.exe)
     if args.only in ("profile-time-wire", "all"): profile_time_wire(args.exe)
     if args.only in ("profile-analog", "all"): profile_analog_event(args.exe)
     if args.only in ("profile-crob-latch", "all"):

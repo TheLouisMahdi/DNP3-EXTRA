@@ -30,6 +30,7 @@ struct Options
     bool unsolicited = false, trace = false, tls = false;
     bool commandEvents = false;
     bool rtuIoProfile = false;
+    bool testColdRestart = false;
     std::bitset<10> rtuCrobLatches;
     std::bitset<10> rtuCrobTwoOutputs;
     std::bitset<10> rtuCrobActivation;

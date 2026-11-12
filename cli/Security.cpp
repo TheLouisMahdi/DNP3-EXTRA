@@ -455,6 +455,7 @@ Options ParseOptions(int argc, char** argv)
     {
         const std::string option = argv[n];
         if (option == "--test-only") { o.testOnly = true; continue; }
+        if (option == "--test-cold-restart") { o.testColdRestart = true; continue; }
         if (option == "--trust-system-time") { o.trustedTime = true; continue; }
         if (option == "--aggressive") { o.aggressive = true; continue; }
         if (option == "--deny-controls") { o.denyControls = true; continue; }
@@ -601,6 +602,9 @@ Options ParseOptions(int argc, char** argv)
         throw std::runtime_error("--crl requires a TLS master or outstation");
     if (o.crlCheckHours && o.crl.empty())
         throw std::runtime_error("--crl-check-hours requires --crl");
+    if (o.testColdRestart && (!o.testOnly || o.profile.empty() || o.auth == "compat"
+        || (o.role != "master" && o.role != "outstation")))
+        throw std::runtime_error("--test-cold-restart requires a test SA profile and a peer role");
     if (o.rtuIoProfile && o.role != "master" && o.role != "outstation")
         throw std::runtime_error("--rtu-io-profile requires master or outstation");
     if ((o.rtuCrobLatches.any() || o.rtuCrobTwoOutputs.any() || o.rtuCrobActivation.any()) &&
