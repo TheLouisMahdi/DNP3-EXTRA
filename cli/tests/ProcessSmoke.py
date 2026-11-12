@@ -1076,6 +1076,107 @@ def acceptance_counter_profile(exe):
         stop(out, master)
 
 
+def acceptance_rtu_counters(exe, scenario):
+    options = ["--auth", "compat", "--rtu-io-profile", "--link-confirm", "never"]
+    counter_value = re.compile(r"(?:Counter|FrozenCounter)\[\d+\]=")
+
+    def exchange(peer, sequence, function_and_objects):
+        control = 0xC0 | sequence
+        peer.sendall(f01_link_frame(bytes([control]) + bytes.fromhex(function_and_objects), sequence))
+        _, response = f01_receive_apdu(peer)
+        assert response[:2] == bytes([control, 0x81]), response.hex(" ")
+        return response[4:]
+
+    def scan_without_counters(master, command):
+        cursor = master.task(command)
+        with master.cv:
+            lines = master.lines[cursor:]
+            values = [line for line in lines if counter_value.search(line)]
+        assert not values, values
+        return lines
+
+    if scenario == "EVENT":
+        master, out = connected(exe, [*options, "--trace"], out_options=["--unsolicited"])
+        try:
+            master.task("unsol on")
+            with master.cv:
+                cursor = len(master.lines)
+            with out.cv:
+                confirmation = len(out.lines)
+            updated = out.send("set binary 0 on force")
+            out.wait(r"\[UPDATE\].*binary 0 on force", updated)
+            event = master.wait(r"Group2Var2 EVENT Binary\[0\]=ON\b", cursor)
+            out.wait(r"FUNC: CONFIRM", confirmation)
+            scans = 0
+            for command in ("scan class1", "scan class2", "scan class3", "read 22 0", "read 23 0"):
+                lines = scan_without_counters(master, command)
+                assert not any(" EVENT Binary[0]=" in line for line in lines), lines
+                scans += 1
+            observations = {"ordinary_unsolicited": int(bool(event)), "empty_counter_scans": scans}
+        finally:
+            stop(out, master)
+    elif scenario == "STATIC":
+        master, out = connected(exe, options)
+        try:
+            changed = out.send("set binary 0 on suppress")
+            out.wait(r"\[UPDATE\].*binary 0 on suppress", changed)
+            lines = scan_without_counters(master, "scan integrity")
+            assert any(re.search(r"STATIC Binary\[0\]=ON\b", line) for line in lines), lines
+            ordinary = 1
+        finally:
+            stop(out, master)
+
+        port = loopback_port()
+        out = Peer(exe, "outstation", [*options, *port])
+        try:
+            out.wait(r"\[HELP\]")
+            changed = out.send("set binary 0 on suppress")
+            out.wait(r"\[UPDATE\].*binary 0 on suppress", changed)
+            direct = 0
+            with socket.create_connection(("127.0.0.1", int(port[1])), timeout=5) as raw:
+                out.wait(r"\[LINK\] OPEN$")
+                for sequence, selector in enumerate(("14 00 06", "14 00 00 00 09", "14 00 01 00 00 09 00",
+                                                    "15 00 06", "15 00 00 00 09", "15 00 01 00 00 09 00")):
+                    assert exchange(raw, sequence, "01 " + selector) == b""
+                    direct += 1
+                mixed = exchange(raw, 6, "01 14 00 06 01 02 00 00 00 15 00 06")
+                assert mixed == bytes.fromhex("01 02 00 00 00 81"), mixed.hex(" ")
+            observations = {"empty_direct_selectors": direct, "class0_binary_marker": ordinary,
+                            "mixed_binary_marker": int(bool(mixed))}
+        finally:
+            stop(out)
+    else:
+        rejected = freeze_checks = recovered = 0
+        for process in range(2):
+            port = loopback_port()
+            out = Peer(exe, "outstation", [*options, *port])
+            try:
+                out.wait(r"\[HELP\]")
+                updated = out.send("set counter 5 123 force")
+                out.wait(r"\[ERROR\] Invalid point type/value", updated)
+                rejected += 1
+                for connection in range(2 if process == 0 else 1):
+                    with socket.create_connection(("127.0.0.1", int(port[1])), timeout=5) as raw:
+                        out.wait(r"\[LINK\] OPEN$")
+                        if process == 0 and connection == 0:
+                            for sequence, function in enumerate((7, 9)):
+                                assert exchange(raw, sequence, f"{function:02X} 14 00 06") == b""
+                                freeze_checks += 1
+                            for sequence, function in enumerate((8, 10), start=2):
+                                raw.sendall(f01_link_frame(bytes([0xC0 | sequence, function, 20, 0, 6]), sequence))
+                                freeze_checks += 1
+                        # The solicited read also rejects any spurious ordinary response to FC8/10.
+                        assert exchange(raw, 4, "01 14 00 06 15 00 06 16 00 06 17 00 06") == b""
+                        recovered += 1
+            finally:
+                stop(out)
+        observations = {"rejected_updates": rejected, "freeze_checks": freeze_checks,
+                        "empty_reads_after_reconnect_or_restart": recovered}
+
+    for name, actual in observations.items():
+        print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
+
+
 def profile_analog_event(exe):
     """Selected RTU analog event and output control checks over real TCP."""
     configurations = (
@@ -3235,6 +3336,8 @@ def main():
             acceptance_sa_control(args.exe, control, args.vector == "V1")
         elif args.vector == "V1" and args.scenario == "AT-CFG-13-COMPAT":
             acceptance_counter_profile(args.exe)
+        elif args.vector == "V1" and args.scenario in ("AT-CFG-13-STATIC", "AT-CFG-13-EVENT", "AT-CFG-13-NEG"):
+            acceptance_rtu_counters(args.exe, args.scenario.removeprefix("AT-CFG-13-"))
         elif args.vector == "V1" and args.scenario in ("AT-CFG-03-MASTER-CLI", "AT-CFG-03-OUTSTATION-CLI"):
             role = args.scenario.split("-")[3].lower()
             acceptance_fragment_options(args.exe, role)
