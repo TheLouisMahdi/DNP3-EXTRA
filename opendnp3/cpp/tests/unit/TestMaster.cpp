@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "utils/APDUHexBuilders.h"
+#include "utils/AcceptanceObservation.h"
 #include "utils/CallbackQueue.h"
 #include "utils/MasterTestFixture.h"
 #include "utils/OutstationTestObject.h"
@@ -557,8 +558,10 @@ TEST_CASE(SUITE("SolicitedMultiFragResponseConfirmsAreCorrelatedAndQueued"))
     REQUIRE((Binary(true, Flags(0x01)) == t.meas->binarySOE[4].meas));
 }
 
-TEST_CASE(SUITE("MalformedConfirmedSolicitedResponseIsNotAcknowledged"))
+TEST_CASE("AT-CFG-14-MALFORMED", "[rtu-acceptance][profile-fragments]")
 {
+    const auto continuation = GENERATE(false, true);
+    if (!acceptance::Selected(continuation ? "V2" : "V1")) return;
     auto config = NoStartupTasks();
     MasterTestFixture t(config);
     auto callback = std::make_shared<MockTaskCallback>();
@@ -568,12 +571,23 @@ TEST_CASE(SUITE("MalformedConfirmedSolicitedResponseIsNotAcknowledged"))
 
     REQUIRE(t.lower->PopWriteAsHex() == hex::IntegrityPoll(0));
     REQUIRE(t.context->OnTxReady());
-    REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02")); // Truncated G1V2 object.
+    if (continuation)
+    {
+        REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02 02 81"));
+        REQUIRE(t.lower->PopWriteAsHex() == hex::Confirm(0, false));
+        REQUIRE(t.context->OnTxReady());
+        REQUIRE(t.SendToMaster("61 81 00 00 01 02 00 03 03 81 01 02 00 04")); // Valid header plus truncated tail.
+    }
+    else
+        REQUIRE(t.SendToMaster("A0 81 00 00 01 02 00 02")); // Truncated G1V2 object.
 
     REQUIRE(t.lower->HasNoData());
-    REQUIRE(t.meas->TotalReceived() == 0);
+    REQUIRE(t.meas->TotalReceived() == (continuation ? 1 : 0));
     REQUIRE(callback->results.size() == 1);
     REQUIRE(callback->results.front() == TaskCompletion::FAILURE_BAD_RESPONSE);
+    acceptance::Observe("previously_delivered", t.meas->TotalReceived());
+    acceptance::Observe("bad_fragment_confirms", t.lower->NumWrites());
+    acceptance::Observe("completion", static_cast<uint8_t>(callback->results.front()));
 }
 
 TEST_CASE(SUITE("SolicitedWrongSequenceTimesOutAndUnexpectedFIRIsNotConfirmed"))
@@ -717,11 +731,12 @@ TEST_CASE(SUITE("UnexpectedAssemblyFragmentsAbortWithoutApplyingTheirIIN"))
     REQUIRE(t.application->rxIIN.size() == 1);
 }
 
-TEST_CASE(SUITE("SolicitedCompleteResponseDeadlineSurvivesPartialProgress"))
+TEST_CASE("AT-CFG-14-TIME", "[rtu-acceptance][profile-fragments]")
 {
     const auto arrival = GENERATE(9, 10, 11);
+    if (!acceptance::Selected(("V" + std::to_string(arrival - 8)).c_str())) return;
     auto params = NoStartupTasks();
-    params.responseTimeout = TimeDuration::Milliseconds(100);
+    params.responseTimeout = TimeDuration::Milliseconds(7);
     params.maxResponseTime = TimeDuration::Milliseconds(10);
     MasterTestFixture t(params);
     auto callback = std::make_shared<MockTaskCallback>();
@@ -745,6 +760,20 @@ TEST_CASE(SUITE("SolicitedCompleteResponseDeadlineSurvivesPartialProgress"))
     REQUIRE(callback->results.size() == 1);
     REQUIRE(callback->results.front() == (arrival < 10 ? TaskCompletion::SUCCESS
                                                        : TaskCompletion::FAILURE_RESPONSE_TIMEOUT));
+    acceptance::Observe("delivered_points", t.meas->TotalReceived());
+    acceptance::Observe("completion", static_cast<uint8_t>(callback->results.front()));
+
+    t.meas->Clear();
+    t.context->ScanAllObjects(GroupVariationID(1, 2), t.meas, TaskConfig::With(callback));
+    t.exe->run_many();
+    const auto next = t.lower->PopWriteAsHex();
+    REQUIRE(next.substr(3) == "01 01 02 06");
+    REQUIRE(t.context->OnTxReady());
+    REQUIRE(t.SendToMaster(next.substr(0, 2) + " 81 00 00 01 02 00 04 04 81"));
+    REQUIRE(callback->results.size() == 2);
+    REQUIRE(callback->results.back() == TaskCompletion::SUCCESS);
+    REQUIRE(t.meas->binarySOE.at(4).meas.value);
+    acceptance::Observe("recovered_points", t.meas->TotalReceived());
 }
 
 TEST_CASE(SUITE("EventPoll"))

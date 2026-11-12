@@ -19,6 +19,7 @@
  */
 
 #include "utils/APDUHexBuilders.h"
+#include "utils/AcceptanceObservation.h"
 #include "utils/OutstationTestObject.h"
 
 #include <dnp3mocks/DatabaseHelpers.h>
@@ -556,14 +557,16 @@ TEST_CASE(SUITE("UnsolEventBufferOverflow"))
     REQUIRE(t.lower->PopWriteAsHex().empty());
 }
 
-TEST_CASE(SUITE("UnsolMultiFragments"))
+TEST_CASE("AT-CFG-14-UNSOL", "[rtu-acceptance][profile-fragments]")
 {
     OutstationConfig cfg;
     cfg.params.allowUnsolicited = true;
-    cfg.params.maxTxFragSize = 20;                             // this will cause the unsol response to get fragmented
-    cfg.params.unsolClassMask = ClassField::AllEventClasses(); // this allows the EnableUnsol sequence to be skipped
+    cfg.params.maxTxFragSize = 20; // One analog event per APDU.
+    cfg.params.unsolClassMask = ClassField::None();
     cfg.eventBufferConfig = EventBufferConfig(0, 0, 5);
-    OutstationTestObject t(cfg, configure::by_count_of::analog_input(5));
+    auto database = configure::by_count_of::analog_input(5);
+    database.analog_input.at(0).clazz = PointClass::Class2;
+    OutstationTestObject t(cfg, database);
 
     t.LowerLayerUp();
 
@@ -572,25 +575,31 @@ TEST_CASE(SUITE("UnsolMultiFragments"))
     t.SendToOutstation(hex::UnsolConfirm(0));
     REQUIRE(t.lower->PopWriteAsHex().empty());
 
+    t.SendToOutstation("C0 14 3C 02 06");
+    REQUIRE(t.lower->PopWriteAsHex() == "C0 81 80 00");
+    t.OnTxReady();
+
     t.Transaction([](IUpdateHandler& db) {
         db.Update(Analog(7, Flags(0x01)), 1);
         db.Update(Analog(13, Flags(0x01)), 3);
+        db.Update(Analog(42, Flags(0x01)), 0);
     });
 
-    // Only enough room to in the APDU to carry a single value
-    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 82 00 20 01 28 01 00 01 00 01 07 00 00 00");
+    REQUIRE(t.lower->PopWriteAsHex() == "F1 82 86 00 20 01 28 01 00 01 00 01 07 00 00 00");
     t.OnTxReady();
+    t.SendToOutstation(hex::SolicitedConfirm(1));
+    t.SendToOutstation(hex::UnsolConfirm(2));
+    REQUIRE(t.lower->HasNoData());
     t.SendToOutstation(hex::UnsolConfirm(1));
 
     // Check that the confirm is reported to the IOutstationApplication
     REQUIRE(t.application->confirms.size() == 2);
     REQUIRE(t.application->confirms[1].is_unsolicited == true);
     REQUIRE(t.application->confirms[1].num_class1 == 1);
-    REQUIRE(t.application->confirms[1].num_class2 == 0);
+    REQUIRE(t.application->confirms[1].num_class2 == 1);
     REQUIRE(t.application->confirms[1].num_class3 == 0);
 
-    // should immediately try to send another unsol packet
-    REQUIRE(t.lower->PopWriteAsHex() == "F2 82 80 00 20 01 28 01 00 03 00 01 0D 00 00 00");
+    REQUIRE(t.lower->PopWriteAsHex() == "F2 82 84 00 20 01 28 01 00 03 00 01 0D 00 00 00");
     t.OnTxReady();
     t.SendToOutstation(hex::UnsolConfirm(2));
 
@@ -600,8 +609,12 @@ TEST_CASE(SUITE("UnsolMultiFragments"))
     REQUIRE(t.application->confirms.size() == 3);
     REQUIRE(t.application->confirms[2].is_unsolicited == true);
     REQUIRE(t.application->confirms[2].num_class1 == 0);
-    REQUIRE(t.application->confirms[2].num_class2 == 0);
+    REQUIRE(t.application->confirms[2].num_class2 == 1);
     REQUIRE(t.application->confirms[2].num_class3 == 0);
+    acceptance::Observe("confirmed_unsolicited", t.application->confirms.size() - 1);
+    acceptance::Observe("disabled_class_retained", t.application->confirms[2].num_class2);
+    t.SendToOutstation(hex::ClassPoll(3, PointClass::Class2));
+    REQUIRE(t.lower->PopWriteAsHex() == "E3 81 80 00 20 01 28 01 00 00 00 01 2A 00 00 00");
 }
 
 void WriteDuringUnsol(bool beforeTx)

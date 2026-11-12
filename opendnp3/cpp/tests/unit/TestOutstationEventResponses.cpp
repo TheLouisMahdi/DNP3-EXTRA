@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 #include "utils/APDUHexBuilders.h"
+#include "utils/AcceptanceObservation.h"
 #include "utils/BufferHelpers.h"
 #include "utils/OutstationTestObject.h"
 
@@ -181,8 +182,10 @@ TEST_CASE(SUITE("DisconnectWhileSolicitedConfirmWaitDoesNotContinueOldResponse")
     REQUIRE(t.lower->PopWriteAsHex() == "A1 81 82 00 02 01 28 02 00 00 00 81 01 00 01");
 }
 
-TEST_CASE(SUITE("SolicitedConfirmTimeoutRetainsEventsAndStopsOldFragmentSequence"))
+TEST_CASE("AT-CFG-14-LOSS", "[rtu-acceptance][profile-fragments]")
 {
+    const auto disconnect = GENERATE(false, true);
+    if (!acceptance::Selected(disconnect ? "V2" : "V1")) return;
     OutstationConfig config;
     config.params.maxTxFragSize = 15;
     config.params.solConfirmTimeout = TimeDuration::Milliseconds(10);
@@ -198,7 +201,13 @@ TEST_CASE(SUITE("SolicitedConfirmTimeoutRetainsEventsAndStopsOldFragmentSequence
     t.SendToOutstation(hex::ClassPoll(0, PointClass::Class1));
     REQUIRE(t.lower->PopWriteAsHex() == "A0 81 82 00 02 01 28 02 00 00 00 81 01 00 01");
     t.OnTxReady();
-    t.AdvanceTime(TimeDuration::Milliseconds(10));
+    if (disconnect)
+    {
+        t.LowerLayerDown();
+        t.LowerLayerUp();
+    }
+    else
+        t.AdvanceTime(TimeDuration::Milliseconds(10));
     t.SendToOutstation(hex::SolicitedConfirm(0)); // Late confirm cannot continue the old response.
     REQUIRE(t.lower->NumWrites() == 0);
     REQUIRE(t.application->confirms.empty());
@@ -214,6 +223,8 @@ TEST_CASE(SUITE("SolicitedConfirmTimeoutRetainsEventsAndStopsOldFragmentSequence
 
     t.SendToOutstation(hex::ClassPoll(3, PointClass::Class1));
     REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00");
+    acceptance::Observe("confirmations_after_recovery", t.application->confirms.size());
+    acceptance::Observe("events_remaining", t.application->confirms.back().num_class1);
 }
 
 TEST_CASE(SUITE("SparseMixedSelectedVariationsFragmentWithBothEventQualifiers"))

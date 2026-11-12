@@ -205,7 +205,7 @@ def f01_expected_double_events(start, end):
     return [(n % 10, "DETERMINED_ON" if n % 2 == 0 else "DETERMINED_OFF") for n in range(start, end)]
 
 
-def f01_solicited_fragments(exe):
+def f01_solicited_fragments(exe, observe=False):
     options = ["--auth", "compat", *loopback_port()]
     out = Peer(exe, "outstation", [*options, "--tx-fragment-bytes", "250", "--sol-confirm-ms", "1000"])
     master = None
@@ -265,7 +265,11 @@ def f01_solicited_fragments(exe):
             assert actual == f01_expected_double_events(26, 56), actual
         cursor = master.task("scan class1", timeout=20)  # Check for redelivery.
         with master.cv:
-            assert not f01_double_events(master.lines[cursor:]), master.lines[cursor:]
+            remaining = f01_double_events(master.lines[cursor:])
+            assert not remaining, master.lines[cursor:]
+        if observe:
+            for name, actual_value in (("delivered_after_reconnect", len(actual)), ("redelivered_after_confirm", len(remaining))):
+                print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual_value}), flush=True)
     finally:
         stop(out, master)
 
@@ -3334,6 +3338,8 @@ def main():
         control = SA_CONTROL_SCENARIO.fullmatch(args.scenario)
         if control and (args.vector == "V1" or control[4] == "DO"):
             acceptance_sa_control(args.exe, control, args.vector == "V1")
+        elif args.vector == "V1" and args.scenario == "AT-CFG-14-TCP":
+            f01_solicited_fragments(args.exe, observe=True)
         elif args.vector == "V1" and args.scenario == "AT-CFG-13-COMPAT":
             acceptance_counter_profile(args.exe)
         elif args.vector == "V1" and args.scenario in ("AT-CFG-13-STATIC", "AT-CFG-13-EVENT", "AT-CFG-13-NEG"):

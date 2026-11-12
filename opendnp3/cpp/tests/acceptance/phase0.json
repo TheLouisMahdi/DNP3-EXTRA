@@ -1,6 +1,26 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-14-MALFORMED": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-14-TIME": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3"]
+    },
+    "AT-CFG-14-LOSS": {
+      "kind": "unit",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-14-UNSOL": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-14-TCP": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
     "AT-CFG-13-STATIC": {
       "kind": "process",
       "vectors": ["V1"]
@@ -2310,6 +2330,92 @@
     }
   },
   "fixtures": {
+    "AT-CFG-14-MALFORMED/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Malformed first fragment or continuation",
+      "input_hex": "A0 81",
+      "checks": [
+        ["previously_delivered", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["bad_fragment_confirms", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["completion", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-MALFORMED/V2": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Malformed first fragment or continuation",
+      "input_hex": "A0 81",
+      "checks": [
+        ["previously_delivered", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["bad_fragment_confirms", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["completion", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-TIME/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "T-1, T and T+1 total-response boundary",
+      "input_hex": "A0 81",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["completion", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-TIME/V2": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "T-1, T and T+1 total-response boundary",
+      "input_hex": "A0 81",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-TIME/V3": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "T-1, T and T+1 total-response boundary",
+      "input_hex": "A0 81",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["completion", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-LOSS/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Lost application confirmation by expiry or disconnect, stale confirm rejected and retained events drained",
+      "input_hex": "C0 01 3C 02 06",
+      "checks": [
+        ["confirmations_after_recovery", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["events_remaining", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-LOSS/V2": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Lost application confirmation by expiry or disconnect, stale confirm rejected and retained events drained",
+      "input_hex": "C0 01 3C 02 06",
+      "checks": [
+        ["confirmations_after_recovery", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["events_remaining", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-UNSOL/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Two class 1 APDUs, wrong confirmations ignored, class 2 not consumed",
+      "input_hex": "C0 14 3C 02 06",
+      "checks": [
+        ["confirmed_unsolicited", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["disabled_class_retained", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-TCP/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Separate process TCP fragmentation, timeout, retransmit and reconnect",
+      "input_hex": "CF 01 3C 02 06",
+      "checks": [
+        ["delivered_after_reconnect", "receiver", "STATE", "MASTER", 30, 0, 65535],
+        ["redelivered_after_confirm", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
     "AT-CFG-13-STATIC/V1": {
       "reference": "11 (counter object model context); Device Profile p4/original 44 controls exclusion; Device Profile p4 / original 44",
       "description": "RTU profile has no counter or frozen counter points.",
