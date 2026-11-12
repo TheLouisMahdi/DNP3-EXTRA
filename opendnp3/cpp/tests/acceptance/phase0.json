@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-03-MASTER-RX": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
+    },
+    "AT-CFG-03-OUTSTATION-RX": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
+    },
     "AT-CFG-03-MASTER-CLI": {
       "kind": "process",
       "vectors": ["V1"]
@@ -2054,6 +2062,126 @@
     }
   },
   "fixtures": {
+    "AT-CFG-03-MASTER-RX/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER RX 250, application fragment 249 bytes.",
+      "input_hex": "C0 81 00 00 01 02 01",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 238, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-RX/V2": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER RX 250, application fragment 250 bytes.",
+      "input_hex": "C0 81 00 00 01 02 01",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 239, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-RX/V3": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER RX 250, application fragment 251 bytes.",
+      "input_hex": "C0 81 00 00 01 02 01",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-RX/V4": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER RX 2049, application fragment 2048 bytes.",
+      "input_hex": "C0 81 00 00 01 02 01",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 2037, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-RX/V5": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER RX 2049, application fragment 2049 bytes.",
+      "input_hex": "C0 81 00 00 01 02 01",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 2038, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-RX/V6": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER RX 2049, application fragment 2050 bytes.",
+      "input_hex": "C0 81 00 00 01 02 01",
+      "checks": [
+        ["delivered_points", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["recovered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-RX/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION RX 250, application fragment 249 bytes.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["actuations", "receiver", "STATE", "OUTSTATION", 19, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["recovered_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-RX/V2": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION RX 250, application fragment 250 bytes.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["actuations", "receiver", "STATE", "OUTSTATION", 19, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["recovered_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-RX/V3": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION RX 250, application fragment 251 bytes.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["actuations", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["recovered_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-RX/V4": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION RX 2049, application fragment 2048 bytes.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["actuations", "receiver", "STATE", "OUTSTATION", 169, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["recovered_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-RX/V5": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION RX 2049, application fragment 2049 bytes.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["actuations", "receiver", "STATE", "OUTSTATION", 169, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["recovered_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-RX/V6": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION RX 2049, application fragment 2050 bytes.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["actuations", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["buffer_overflows", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["recovered_actuations", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
     "AT-CFG-03-MASTER-CLI/V1": {
       "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
       "description": "Independent CLI RX/TX option parsing with the opposite limit set to 300.",

@@ -18,6 +18,8 @@
  * limitations under the License.
  */
 #include "utils/AcceptanceObservation.h"
+#include "utils/MasterTestFixture.h"
+#include "utils/OutstationTestObject.h"
 #include "utils/ProtocolUtil.h"
 #include "utils/TransportTestObject.h"
 
@@ -30,6 +32,7 @@
 #include <transport/TransportHeader.h>
 #include <ser4cpp/util/HexConversions.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 
@@ -37,6 +40,140 @@ using namespace opendnp3;
 using namespace ser4cpp;
 
 #define SUITE(name) "TransportLayerTestSuite - " name
+
+namespace
+{
+void DeliverApplicationFragment(MockLinkLayer& link, const std::vector<uint8_t>& fragment, const Addresses& addresses)
+{
+    constexpr size_t segmentPayload = 249; // Link user-data limit minus the transport header.
+    uint8_t sequence = 0;
+    for (size_t offset = 0; offset < fragment.size(); offset += segmentPayload)
+    {
+        const size_t size = std::min(segmentPayload, fragment.size() - offset);
+        const uint8_t header = (offset == 0 ? 0x40 : 0) | (offset + size == fragment.size() ? 0x80 : 0)
+            | (sequence++ & 0x3F);
+        link.SendUp(HexConversions::to_hex(&header, 1, true) + " "
+                        + HexConversions::to_hex(fragment.data() + offset, size, true),
+                    addresses);
+    }
+}
+
+void AppendCrob(std::vector<uint8_t>& request, uint16_t index, bool wide)
+{
+    request.push_back(static_cast<uint8_t>(index));
+    if (wide) request.push_back(static_cast<uint8_t>(index >> 8));
+    // LATCH_ON, count 1, both timers and request status zero.
+    request.insert(request.end(), {0x03, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+}
+
+constexpr std::array<size_t, 6> fragmentLimits{{250, 250, 250, 2049, 2049, 2049}};
+constexpr std::array<size_t, 6> fragmentSizes{{249, 250, 251, 2048, 2049, 2050}};
+} // namespace
+
+TEST_CASE("AT-CFG-03-MASTER-RX", "[rtu-acceptance][transport-fragment]")
+{
+    for (size_t i = 0; i < fragmentLimits.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        auto params = NoStartupTasks();
+        params.maxRxFragSize = static_cast<uint32_t>(fragmentLimits[i]);
+        params.maxTxFragSize = 300;
+        MasterTestFixture master(params);
+        MockLogHandler log;
+        MockLinkLayer link;
+        TransportLayer transport(log.logger, params.maxRxFragSize, master.exe, params.maxRxFragmentTime);
+        transport.SetAppLayer(*master.context);
+        transport.SetLinkLayer(link);
+        link.SetUpperLayer(transport);
+        REQUIRE(transport.OnLowerLayerUp());
+        master.context->ScanAllObjects(GroupVariationID(1, 2), master.meas, TaskConfig::Default());
+        master.exe->run_many();
+        REQUIRE(master.lower->PopWriteAsHex() == "C0 01 01 02 06");
+        REQUIRE(master.context->OnTxReady());
+
+        const auto points = fragmentSizes[i] - 11;
+        const auto stop = points - 1;
+        std::vector<uint8_t> response{0xC0, 0x81, 0, 0, 1, 2, 1, 0, 0,
+                                      static_cast<uint8_t>(stop), static_cast<uint8_t>(stop >> 8)};
+        response.resize(fragmentSizes[i], 0x81);
+        response.back() = 0x01;
+        DeliverApplicationFragment(link, response, master.addresses.Reverse());
+        master.exe->run_many();
+        const bool oversized = fragmentSizes[i] > fragmentLimits[i];
+        const auto delivered = master.meas->binarySOE.size();
+        REQUIRE(delivered == (oversized ? 0 : points));
+        if (!oversized)
+        {
+            REQUIRE(master.meas->binarySOE.at(0).meas.value);
+            REQUIRE_FALSE(master.meas->binarySOE.at(static_cast<uint16_t>(stop)).meas.value);
+        }
+        acceptance::Observe("delivered_points", delivered);
+        const auto overflow = transport.GetStatistics().rx.numTransportBufferOverflow;
+        REQUIRE(overflow == (oversized ? 1 : 0));
+        acceptance::Observe("buffer_overflows", overflow);
+
+        const auto sequence = static_cast<uint8_t>(oversized ? 0 : 1);
+        if (!oversized)
+        {
+            master.meas->Clear();
+            master.context->ScanAllObjects(GroupVariationID(1, 2), master.meas, TaskConfig::Default());
+            master.exe->run_many();
+            REQUIRE(master.lower->PopWriteAsHex() == "C1 01 01 02 06");
+            REQUIRE(master.context->OnTxReady());
+        }
+        DeliverApplicationFragment(link, {static_cast<uint8_t>(0xC0 | sequence), 0x81, 0, 0, 1, 2, 0, 0, 0, 0x81},
+                                   master.addresses.Reverse());
+        master.exe->run_many();
+        REQUIRE(master.meas->binarySOE.size() == 1);
+        REQUIRE(master.meas->binarySOE.at(0).meas.value);
+        acceptance::Observe("recovered_points", master.meas->binarySOE.size());
+    }
+}
+
+TEST_CASE("AT-CFG-03-OUTSTATION-RX", "[rtu-acceptance][transport-fragment]")
+{
+    for (size_t i = 0; i < fragmentLimits.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        OutstationConfig config;
+        config.params.maxRxFragSize = static_cast<uint32_t>(fragmentLimits[i]);
+        config.params.maxTxFragSize = 300;
+        OutstationTestObject outstation(config);
+        MockLinkLayer link;
+        TransportLayer transport(outstation.log.logger, config.params.maxRxFragSize,
+                                 std::make_shared<exe4cpp::MockExecutor>(), config.params.maxRxFragmentTime);
+        transport.SetAppLayer(outstation.context);
+        transport.SetLinkLayer(link);
+        link.SetUpperLayer(transport);
+        REQUIRE(transport.OnLowerLayerUp());
+
+        // Q17 uses 12 bytes per CROB and Q28 13. The two headers plus APCI total 11 bytes.
+        const auto bodySize = fragmentSizes[i] - 11;
+        const auto wide = (bodySize - 1) % 12 + 1;
+        const auto narrow = (bodySize - 13 * wide) / 12;
+        std::vector<uint8_t> request{0xC0, 0x06, 12, 1, 0x17, static_cast<uint8_t>(narrow)};
+        for (uint16_t index = 0; index < narrow; ++index) AppendCrob(request, index, false);
+        request.insert(request.end(), {12, 1, 0x28, static_cast<uint8_t>(wide), 0});
+        for (uint16_t index = 0; index < wide; ++index) AppendCrob(request, 256 + index, true);
+        REQUIRE(request.size() == fragmentSizes[i]);
+        DeliverApplicationFragment(link, request, Addresses());
+        const bool oversized = fragmentSizes[i] > fragmentLimits[i];
+        const auto operations = outstation.cmdHandler->NumOperate();
+        REQUIRE(operations == (oversized ? 0 : narrow + wide));
+        REQUIRE(outstation.lower->HasNoData());
+        acceptance::Observe("actuations", operations);
+        const auto overflow = transport.GetStatistics().rx.numTransportBufferOverflow;
+        REQUIRE(overflow == (oversized ? 1 : 0));
+        acceptance::Observe("buffer_overflows", overflow);
+
+        std::vector<uint8_t> recovery{0xC1, 0x06, 12, 1, 0x17, 1};
+        AppendCrob(recovery, 0, false);
+        DeliverApplicationFragment(link, recovery, Addresses());
+        REQUIRE(outstation.cmdHandler->NumOperate() == operations + 1);
+        REQUIRE(outstation.lower->HasNoData());
+        acceptance::Observe("recovered_actuations", outstation.cmdHandler->NumOperate() - operations);
+    }
+}
 
 TEST_CASE(SUITE("RepeatSendsDoNotLogOrChangeStatistics"))
 {
