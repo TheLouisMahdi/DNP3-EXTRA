@@ -1256,6 +1256,60 @@ def acceptance_crob_policy(exe, scenario, narrow):
         print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
 
 
+def acceptance_binary_output_write(exe, narrow):
+    rejected = recovered = 0
+    qualifier = "q00" if narrow else "q01"
+    for method in ("method4", "method68"):
+        provision = ["--test-only", "--profile", "cfg09-write-" + uuid.uuid4().hex[:12], "--auth", method]
+        run(exe, "test-provision", *provision)
+        master = out = None
+        try:
+            master, out = connected(exe, [*provision, "--trust-system-time", "--rtu-io-profile", "--trace"],
+                                    out_options=["--rtu-crob-latch", "3"])
+            cursor = out.send("crob-interlock 3 allow")
+            out.wait(r"\[INTERLOCK\] CROB\[3\] allow$", cursor)
+            master.task("crob 3 on direct")
+            out.executed(1)
+            cursor = master.task("read 10 2 3 3")
+            master.wait(r"BinaryOutput\[3\]=ON\b", cursor)
+            for peer in (master, out):
+                cursor = peer.send("auth")
+                peer.wait(r"\[SESSION\] user=3 ready=1\b", cursor)
+
+            def denials():
+                cursor = out.send("auth")
+                result = out.wait(r"\[LOCAL-STAT\] index=1 value=\d+$", cursor)
+                return int(result.rsplit("=", 1)[1])
+
+            before = denials()
+            master.send("user 3")  # Explicitly provisioned, authorized test engineer.
+            with out.cv:
+                trace = len(out.lines)
+            cursor = master.task(f"test-write-bos 3 off {qualifier}", success=False)
+            master.wait(r"\[TASK\] test-write-bos FAILURE_BAD_RESPONSE$", cursor)
+            out.wait(r"\[SA-OBJECT\] TX G120V1$", trace)
+            master.wait(r"\[SA-OBJECT\] TX G120V2$", cursor)
+            assert denials() == before
+            out.executed(1)
+            cursor = master.task("read 10 2 3 3")
+            master.wait(r"BinaryOutput\[3\]=ON\b", cursor)
+            rejected += 1
+
+            master.send("user 2")
+            master.task("crob 3 off sbo")
+            out.executed(2)
+            cursor = master.task("read 10 2 3 3")
+            master.wait(r"BinaryOutput\[3\]=OFF\b", cursor)
+            recovered += 1
+        finally:
+            try:
+                stop(out, master)
+            finally:
+                run(exe, "test-cleanup", *provision)
+    for name, actual in (("write_rejections", rejected), ("valid_controls_after_write", recovered)):
+        print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
+
+
 def acceptance_counter_profile(exe):
     """Two fresh native TCP pairs, with and without the RTU profile."""
     def observed(name, actual, expected):
@@ -3460,7 +3514,7 @@ def profile_crob_two_output(exe):
         run(exe, "test-cleanup", *provision)
 
 
-def profile_crob_activation(exe):
+def profile_crob_activation(exe, narrow_filter=None):
     """Exercise explicit Activation pulses through both SA methods and control qualifiers."""
     for args, error in (
         (["--rtu-crob-activation", "3:0"], "Timeout must be"),
@@ -3470,12 +3524,13 @@ def profile_crob_activation(exe):
         rejected = run(exe, "outstation", "--test-only", "--auth", "method4", "--rtu-io-profile",
                        *args, success=False)
         assert error in rejected.stderr, (args, rejected.stderr)
+    verified_pulses = 0
     for method in ("method4", "method68"):
         profile = "pc-" + uuid.uuid4().hex[:12]
         provision = ["--test-only", "--profile", profile, "--auth", method]
         run(exe, "test-provision", *provision)
         try:
-            for narrow in (False, True):
+            for narrow in ((False, True) if narrow_filter is None else (narrow_filter,)):
                 master, out = connected(
                     exe, [*provision, "--trust-system-time", "--rtu-io-profile", "--trace"],
                     master_options=["--control-q17"] if narrow else [],
@@ -3534,9 +3589,115 @@ def profile_crob_activation(exe):
                         out.wait(rf"point=3 model=activation interlock=allowed activation=active executed={count}$", cursor)
                         cursor = out.send("crob-pulse advance 1")
                         out.wait(r"\[CROB-PULSE\] expired point=3 drive=activation$", cursor)
-                    out.executed(3)
+                    state = out.executed(3)
+                    verified_pulses += int(state.rsplit("=", 1)[1])
                 finally:
                     stop(out, master)
+        finally:
+            run(exe, "test-cleanup", *provision)
+    return verified_pulses
+
+
+
+def acceptance_activation_recovery(exe, narrow):
+    verified = profile_crob_activation(exe, narrow)
+    profile = "cfg09-activation-" + uuid.uuid4().hex[:12]
+    provision = ["--test-only", "--profile", profile, "--auth", "method4"]
+    options = [*provision, "--trust-system-time", "--rtu-io-profile", "--aggressive",
+               "--link-confirm", "never", "--reply-ms", "5000", "--response-ms", "15000"]
+    master = out = None
+    stop_relay, held, release = threading.Event(), threading.Event(), threading.Event()
+    captured, errors = {}, []
+    sends = threading.Lock()
+    run(exe, "test-provision", *provision)
+    try:
+        with ExitStack() as sockets:
+            listener = sockets.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            listener.settimeout(10)
+            port = loopback_port()
+            out = Peer(exe, "outstation", [*options, *port, "--rtu-crob-activation", "3:250", "--rtu-crob-latch", "4"])
+            out.wait(r"\[HELP\]")
+            out_link = sockets.enter_context(socket.create_connection(("127.0.0.1", int(port[1])), timeout=5))
+            master_args = [*options, "--port", str(listener.getsockname()[1])]
+            if narrow:
+                master_args.append("--control-q17")
+            master = Peer(exe, "master", master_args)
+            master_link, _ = listener.accept()
+            sockets.enter_context(master_link)
+
+            def relay():
+                try:
+                    while not stop_relay.is_set():
+                        ready, _, _ = select.select((master_link, out_link), (), (), 0.25)
+                        for source in ready:
+                            wire, apdu = read_control_frame(source)
+                            if source is out_link:
+                                master_link.sendall(wire)
+                                continue
+                            if apdu and apdu[1] == 4 and "operate" not in captured:
+                                captured["operate"] = apdu
+                                held.set()
+                                if not release.wait(14):
+                                    raise TimeoutError("Activation OPERATE gate expired")
+                                if stop_relay.is_set():
+                                    return
+                            if apdu and apdu[1] == 6:
+                                captured["noack"] = (wire, apdu)
+                            with sends:
+                                out_link.sendall(wire)
+                except Exception as error:
+                    if not stop_relay.is_set():
+                        errors.append(error)
+                finally:
+                    held.set()
+
+            worker = threading.Thread(target=relay, daemon=True)
+            worker.start()
+            try:
+                master.wait(r"\[LINK\] OPEN$")
+                out.wait(r"\[LINK\] OPEN$")
+                for index in (3, 4):
+                    cursor = out.send(f"crob-interlock {index} allow")
+                    out.wait(rf"\[INTERLOCK\] CROB\[{index}\] allow$", cursor)
+                master.task("crob 4 on direct")  # Genuine SA exchange primes control direction.
+                out.executed(1)
+                cursor = master.send("crob 3 pulse sbo 1")
+                assert held.wait(10) and "operate" in captured and not errors, errors
+                prefix = bytes.fromhex("0C 01 17 01 03" if narrow else "0C 01 28 01 00 03 00")
+                assert aggressive_control_objects(captured["operate"], 2, 2) == prefix + struct.pack("<BBIIB", 1, 1, 1, 0, 0)
+                out.executed(1)
+                time.sleep(10.1)  # Native Outstation selectTimeout is 10 seconds.
+                release.set()
+                master.wait(r"status=TIMEOUT\b", cursor, 5)
+                out.executed(1)
+
+                with out.cv:
+                    dispatched = len(out.lines)
+                master.noack("crob 3 pulse noack 999")
+                out.wait(r"\[CROB-PULSE\] started point=3 drive=activation .*executed=2$", dispatched)
+                out.executed(2)
+                wire, request = captured["noack"]
+                assert aggressive_control_objects(request, 2, 2) == prefix + struct.pack("<BBIIB", 1, 1, 999, 0, 0)
+                cursor = out.send("crob-pulse advance 250")
+                out.wait(r"\[CROB-PULSE\] expired point=3 drive=activation$", cursor)
+                with sends:
+                    out_link.sendall(wire)
+                master.task("read 10 2 3 3")  # Native receiver barrier after exact replay.
+                state = out.executed(2)
+                assert not errors, errors
+                for name, actual in (("verified_pulses", verified + 1),
+                                     ("actuations_after_expiry_and_replay", int(state.rsplit("=", 1)[1]) - 2)):
+                    print("DNP3-ACCEPTANCE " + json.dumps({"check": name, "value": actual}), flush=True)
+            finally:
+                stop_relay.set()
+                release.set()
+                worker.join(6)
+                assert not worker.is_alive()
+    finally:
+        try:
+            stop(out, master)
         finally:
             run(exe, "test-cleanup", *provision)
 
@@ -3564,6 +3725,10 @@ def main():
             acceptance_tls_trust(args.exe, args.work_dir, tls_trust[1], args.vector)
         elif crob_policy:
             acceptance_crob_policy(args.exe, crob_policy[1], args.vector == "V1")
+        elif args.scenario == "AT-CFG-09-PULSE-ON":
+            acceptance_activation_recovery(args.exe, args.vector == "V1")
+        elif args.scenario == "AT-CFG-09-WRITE":
+            acceptance_binary_output_write(args.exe, args.vector == "V1")
         elif args.vector == "V1" and args.scenario == "AT-CFG-14-TCP":
             f01_solicited_fragments(args.exe, observe=True)
         elif args.vector == "V1" and args.scenario == "AT-CFG-13-COMPAT":

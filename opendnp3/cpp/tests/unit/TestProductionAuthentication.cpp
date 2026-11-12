@@ -5063,6 +5063,7 @@ public:
     }
     size_t completions = 0;
     TaskCompletion completion = TaskCompletion::FAILURE_BAD_RESPONSE;
+    IINField responseIIN;
     std::vector<uint8_t> received;
 private:
     static TaskConfig Config() { auto config = TaskConfig::Default(); config.authenticationUser = 2; return config; }
@@ -5070,6 +5071,7 @@ private:
     MasterTaskType GetTaskType() const override { return MasterTaskType::USER_TASK; }
     ResponseResult ProcessResponse(const APDUResponseHeader& header, const rseq_t& data) override
     {
+        responseIIN = header.IIN;
         if (!ValidateSingleResponse(header) || header.IIN.HasRequestError()) return ResponseResult::ERROR_BAD_RESPONSE;
         received.assign(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + data.length());
         return ResponseResult::OK_FINAL;
@@ -5647,6 +5649,55 @@ TEST_CASE("AT-CFG-08-DENY", "[rtu-acceptance][production-sa][profile-controls]")
 {
     ObserveAuthenticatedControlFaults({{ControlFault::DeniedPolicy, ControlFault::ExpiredKeys,
                                        ControlFault::UnknownUser, ControlFault::NoKeys}});
+}
+
+TEST_CASE("CFG-09 - authenticated binary output WRITE leaves status unchanged", "[production-sa][profile-crob-write]")
+{
+    const bool wide = GENERATE(false, true);
+    RuntimePair pair;
+    pair.Pump();
+    REQUIRE(pair.master.context->OnLowerLayerDown());
+    pair.outstation.LowerLayerDown();
+
+    DatabaseConfig database;
+    database.binary_output_status[3].svariation = StaticBinaryOutputStatusVariation::Group10Var2;
+    OutstationTestObject station(OutSettings(pair.source, pair.policy), database);
+    station.Transaction([](IUpdateHandler& update) {
+        update.Update(BinaryOutputStatus(false, Flags(1)), 3, EventMode::Suppress);
+    });
+    station.LowerLayerUp();
+    REQUIRE(pair.master.context->OnLowerLayerUp());
+    pair.master.exe->run_many();
+    pair.Pump(&station);
+
+    const auto readback = [&]() {
+        pair.master.meas->Clear();
+        pair.master.context->ScanRange(GroupVariationID(10, 2), 3, 3, pair.master.meas, TaskConfig::Default());
+        pair.master.exe->run_many();
+        pair.Pump(&station);
+        REQUIRE(pair.master.meas->binaryOutputStatusSOE.size() == 1);
+        const auto& value = pair.master.meas->binaryOutputStatusSOE.at(3);
+        REQUIRE(value.info.gv == GroupVariation::Group10Var2);
+        REQUIRE_FALSE(value.meas.value);
+        REQUIRE(value.meas.flags.value == 1);
+    };
+    readback();
+    const auto authorizationFailures = ProductionAuthenticationTestAccess::Stats(station.context)
+                                           .Value(SecurityStatistic::AUTHORIZATION_FAILURES);
+    const auto replies = pair.controlReplies;
+    const auto request = std::make_shared<B07NativeTask>(*pair.master.context, 2,
+        wide ? "0A 02 01 03 00 03 00 81" : "0A 02 00 03 03 81");
+    ProductionAuthenticationTestAccess::Schedule(*pair.master.context, request);
+    pair.master.exe->run_many();
+    pair.Pump(&station);
+    REQUIRE(pair.controlReplies == replies + 1);
+    REQUIRE(request->completions == 1);
+    REQUIRE(request->completion == TaskCompletion::FAILURE_BAD_RESPONSE);
+    REQUIRE(request->responseIIN.HasRequestError());
+    REQUIRE(ProductionAuthenticationTestAccess::Stats(station.context).Value(SecurityStatistic::AUTHORIZATION_FAILURES)
+            == authorizationFailures);
+    REQUIRE(station.cmdHandler->NumInvocations() == 0);
+    readback();
 }
 
 TEST_CASE("ProductionAuthentication - B07 selected non-command functions traverse native Aggressive routing",

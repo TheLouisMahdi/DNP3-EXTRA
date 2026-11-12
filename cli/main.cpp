@@ -1,5 +1,10 @@
 #include <opendnp3/ConsoleLogger.h>
 #include "Security.h"
+#ifdef CLI_SA
+#include "app/HeaderWriter.h"
+#include "gen/objects/Group10.h"
+#include "master/MasterStack.h"
+#endif
 #include <opendnp3/app/SecurityStat.h>
 #include <opendnp3/app/DeviceAttribute.h>
 #include <opendnp3/master/ITaskCallback.h>
@@ -994,6 +999,29 @@ int RunMaster(diagnostic::Options o)
                     continue;
                 }
             }
+#ifdef CLI_SA
+            else if (w[0] == "test-write-bos" && w.size() == 4 && o.testOnly && o.rtuIoProfile && o.auth != "compat")
+            {
+                const bool wide = w[3] == "q01";
+                if ((!wide && w[3] != "q00") || (w[2] != "on" && w[2] != "off"))
+                    throw std::runtime_error("Expected test-write-bos <index> on|off q00|q01");
+                const auto index = static_cast<uint16_t>(RequiredNumber(w[1], wide ? UINT16_MAX : UINT8_MAX));
+                const BinaryOutputStatus value(w[2] == "on", Flags(1));
+                auto native = std::dynamic_pointer_cast<MasterStack>(master);
+                if (!native) throw std::runtime_error("TEST WRITE requires the native Master stack");
+                native->PerformFunction(w[0], FunctionCode::WRITE, [index, value, wide](HeaderWriter& writer) {
+                    if (wide)
+                    {
+                        auto range = writer.IterateOverRange<ser4cpp::UInt16>(QualifierCode::UINT16_START_STOP,
+                                                                            Group10Var2::Inst(), index);
+                        return range.Write(value);
+                    }
+                    auto range = writer.IterateOverRange<ser4cpp::UInt8>(QualifierCode::UINT8_START_STOP,
+                                                                       Group10Var2::Inst(), static_cast<uint8_t>(index));
+                    return range.Write(value);
+                }, task);
+            }
+#endif
             else if (w[0] == "ruk-certificate" && w.size() == 3)
             {
                 if (!master->ChangeUpdateKey(diagnostic::CertificateRequest(o, w[1], w[2]), task))

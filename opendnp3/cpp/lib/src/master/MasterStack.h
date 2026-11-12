@@ -162,6 +162,11 @@ public:
                          const std::vector<Header>& headers,
                          const TaskConfig& config) override;
 
+    void PerformFunction(const std::string& name,
+                         FunctionCode func,
+                         const HeaderBuilderT& builder,
+                         const TaskConfig& config);
+
     // ------- implement ICommandProcessor ---------
 
     void SelectAndOperate(CommandSet&& commands,

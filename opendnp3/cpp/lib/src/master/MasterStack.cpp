@@ -226,7 +226,15 @@ void MasterStack::PerformFunction(const std::string& name,
                                   const std::vector<Header>& headers,
                                   const TaskConfig& config)
 {
-    auto add = [self = this->shared_from_this(), name, func, builder = ConvertToLambda(headers), config]() {
+    this->PerformFunction(name, func, ConvertToLambda(headers), config);
+}
+
+void MasterStack::PerformFunction(const std::string& name,
+                                  FunctionCode func,
+                                  const HeaderBuilderT& builder,
+                                  const TaskConfig& config)
+{
+    auto add = [self = this->shared_from_this(), name, func, builder, config]() {
         return self->mcontext->PerformFunction(name, func, builder, config);
     };
     return this->executor->post(add);

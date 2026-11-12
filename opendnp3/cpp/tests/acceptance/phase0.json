@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-09-WRITE": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
+    "AT-CFG-09-PULSE-ON": {
+      "kind": "process",
+      "vectors": ["V1", "V2"]
+    },
     "AT-CFG-09-CLOSE": {
       "kind": "process",
       "vectors": ["V1", "V2"]
@@ -2446,6 +2454,42 @@
     }
   },
   "fixtures": {
+    "AT-CFG-09-WRITE/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Authorized FC2 G10V2 WRITE rejected while native control and status remain intact.",
+      "input_hex": "C0 02 0A 02 00 03 03 01",
+      "checks": [
+        ["write_rejections", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["valid_controls_after_write", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-WRITE/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Authorized FC2 G10V2 WRITE rejected while native control and status remain intact.",
+      "input_hex": "C0 02 0A 02 01 03 00 03 00 01",
+      "checks": [
+        ["write_rejections", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["valid_controls_after_write", "receiver", "STATE", "OUTSTATION", 2, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-PULSE-ON/V1": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Q17 Activation pulses, expiry on the native SELECT deadline and exact FC6 replay rejection.",
+      "input_hex": "C0 06 0C 01 17",
+      "checks": [
+        ["verified_pulses", "receiver", "STATE", "OUTSTATION", 7, 0, 65535],
+        ["actuations_after_expiry_and_replay", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-09-PULSE-ON/V2": {
+      "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
+      "description": "Q28 Activation pulses, expiry on the native SELECT deadline and exact FC6 replay rejection.",
+      "input_hex": "C0 06 0C 01 28",
+      "checks": [
+        ["verified_pulses", "receiver", "STATE", "OUTSTATION", 7, 0, 65535],
+        ["actuations_after_expiry_and_replay", "receiver", "STATE", "OUTSTATION", 0, 0, 65535]
+      ]
+    },
     "AT-CFG-09-CLOSE/V1": {
       "reference": "4.4.3–4.4.5; Annex A.8.1; Device Profile p3 checkbox rows; Device Profile p3 / original 43",
       "description": "Method 4/68 test-only profiles, qualifier Q17, selected paths and both receiver models.",
