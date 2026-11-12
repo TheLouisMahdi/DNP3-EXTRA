@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-03-MASTER-CLI": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-03-OUTSTATION-CLI": {
+      "kind": "process",
+      "vectors": ["V1"]
+    },
     "AT-CFG-03-TPDU": {
       "kind": "unit",
       "vectors": ["V1"]
@@ -2046,6 +2054,22 @@
     }
   },
   "fixtures": {
+    "AT-CFG-03-MASTER-CLI/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Independent CLI RX/TX option parsing with the opposite limit set to 300.",
+      "checks": [
+        ["valid_configurations", "receiver", "STATE", "MASTER", 8, 0, 65535],
+        ["invalid_configurations", "receiver", "STATE", "MASTER", 10, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-CLI/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Independent CLI RX/TX option parsing with the opposite limit set to 300.",
+      "checks": [
+        ["valid_configurations", "receiver", "STATE", "OUTSTATION", 8, 0, 65535],
+        ["invalid_configurations", "receiver", "STATE", "OUTSTATION", 10, 0, 65535]
+      ]
+    },
     "AT-CFG-03-TPDU/V1": {
       "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
       "description": "Transport reassembly owner, sequence and recovery",

@@ -863,6 +863,26 @@ def asio_fixtures(exe, asio, root):
         owned.rmdir()
 
 
+def acceptance_fragment_options(exe, role):
+    accepted = rejected = 0
+    for tested, other in (("rx", "tx"), ("tx", "rx")):
+        option = f"--{tested}-fragment-bytes"
+        fixed = f"--{other}-fragment-bytes"
+        for value in ("250", "2048", "2049", "65535"):
+            peer = Peer(exe, role, ["--auth", "compat", *loopback_port(), option, value, fixed, "300"])
+            try:
+                peer.wait(r"\[HELP\]")
+                accepted += 1
+            finally:
+                stop(peer)
+        for value in ("249", "65536", "", "-1", "invalid"):
+            result = run(exe, role, "--auth", "compat", option, value, fixed, "300", success=False)
+            assert "ERROR:" in result.stderr and "[HELP]" not in result.stdout, result
+            rejected += 1
+    for check, value in (("valid_configurations", accepted), ("invalid_configurations", rejected)):
+        print("DNP3-ACCEPTANCE " + json.dumps({"check": check, "value": value}), flush=True)
+
+
 def acceptance_counter_profile(exe):
     """Two fresh native TCP pairs, with and without the RTU profile."""
     def observed(name, actual, expected):
@@ -3053,7 +3073,7 @@ def main():
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--asio", type=Path)
     parser.add_argument("--only", choices=("compat", "method4", "method68", "negative", "renewal", "reply-timeout", "tls", "asio", "f01-fragments", "f01-link", "f01-required-fragments", "profile-binary-wire", "profile-class-restart", "profile-time-wire", "profile-analog", "profile-analog-wire", "profile-analog-unsol", "profile-analog-confirm", "profile-g41-wire", "profile-g41-negative", "profile-g41-timeout", "profile-g41-sa4", "profile-g41-sa68", "profile-g41-bounds", "profile-crob-latch", "profile-crob-interlock-transition", "profile-crob-two-output", "profile-crob-activation", "all"), default="all")
-    parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT",))
+    parser.add_argument("--scenario", choices=("AT-CFG-13-COMPAT", "AT-CFG-03-MASTER-CLI", "AT-CFG-03-OUTSTATION-CLI"))
     parser.add_argument("--vector", choices=("V1",))
     parser.add_argument("--seed", type=int, default=1741815)
     args = parser.parse_args()
@@ -3061,7 +3081,11 @@ def main():
     if args.scenario:
         if args.vector != "V1" or args.only != "all":
             parser.error("an acceptance scenario requires --vector V1 and no smoke-suite filter")
-        acceptance_counter_profile(args.exe)
+        if args.scenario == "AT-CFG-13-COMPAT":
+            acceptance_counter_profile(args.exe)
+        else:
+            role = args.scenario.split("-")[3].lower()
+            acceptance_fragment_options(args.exe, role)
         return
     if args.vector:
         parser.error("--vector requires an acceptance scenario")
