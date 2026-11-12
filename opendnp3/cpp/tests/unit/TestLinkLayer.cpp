@@ -1090,3 +1090,232 @@ TEST_CASE(SUITE("CloseBehavior"))
     t.link.Send(segments);
     REQUIRE(t.NumTotalWrites() == 2);
 }
+
+// ---------------------------------------------------------------------------
+// DIAG-CFG-05-STALE-ACK-CORRELATION
+//
+// Diagnostic characterisation only. This case records what the link layer does
+// with a delayed ACK; it is not acceptance evidence, it emits no acceptance
+// observations, and it must not be read as closing AT-CFG-05-STALE.
+// AT-CFG-05-STALE (CFG-05, "STALE state transition") stays UNRESOLVED: the
+// property under test, "no false completion in the allowed timing window", is
+// not achievable on this wire format, and this case demonstrates the opposite.
+//
+// A secondary frame (SEC_ACK / SEC_NACK / SEC_LINK_STATUS) carries no frame
+// identity: no sequence number, no echo of the FCB it acknowledges and no
+// payload reference. Every ACK emitted for a confirmed user data frame on one
+// pair of link addresses is therefore the same LPDU, and a retransmission
+// repeats the original octets with the same FCB (IEEE 1815-2012 9.3.1 / 9.3.2
+// and Table 9-6). The sending station has no wire information that would let it
+// decide whether an arriving ACK answers the frame currently outstanding or an
+// earlier transmission of that same frame.
+//
+// Evidence boundary: the "peer" below is a second instance of this same
+// LinkLayerTest fixture, not an independently implemented DNP3 station, and
+// every inbound frame is injected as already-parsed link header fields plus
+// LSDU through LinkLayerTest::OnFrame. No raw LPDU is encoded, decoded or
+// CRC-checked, so these cases characterise state handling only. They assert
+// what is demonstrable in that fixture: the repeated frame and the repeated ACK
+// are byte-identical, the peer keeps FCB de-duplication, and the stack
+// completes a two-segment send on an ACK produced for the first segment.
+// See RESULT.md for the timeline, the counterexample and the open decision.
+// ---------------------------------------------------------------------------
+TEST_CASE("DIAG-CFG-05-STALE-ACK-CORRELATION",
+          "[diagnostic][characterization][confirmed-link][at-cfg-05-stale-unresolved]")
+{
+    // A stale ACK has to be overtaken by a retry, so the exposure starts at
+    // NumRetries = 1; the field is bounded to 0..5 by LinkContext.
+    const auto timeout = std::chrono::milliseconds(10);
+
+    LinkConfig master(true);
+    master.ConfirmMode = LinkConfirmMode::Always;
+    master.NumRetries = 1;
+    master.Timeout = TimeDuration::Milliseconds(10);
+    master.KeepAliveTimeout = TimeDuration::Seconds(60);
+
+    LinkConfig outstation(false);
+    outstation.LocalAddr = master.RemoteAddr;
+    outstation.RemoteAddr = master.LocalAddr;
+
+    const auto reset = LinkHex::ResetLinkStates(true, master.RemoteAddr, master.LocalAddr);
+    const auto ack = LinkHex::Ack(false, false, outstation.RemoteAddr, outstation.LocalAddr);
+    const auto firstFrame = LinkHex::ConfirmedUserData(true, true, master.RemoteAddr, master.LocalAddr, "AA");
+    const auto secondFrame = LinkHex::ConfirmedUserData(true, false, master.RemoteAddr, master.LocalAddr, "BB");
+    const ByteStr firstPayload(1, 0xAA);
+    const ByteStr secondPayload(1, 0xBB);
+
+    SECTION("delayed ACK is accepted as the answer to the retransmission")
+    {
+        LinkLayerTest sender(master);
+        LinkLayerTest receiver(outstation);
+        REQUIRE(sender.link.OnLowerLayerUp());
+        REQUIRE(receiver.link.OnLowerLayerUp());
+
+        MockTransportSegment segments(1, "AA BB", master.GetAddresses());
+        REQUIRE(sender.upper->SendDown(segments));
+
+        // Link reset and its ACK.
+        REQUIRE(sender.PopLastWriteAsHex() == reset);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, true, false, false, outstation.LocalAddr,
+                                 outstation.RemoteAddr));
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+
+        // First segment with FCB = 1. The peer receives it at once but its ACK is held back.
+        REQUIRE(sender.PopLastWriteAsHex() == firstFrame);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, firstPayload.ToRSeq()));
+        const auto delayed = receiver.PopLastWriteAsHex();
+        REQUIRE(delayed == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+
+        // The response deadline expires first: the frame is repeated byte for byte, FCB unchanged.
+        REQUIRE(sender.exe->advance_time(timeout) > 0);
+        REQUIRE(sender.exe->run_many() > 0);
+        REQUIRE(sender.PopLastWriteAsHex() == firstFrame);
+        REQUIRE(sender.link.OnTxReady());
+
+        // The peer repeats its ACK and withholds the payload (FCB de-duplication).
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, firstPayload.ToRSeq()));
+        REQUIRE(receiver.PopLastWriteAsHex() == delayed);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+
+        // The delayed ACK for the first transmission arrives and advances the sender to "BB".
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+        REQUIRE(sender.PopLastWriteAsHex() == secondFrame);
+        REQUIRE(sender.link.OnTxReady());
+
+        // "BB" is received and acknowledged, but that ACK is lost on the way back. The ACK
+        // emitted for "BB" is the same LPDU as the ACK emitted for "AA": it identifies no frame.
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, false, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, secondPayload.ToRSeq()));
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(receiver.upper->receivedQueue.size() == 2);
+
+        // The retried ACK for "AA" is accepted as the acknowledgement of "BB".
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+        REQUIRE(sender.exe->run_many() > 0);
+        REQUIRE(sender.upper->GetCounters().numTxReady == 1);
+        REQUIRE(sender.NumTransmitFailures() == 0);
+        REQUIRE(sender.link.GetStatistics().numUnexpectedFrame == 0);
+    }
+
+    SECTION("duplicate ACK completes a send whose last segment was lost")
+    {
+        LinkLayerTest sender(master);
+        LinkLayerTest receiver(outstation);
+        REQUIRE(sender.link.OnLowerLayerUp());
+        REQUIRE(receiver.link.OnLowerLayerUp());
+
+        MockTransportSegment segments(1, "AA BB", master.GetAddresses());
+        REQUIRE(sender.upper->SendDown(segments));
+        REQUIRE(sender.PopLastWriteAsHex() == reset);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, true, false, false, outstation.LocalAddr,
+                                 outstation.RemoteAddr));
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+
+        REQUIRE(sender.PopLastWriteAsHex() == firstFrame);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, firstPayload.ToRSeq()));
+        const auto delayed = receiver.PopLastWriteAsHex();
+        REQUIRE(delayed == ack);
+        REQUIRE(receiver.link.OnTxReady());
+
+        REQUIRE(sender.exe->advance_time(timeout) > 0);
+        REQUIRE(sender.exe->run_many() > 0);
+        REQUIRE(sender.PopLastWriteAsHex() == firstFrame);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, firstPayload.ToRSeq()));
+        REQUIRE(receiver.PopLastWriteAsHex() == delayed);
+        REQUIRE(receiver.link.OnTxReady());
+
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+        REQUIRE(sender.PopLastWriteAsHex() == secondFrame);
+        REQUIRE(sender.link.OnTxReady());
+
+        // "BB" is lost on the wire, so it is neither delivered nor acknowledged. The duplicate
+        // ACK for "AA" still completes the two-segment send.
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+        REQUIRE(sender.exe->run_many() > 0);
+        REQUIRE(sender.upper->GetCounters().numTxReady == 1);
+        REQUIRE(sender.NumTransmitFailures() == 0);
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+        REQUIRE(receiver.upper->receivedQueue.front() == "AA");
+
+        // The sender is now one FCB toggle ahead of the peer, so the next send is
+        // acknowledged by the peer but never delivered, and the sender completes it too.
+        MockTransportSegment following(1, "CC", master.GetAddresses());
+        REQUIRE(sender.upper->SendDown(following));
+        REQUIRE(sender.PopLastWriteAsHex()
+                == LinkHex::ConfirmedUserData(true, true, master.RemoteAddr, master.LocalAddr, "CC"));
+        REQUIRE(sender.link.OnTxReady());
+        const ByteStr thirdPayload(1, 0xCC);
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, thirdPayload.ToRSeq()));
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+        REQUIRE(sender.exe->run_many() > 0);
+        REQUIRE(sender.upper->GetCounters().numTxReady == 2);
+        REQUIRE(sender.NumTransmitFailures() == 0);
+    }
+
+    SECTION("without a duplicate ACK the same loss fails instead of completing")
+    {
+        LinkLayerTest sender(master);
+        LinkLayerTest receiver(outstation);
+        REQUIRE(sender.link.OnLowerLayerUp());
+        REQUIRE(receiver.link.OnLowerLayerUp());
+
+        MockTransportSegment segments(1, "AA BB", master.GetAddresses());
+        REQUIRE(sender.upper->SendDown(segments));
+        REQUIRE(sender.PopLastWriteAsHex() == reset);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_RESET_LINK_STATES, true, false, false, outstation.LocalAddr,
+                                 outstation.RemoteAddr));
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+
+        REQUIRE(sender.PopLastWriteAsHex() == firstFrame);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.OnFrame(LinkFunction::PRI_CONFIRMED_USER_DATA, true, true, true, outstation.LocalAddr,
+                                 outstation.RemoteAddr, firstPayload.ToRSeq()));
+        REQUIRE(receiver.PopLastWriteAsHex() == ack);
+        REQUIRE(receiver.link.OnTxReady());
+
+        // This ACK arrives inside the deadline, so no duplicate is left in flight behind it.
+        REQUIRE(sender.OnFrame(LinkFunction::SEC_ACK, false, false, false, master.LocalAddr, master.RemoteAddr));
+        REQUIRE(sender.PopLastWriteAsHex() == secondFrame);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+
+        // "BB" and its retry are both lost, and no other ACK is outstanding.
+        REQUIRE(sender.exe->advance_time(timeout) > 0);
+        REQUIRE(sender.exe->run_many() > 0);
+        REQUIRE(sender.PopLastWriteAsHex() == secondFrame);
+        REQUIRE(sender.link.OnTxReady());
+        REQUIRE(sender.exe->advance_time(timeout) > 0);
+        REQUIRE(sender.exe->run_many() > 0);
+
+        REQUIRE(sender.NumTotalWrites() == 4);
+        REQUIRE(sender.NumTransmitFailures() == 1);
+        REQUIRE(sender.upper->GetCounters().numTxReady == 0);
+        REQUIRE(receiver.upper->receivedQueue.size() == 1);
+        MockTransportSegment blocked(1, "CC", master.GetAddresses());
+        REQUIRE_FALSE(sender.upper->SendDown(blocked));
+    }
+}
