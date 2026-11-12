@@ -17,6 +17,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "utils/LinkParserTest.h"
+#include <link/LinkFrame.h>
 #include "utils/AcceptanceObservation.h"
 #include "utils/MasterTestFixture.h"
 #include "utils/OutstationTestObject.h"
@@ -333,6 +335,60 @@ TEST_CASE("AT-CFG-03-OUTSTATION-TX", "[rtu-acceptance][transport-fragment]")
         REQUIRE(master.meas->doubleBinarySOE.at(0).meas.value == DoubleBit::DETERMINED_ON);
         acceptance::Observe("delivered_points", master.meas->binarySOE.size() + master.meas->doubleBinarySOE.size());
     }
+}
+
+TEST_CASE("AT-CFG-14-TRANSPORT", "[rtu-acceptance][transport-fragment][profile-fragments]")
+{
+    MasterTestFixture master(NoStartupTasks());
+    LinkParserTest parser;
+    MockLinkLayer link;
+    TransportLayer rx(parser.log.logger, 400, master.exe);
+    rx.SetLinkLayer(link);
+    link.SetUpperLayer(rx);
+    rx.SetAppLayer(*master.context);
+    REQUIRE(rx.OnLowerLayerUp());
+    master.context->ScanAllObjects(GroupVariationID(1, 2), master.meas, TaskConfig::Default());
+    master.exe->run_many();
+    REQUIRE(master.lower->PopWriteAsHex() == "C0 01 01 02 06");
+    REQUIRE(master.context->OnTxReady());
+
+    constexpr uint16_t count = 300;
+    constexpr uint16_t stop = count - 1;
+    std::vector<uint8_t> response{0xC0, 0x81, 0, 0, 1, 2, 1, 0, 0,
+                                  static_cast<uint8_t>(stop), static_cast<uint8_t>(stop >> 8)};
+    response.resize(11 + count, 0x81);
+    response.back() = 0x01;
+    TransportTx tx(parser.log.logger);
+    tx.Configure(Message(master.addresses.Reverse(), rseq_t(response.data(), response.size())));
+    while (tx.HasValue())
+    {
+        std::array<uint8_t, 292> buffer{};
+        wseq_t destination(buffer.data(), buffer.size());
+        const auto frame = LinkFrame::FormatUnconfirmedUserData(
+            destination, false, master.addresses.source, master.addresses.destination,
+            tx.GetSegment(), nullptr);
+        parser.WriteData(frame.take(9), 1); // Includes part of the header CRC.
+        REQUIRE(parser.sink.received.IsEmpty());
+        parser.WriteData(frame.skip(9).take(frame.length() - 10), 3);
+        REQUIRE(parser.sink.received.IsEmpty()); // Final body CRC octet not received.
+        REQUIRE(master.meas->TotalReceived() == 0);
+        parser.WriteData(frame.skip(frame.length() - 1));
+        REQUIRE(parser.sink.CheckLast(LinkFunction::PRI_UNCONFIRMED_USER_DATA, false,
+                                      master.addresses.source, master.addresses.destination));
+        REQUIRE(parser.sink.received.Size() == tx.GetSegment().length());
+        link.SendUp(parser.sink.received.AsHex(), master.addresses.Reverse());
+        parser.sink.received.Clear();
+        tx.Advance();
+        if (tx.HasValue()) REQUIRE(master.meas->TotalReceived() == 0);
+    }
+    REQUIRE(parser.sink.m_num_frames == 2);
+    REQUIRE(master.meas->binarySOE.size() == count);
+    REQUIRE(master.meas->binarySOE.at(0).meas.value);
+    REQUIRE_FALSE(master.meas->binarySOE.at(stop).meas.value);
+    REQUIRE(master.application->taskCompletionEvents.size() == 1);
+    REQUIRE(master.application->taskCompletionEvents.front().result == TaskCompletion::SUCCESS);
+    acceptance::Observe("link_frames", parser.sink.m_num_frames);
+    acceptance::Observe("delivered_points", master.meas->TotalReceived());
 }
 
 TEST_CASE(SUITE("RepeatSendsDoNotLogOrChangeStatistics"))

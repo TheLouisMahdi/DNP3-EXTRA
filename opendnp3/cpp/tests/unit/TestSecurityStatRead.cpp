@@ -250,6 +250,15 @@ TEST_CASE("SecurityStatRead - Class 0 cannot exclude security statistics and mix
     REQUIRE(classZero[4] == 121); // Optional binary type was excluded, G121 was not.
     REQUIRE(fixture.Select("01 02 06 79 01 00 00 00") == ParseResult::OK);
     REQUIRE(Hex(fixture.Fragment()) == "C0 81 00 00 01 02 00 00 00 81 79 01 00 00 00 41 00 00 00 00 00 00");
+
+    REQUIRE(fixture.Select("3C 01 06") == ParseResult::OK);
+    for (uint8_t index = 0; index < 18; ++index)
+    {
+        const auto fragment = fixture.Fragment(16);
+        const uint8_t control = index == 0 ? 0xA0 : index == 17 ? 0x40 : 0x20;
+        const std::vector<uint8_t> expected{control, 0x81, 0, 0, 121, 1, 0, index, index, 0x41, 0, 0, 0, 0, 0, 0};
+        REQUIRE(fragment == expected);
+    }
 }
 
 TEST_CASE("AT-PROFILE-063-SNAP", "[security-stat-read][rtu-acceptance]")

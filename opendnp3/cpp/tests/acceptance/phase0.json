@@ -1,6 +1,22 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-14-MIX": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-14-STATIC": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-14-WRAP": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-14-TRANSPORT": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
     "AT-CFG-14-MALFORMED": {
       "kind": "unit",
       "vectors": ["V1", "V2"]
@@ -2330,6 +2346,42 @@
     }
   },
   "fixtures": {
+    "AT-CFG-14-MIX/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Timed events across fragments share an APDU with static points; only correlated confirmations remove events.",
+      "input_hex": "C0 01 3C 02 06 3C 01 06",
+      "checks": [
+        ["confirmed_events", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["static_points", "receiver", "STATE", "MASTER", 13, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-STATIC/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Dense mixed Class0 static responses, exact APDU and FC0 sequence.",
+      "input_hex": "C0 01 3C 01 06",
+      "checks": [
+        ["static_points", "receiver", "STATE", "MASTER", 4, 0, 65535],
+        ["accepted_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-WRAP/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "Four application fragments wrap 15 to 0; wrong sequence and UNS confirmations ignored.",
+      "input_hex": "CF 01 3C 01 06",
+      "checks": [
+        ["static_points", "receiver", "STATE", "MASTER", 4, 0, 65535],
+        ["accepted_confirms", "receiver", "STATE", "OUTSTATION", 3, 0, 65535]
+      ]
+    },
+    "AT-CFG-14-TRANSPORT/V1": {
+      "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
+      "description": "One native response across two TPDUs; FT3 header/body CRC reads and atomic Master callback.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["link_frames", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 300, 0, 65535]
+      ]
+    },
     "AT-CFG-14-MALFORMED/V1": {
       "reference": "4.2.2; 4.3; 4.6; 8.2; Device Profile p4 / original 44",
       "description": "Malformed first fragment or continuation",

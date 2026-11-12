@@ -19,6 +19,7 @@
  */
 #include "utils/APDUHexBuilders.h"
 #include "utils/AcceptanceObservation.h"
+#include "utils/MasterTestFixture.h"
 #include "utils/BufferHelpers.h"
 #include "utils/OutstationTestObject.h"
 
@@ -225,6 +226,79 @@ TEST_CASE("AT-CFG-14-LOSS", "[rtu-acceptance][profile-fragments]")
     REQUIRE(t.lower->PopWriteAsHex() == "C3 81 80 00");
     acceptance::Observe("confirmations_after_recovery", t.application->confirms.size());
     acceptance::Observe("events_remaining", t.application->confirms.back().num_class1);
+}
+
+TEST_CASE("AT-CFG-14-MIX", "[rtu-acceptance][profile-fragments]")
+{
+    auto database = configure::by_count_of::binary_input(13);
+    for (auto& item : database.binary_input)
+        item.second.evariation = EventBinaryVariation::Group2Var2;
+    OutstationConfig config;
+    config.params.maxTxFragSize = 24;
+    config.eventBufferConfig = EventBufferConfig::AllTypes(5);
+    OutstationTestObject outstation(config, database);
+    outstation.LowerLayerUp();
+    outstation.Transaction([](IUpdateHandler& updates) {
+        for (uint16_t index = 0; index < 13; ++index)
+            updates.Update(Binary(false, Flags(1)), index, EventMode::Suppress);
+        updates.Update(Binary(true, Flags(1), DNPTime(0x1122)), 4, EventMode::Force);
+        updates.Update(Binary(true, Flags(1), DNPTime(0x3344)), 10, EventMode::Force);
+    });
+
+    auto params = NoStartupTasks();
+    params.ignoreRestartIIN = true;
+    MasterTestFixture master(params);
+    REQUIRE(master.context->OnLowerLayerUp());
+    master.context->ScanClasses(ClassField(true, true, false, false), master.meas, TaskConfig::Default());
+    master.exe->run_many();
+    const auto request = master.lower->PopWriteAsHex();
+    REQUIRE(request == "C0 01 3C 02 06 3C 01 06");
+    REQUIRE(master.context->OnTxReady());
+    outstation.SendToOutstation(request);
+
+    const auto first = outstation.lower->PopWriteAsHex();
+    REQUIRE(first == "A0 81 82 00 02 02 28 01 00 04 00 81 22 11 00 00 00 00");
+    REQUIRE(master.SendToMaster(first));
+    const auto& firstEvent = master.meas->binarySOE.at(4);
+    REQUIRE(firstEvent.info.gv == GroupVariation::Group2Var2);
+    REQUIRE(firstEvent.meas.value);
+    REQUIRE(firstEvent.meas.flags.value == 0x81);
+    REQUIRE(firstEvent.meas.time.value == 0x1122);
+    outstation.OnTxReady();
+    REQUIRE(outstation.application->confirms.empty());
+    const auto firstConfirm = master.lower->PopWriteAsHex();
+    REQUIRE(firstConfirm == "C0 00");
+    REQUIRE(master.context->OnTxReady());
+    outstation.SendToOutstation(firstConfirm);
+    REQUIRE(outstation.application->confirms.front().num_class1 == 1);
+
+    const auto middle = outstation.lower->PopWriteAsHex();
+    REQUIRE(middle == "21 81 80 00 02 02 28 01 00 0A 00 81 44 33 00 00 00 00 01 02 00 00 00 01");
+    REQUIRE(master.SendToMaster(middle));
+    const auto& secondEvent = master.meas->binarySOE.at(10);
+    REQUIRE(secondEvent.info.gv == GroupVariation::Group2Var2);
+    REQUIRE(secondEvent.meas.value);
+    REQUIRE(secondEvent.meas.flags.value == 0x81);
+    REQUIRE(secondEvent.meas.time.value == 0x3344);
+    REQUIRE(master.meas->binarySOE.at(0).info.gv == GroupVariation::Group1Var2);
+    outstation.OnTxReady();
+    const auto secondConfirm = master.lower->PopWriteAsHex();
+    REQUIRE(secondConfirm == "C1 00");
+    REQUIRE(master.context->OnTxReady());
+    outstation.SendToOutstation(secondConfirm);
+    REQUIRE(outstation.application->confirms.back().num_class1 == 0);
+    acceptance::Observe("confirmed_events", outstation.application->confirms.size());
+
+    const auto last = outstation.lower->PopWriteAsHex();
+    REQUIRE(last == "42 81 80 00 01 02 00 01 0C 01 01 01 81 01 01 01 01 01 81 01 01");
+    REQUIRE(master.SendToMaster(last));
+    REQUIRE(master.application->taskCompletionEvents.size() == 1);
+    REQUIRE(master.application->taskCompletionEvents.front().result == TaskCompletion::SUCCESS);
+    REQUIRE(master.lower->HasNoData());
+    REQUIRE(master.meas->binarySOE.size() == 13);
+    for (uint16_t index = 0; index < 13; ++index)
+        REQUIRE(master.meas->binarySOE.at(index).meas.value == (index == 4 || index == 10));
+    acceptance::Observe("static_points", master.meas->binarySOE.size());
 }
 
 TEST_CASE(SUITE("SparseMixedSelectedVariationsFragmentWithBothEventQualifiers"))

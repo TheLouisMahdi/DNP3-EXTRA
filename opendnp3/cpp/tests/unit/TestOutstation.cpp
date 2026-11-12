@@ -17,6 +17,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "utils/AcceptanceObservation.h"
+#include "utils/MasterTestFixture.h"
 #include "utils/APDUHexBuilders.h"
 #include "utils/BufferHelpers.h"
 #include "utils/OutstationTestObject.h"
@@ -412,6 +414,91 @@ TEST_CASE(SUITE("ReadClass0MultiFragApplicationSequenceWrap"))
     t.OnTxReady();
     t.SendToOutstation("C2 00");
     REQUIRE(t.lower->NumWrites() == 0);
+}
+
+namespace
+{
+void VerifyStaticFragmentSeries(uint8_t start, bool injectWrongConfirms)
+{
+    DatabaseConfig database;
+    database.binary_input[1].svariation = StaticBinaryVariation::Group1Var2;
+    database.double_binary[2].svariation = StaticDoubleBinaryVariation::Group3Var2;
+    database.analog_input[3].svariation = StaticAnalogVariation::Group30Var5;
+    database.analog_output_status[4].svariation = StaticAnalogOutputStatusVariation::Group40Var3;
+    OutstationConfig config;
+    config.params.maxTxFragSize = 15;
+    OutstationTestObject outstation(config, database);
+    outstation.LowerLayerUp();
+    outstation.Transaction([](IUpdateHandler& updates) {
+        updates.Update(Binary(true, Flags(1)), 1, EventMode::Suppress);
+        updates.Update(DoubleBitBinary(DoubleBit::DETERMINED_OFF, Flags(1)), 2, EventMode::Suppress);
+        updates.Update(Analog(12.5, Flags(1)), 3, EventMode::Suppress);
+        updates.Update(AnalogOutputStatus(-1.5, Flags(1)), 4, EventMode::Suppress);
+    });
+
+    auto params = NoStartupTasks();
+    params.ignoreRestartIIN = true;
+    MasterTestFixture master(params);
+    REQUIRE(master.context->OnLowerLayerUp());
+    master.context->solSeq = start;
+    master.context->ScanClasses(ClassField(PointClass::Class0), master.meas, TaskConfig::Default());
+    master.exe->run_many();
+    const auto request = master.lower->PopWriteAsHex();
+    REQUIRE(request == hex::ClassPoll(start, PointClass::Class0));
+    REQUIRE(master.context->OnTxReady());
+    outstation.SendToOutstation(request);
+
+    const std::array<const char*, 4> objects{{
+        "01 02 00 01 01 81", "03 02 00 02 02 41", "1E 05 00 03 03 01 00 00 48 41",
+        "28 03 00 04 04 01 00 00 C0 BF"}};
+    for (size_t i = 0; i < objects.size(); ++i)
+    {
+        const bool final = i == objects.size() - 1;
+        const auto sequence = static_cast<uint8_t>((start + i) & 15);
+        const uint8_t control = sequence | (i == 0 ? 0xA0 : final ? 0x40 : 0x20);
+        const auto response = outstation.lower->PopWriteAsHex();
+        REQUIRE(response == HexConversions::to_hex(&control, 1, true) + " 81 80 00 " + objects[i]);
+        REQUIRE(master.SendToMaster(response));
+        outstation.OnTxReady();
+        REQUIRE(master.meas->TotalReceived() == i + 1);
+        if (final)
+        {
+            REQUIRE(master.lower->HasNoData());
+            REQUIRE(outstation.lower->HasNoData());
+            break;
+        }
+        REQUIRE(master.application->taskCompletionEvents.empty());
+        if (injectWrongConfirms)
+        {
+            outstation.SendToOutstation(hex::SolicitedConfirm((sequence + 1) & 15));
+            outstation.SendToOutstation(hex::UnsolConfirm(sequence));
+            REQUIRE(outstation.lower->HasNoData());
+            REQUIRE(outstation.application->confirms.size() == i);
+        }
+        const auto confirm = master.lower->PopWriteAsHex();
+        REQUIRE(confirm == hex::SolicitedConfirm(sequence));
+        REQUIRE(master.context->OnTxReady());
+        outstation.SendToOutstation(confirm);
+    }
+    REQUIRE(master.application->taskCompletionEvents.size() == 1);
+    REQUIRE(master.application->taskCompletionEvents.front().result == TaskCompletion::SUCCESS);
+    REQUIRE(master.meas->binarySOE.at(1).meas.value);
+    REQUIRE(master.meas->doubleBinarySOE.at(2).meas.value == DoubleBit::DETERMINED_OFF);
+    REQUIRE(master.meas->analogSOE.at(3).meas.value == 12.5);
+    REQUIRE(master.meas->analogOutputStatusSOE.at(4).meas.value == -1.5);
+    acceptance::Observe("static_points", master.meas->TotalReceived());
+    acceptance::Observe("accepted_confirms", outstation.application->confirms.size());
+}
+} // namespace
+
+TEST_CASE("AT-CFG-14-STATIC", "[rtu-acceptance][profile-fragments]")
+{
+    VerifyStaticFragmentSeries(0, false);
+}
+
+TEST_CASE("AT-CFG-14-WRAP", "[rtu-acceptance][profile-fragments]")
+{
+    VerifyStaticFragmentSeries(15, true);
 }
 
 TEST_CASE(SUITE("ConfiguredSingleApplicationFragmentCanExceed2048Bytes"))

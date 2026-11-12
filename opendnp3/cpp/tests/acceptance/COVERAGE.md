@@ -1,6 +1,6 @@
 # Acceptance scenario coverage
 
-448 original scenario IDs, 54 requirements. 409 Host scenarios have executable bindings (763 vectors). 32 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
+448 original scenario IDs, 54 requirements. 413 Host scenarios have executable bindings (767 vectors). 28 Host scenarios remain NOT_RUN. 7 scenarios require evidence outside this Host campaign.
 
 A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The registry gives the binding, vectors, independent golden values and sources. Record executed evidence by tested revision in the [canonical workbook](../../../../DNP3_PDD_PLAN/DNP3_IEEE1815_IMPLEMENTATION_REFERENCE.xlsx).
 
@@ -59,7 +59,7 @@ A scenario suffix in the table expands to `AT-<requirement ID>-<suffix>`. The re
 | CFG-08 | `M4-CHALLENGE-G12V1-SBO`, `M4-CHALLENGE-G12V1-DO`, `M4-CHALLENGE-G12V1-NR`, `M4-CHALLENGE-G41V1-SBO`, `M4-CHALLENGE-G41V1-DO`, `M4-CHALLENGE-G41V1-NR`, `M4-CHALLENGE-G41V2-SBO`, `M4-CHALLENGE-G41V2-DO`, `M4-CHALLENGE-G41V2-NR`, `M4-CHALLENGE-G41V3-SBO`, `M4-CHALLENGE-G41V3-DO`, `M4-CHALLENGE-G41V3-NR`, `M4-AGGRESSIVE-G12V1-SBO`, `M4-AGGRESSIVE-G12V1-DO`, `M4-AGGRESSIVE-G12V1-NR`, `M4-AGGRESSIVE-G41V1-SBO`, `M4-AGGRESSIVE-G41V1-DO`, `M4-AGGRESSIVE-G41V1-NR`, `M4-AGGRESSIVE-G41V2-SBO`, `M4-AGGRESSIVE-G41V2-DO`, `M4-AGGRESSIVE-G41V2-NR`, `M4-AGGRESSIVE-G41V3-SBO`, `M4-AGGRESSIVE-G41V3-DO`, `M4-AGGRESSIVE-G41V3-NR`, `M68-CHALLENGE-G12V1-SBO`, `M68-CHALLENGE-G12V1-DO`, `M68-CHALLENGE-G12V1-NR`, `M68-CHALLENGE-G41V1-SBO`, `M68-CHALLENGE-G41V1-DO`, `M68-CHALLENGE-G41V1-NR`, `M68-CHALLENGE-G41V2-SBO`, `M68-CHALLENGE-G41V2-DO`, `M68-CHALLENGE-G41V2-NR`, `M68-CHALLENGE-G41V3-SBO`, `M68-CHALLENGE-G41V3-DO`, `M68-CHALLENGE-G41V3-NR`, `M68-AGGRESSIVE-G12V1-SBO`, `M68-AGGRESSIVE-G12V1-DO`, `M68-AGGRESSIVE-G12V1-NR`, `M68-AGGRESSIVE-G41V1-SBO`, `M68-AGGRESSIVE-G41V1-DO`, `M68-AGGRESSIVE-G41V1-NR`, `M68-AGGRESSIVE-G41V2-SBO`, `M68-AGGRESSIVE-G41V2-DO`, `M68-AGGRESSIVE-G41V2-NR`, `M68-AGGRESSIVE-G41V3-SBO`, `M68-AGGRESSIVE-G41V3-DO`, `M68-AGGRESSIVE-G41V3-NR`, `NOACK`, `TIMEOUT`, `REPLAY`, `DENY` | — | `PEER` |
 | CFG-09 | — | `CLOSE`, `TRIP`, `COUNT`, `PULSE-OFF`, `LATCH-ON`, `LATCH-OFF`, `QUEUE`, `CLEAR`, `BADCODE`, `WRITE`, `PULSE-ON` | `RTU` |
 | CFG-13 | `COMPAT`, `STATIC`, `EVENT`, `NEG` | — | — |
-| CFG-14 | `MALFORMED`, `TIME`, `LOSS`, `UNSOL`, `TCP` | `STATIC`, `MIX`, `WRAP`, `TRANSPORT` | — |
+| CFG-14 | `MALFORMED`, `TIME`, `LOSS`, `UNSOL`, `TCP`, `STATIC`, `WRAP`, `TRANSPORT`, `MIX` | — | — |
 
 ## External gates
 
