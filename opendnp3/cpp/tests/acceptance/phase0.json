@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-03-MASTER-TX": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"]
+    },
+    "AT-CFG-03-OUTSTATION-TX": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"]
+    },
     "AT-CFG-03-MASTER-RX": {
       "kind": "unit",
       "vectors": ["V1", "V2", "V3", "V4", "V5", "V6"]
@@ -2062,6 +2070,174 @@
     }
   },
   "fixtures": {
+    "AT-CFG-03-MASTER-TX/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 2048, logical application fragment 2047 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 2047, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 9, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V2": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 2048, logical application fragment 2048 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 2048, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 9, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V3": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 2048, logical application fragment 2049 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V4": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 2049, logical application fragment 2048 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 2048, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 9, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V5": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 2049, logical application fragment 2049 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 2049, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 9, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V6": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 2049, logical application fragment 2050 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 0, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V7": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 249, logical application fragment 249 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 249, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 1, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-MASTER-TX/V8": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native MASTER TX 250, logical application fragment 250 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["request_bytes", "receiver", "STATE", "MASTER", 250, 0, 65535],
+        ["request_segments", "receiver", "STATE", "MASTER", 2, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "MASTER", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 2048, logical application fragment 2047 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 2047, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 9, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 2031, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V2": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 2048, logical application fragment 2048 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 2048, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 9, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 2032, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V3": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 2048, logical application fragment 2049 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 2043, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 9, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 10, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 2033, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V4": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 2049, logical application fragment 2048 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 2048, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 9, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 2032, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V5": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 2049, logical application fragment 2049 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 2049, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 9, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 2033, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V6": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 2049, logical application fragment 2050 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 2044, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 9, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 10, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 2034, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V7": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 249, logical application fragment 249 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 249, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 235, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-OUTSTATION-TX/V8": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Native OUTSTATION TX 250, logical application fragment 250 bytes.",
+      "input_hex": "C0 01 01 02 06",
+      "checks": [
+        ["first_fragment_bytes", "receiver", "STATE", "OUTSTATION", 250, 0, 65535],
+        ["first_fragment_segments", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["last_fragment_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["delivered_points", "receiver", "STATE", "OUTSTATION", 236, 0, 65535]
+      ]
+    },
     "AT-CFG-03-MASTER-RX/V1": {
       "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
       "description": "Native MASTER RX 250, application fragment 249 bytes.",

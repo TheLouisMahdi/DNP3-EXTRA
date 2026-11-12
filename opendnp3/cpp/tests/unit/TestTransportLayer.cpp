@@ -175,6 +175,166 @@ TEST_CASE("AT-CFG-03-OUTSTATION-RX", "[rtu-acceptance][transport-fragment]")
     }
 }
 
+namespace
+{
+constexpr std::array<size_t, 8> txLimits{{2048, 2048, 2048, 2049, 2049, 2049, 249, 250}};
+constexpr std::array<size_t, 8> txSizes{{2047, 2048, 2049, 2048, 2049, 2050, 249, 250}};
+
+size_t VerifyTransportSegments(const HexSequence& apdu)
+{
+    MockLogHandler log;
+    TransportTx tx(log.logger);
+    tx.Configure(Message(Addresses(), apdu.ToRSeq()));
+    size_t offset = 0;
+    size_t count = 0;
+    while (tx.HasValue())
+    {
+        const auto segment = tx.GetSegment();
+        const auto size = std::min<size_t>(249, apdu.Size() - offset);
+        const auto header = (count == 0 ? 0x40 : 0) | (offset + size == apdu.Size() ? 0x80 : 0) | (count & 0x3F);
+        REQUIRE(segment.length() == size + 1);
+        REQUIRE(segment[0] == header);
+        REQUIRE(segment.skip(1).equals(apdu.ToRSeq().skip(offset).take(size)));
+        offset += size;
+        ++count;
+        tx.Advance();
+    }
+    REQUIRE(offset == apdu.Size());
+    return count;
+}
+} // namespace
+
+TEST_CASE("AT-CFG-03-MASTER-TX", "[rtu-acceptance][transport-fragment]")
+{
+    for (size_t i = 0; i < txLimits.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        auto params = NoStartupTasks();
+        params.maxTxFragSize = static_cast<uint32_t>(txLimits[i]);
+        params.maxRxFragSize = 300;
+        MasterTestFixture master(params);
+        REQUIRE(master.context->OnLowerLayerUp());
+
+        const size_t ranges = ((txSizes[i] - 2) * 2) % 3;
+        const size_t all = (txSizes[i] - 2 - ranges * 5) / 3;
+        const auto builder = [=](HeaderWriter& writer) {
+            for (size_t j = 0; j < all; ++j)
+                if (!Header::AllObjects(1, 2).WriteTo(writer)) return false;
+            for (size_t j = 0; j < ranges; ++j)
+                if (!Header::Range8(1, 2, 0, 0).WriteTo(writer)) return false;
+            return true;
+        };
+        master.context->Scan(builder, master.meas, TaskConfig::Default());
+        master.exe->run_many();
+        if (txSizes[i] > txLimits[i])
+        {
+            REQUIRE(master.lower->HasNoData());
+            REQUIRE(master.application->taskCompletionEvents.size() == 1);
+            REQUIRE(master.application->taskCompletionEvents.front().result == TaskCompletion::FAILURE_MESSAGE_FORMAT_ERROR);
+            acceptance::Observe("request_bytes", 0);
+            acceptance::Observe("request_segments", 0);
+            acceptance::Observe("delivered_points", master.meas->binarySOE.size());
+            continue;
+        }
+
+        const auto request = master.lower->PopWriteAsHex();
+        const HexSequence apdu(request);
+        REQUIRE(apdu.Size() == txSizes[i]);
+        std::string expected = "C0 01";
+        for (size_t j = 0; j < all; ++j) expected += " 01 02 06";
+        for (size_t j = 0; j < ranges; ++j) expected += " 01 02 00 00 00";
+        REQUIRE(request == expected);
+        acceptance::Observe("request_bytes", apdu.Size());
+        acceptance::Observe("request_segments", VerifyTransportSegments(apdu));
+
+        DatabaseConfig database;
+        database.binary_input[0] = BinaryConfig{};
+        OutstationTestObject outstation(OutstationConfig{}, database);
+        outstation.LowerLayerUp();
+        outstation.Transaction([](IUpdateHandler& update) { update.Update(Binary(true, Flags(1)), 0, EventMode::Suppress); });
+        outstation.SendToOutstation(request);
+        REQUIRE(master.context->OnTxReady());
+        REQUIRE(master.SendToMaster(outstation.lower->PopWriteAsHex()));
+        REQUIRE(master.application->taskCompletionEvents.size() == 1);
+        REQUIRE(master.application->taskCompletionEvents.front().result == TaskCompletion::SUCCESS);
+        REQUIRE(master.meas->binarySOE.size() == 1);
+        REQUIRE(master.meas->binarySOE.at(0).meas.value);
+        acceptance::Observe("delivered_points", master.meas->binarySOE.size());
+    }
+}
+
+TEST_CASE("AT-CFG-03-OUTSTATION-TX", "[rtu-acceptance][transport-fragment]")
+{
+    for (size_t i = 0; i < txLimits.size(); ++i)
+    {
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        OutstationConfig config;
+        config.params.maxTxFragSize = static_cast<uint32_t>(txLimits[i]);
+        config.params.maxRxFragSize = 300;
+        const auto binaryCount = txSizes[i] - (txSizes[i] < 256 ? 15 : 17);
+        DatabaseConfig database;
+        for (uint16_t index = 0; index < binaryCount; ++index)
+            database.binary_input[index] = BinaryConfig{};
+        database.double_binary[0] = DoubleBitBinaryConfig{};
+        OutstationTestObject outstation(config, database);
+        outstation.LowerLayerUp();
+        outstation.Transaction([&](IUpdateHandler& update) {
+            for (uint16_t index = 0; index < binaryCount; ++index)
+                update.Update(Binary(index % 2 == 0, Flags(1)), index, EventMode::Suppress);
+            update.Update(DoubleBitBinary(DoubleBit::DETERMINED_ON, Flags(1)), 0, EventMode::Suppress);
+        });
+
+        MasterTestFixture master(NoStartupTasks());
+        REQUIRE(master.context->OnLowerLayerUp());
+        master.context->Scan([](HeaderWriter& writer) {
+            return Header::AllObjects(1, 2).WriteTo(writer) && Header::AllObjects(3, 2).WriteTo(writer);
+        }, master.meas, TaskConfig::Default());
+        master.exe->run_many();
+        const auto request = master.lower->PopWriteAsHex();
+        REQUIRE(request == "C0 01 01 02 06 03 02 06");
+        REQUIRE(master.context->OnTxReady());
+        outstation.SendToOutstation(request);
+
+        const bool split = txSizes[i] > txLimits[i];
+        const auto first = outstation.lower->PopWriteAsHex();
+        const HexSequence firstBytes(first);
+        REQUIRE(firstBytes.Size() == txSizes[i] - (split ? 6 : 0));
+        REQUIRE(firstBytes.Size() <= txLimits[i]);
+        REQUIRE(firstBytes.ToRSeq()[0] == (split ? 0xA0 : 0xC0));
+        acceptance::Observe("first_fragment_bytes", firstBytes.Size());
+        acceptance::Observe("first_fragment_segments", VerifyTransportSegments(firstBytes));
+        REQUIRE(master.SendToMaster(first));
+        outstation.OnTxReady();
+        size_t lastSize = 0;
+        if (split)
+        {
+            REQUIRE(master.meas->doubleBinarySOE.empty());
+            const auto confirm = master.lower->PopWriteAsHex();
+            REQUIRE(confirm == "C0 00");
+            REQUIRE(master.context->OnTxReady());
+            outstation.SendToOutstation(confirm);
+            const auto last = outstation.lower->PopWriteAsHex();
+            REQUIRE(last == "41 81 80 00 03 02 00 00 00 81");
+            const HexSequence lastBytes(last);
+            lastSize = lastBytes.Size();
+            REQUIRE(VerifyTransportSegments(lastBytes) == 1);
+            REQUIRE(master.SendToMaster(last));
+            outstation.OnTxReady();
+        }
+        acceptance::Observe("last_fragment_bytes", lastSize);
+        REQUIRE(outstation.lower->HasNoData());
+        REQUIRE(master.lower->HasNoData());
+        REQUIRE(master.application->taskCompletionEvents.size() == 1);
+        REQUIRE(master.application->taskCompletionEvents.front().result == TaskCompletion::SUCCESS);
+        REQUIRE(master.meas->binarySOE.size() == binaryCount);
+        for (uint16_t index = 0; index < binaryCount; ++index)
+            REQUIRE(master.meas->binarySOE.at(index).meas.value == (index % 2 == 0));
+        REQUIRE(master.meas->doubleBinarySOE.size() == 1);
+        REQUIRE(master.meas->doubleBinarySOE.at(0).meas.value == DoubleBit::DETERMINED_ON);
+        acceptance::Observe("delivered_points", master.meas->binarySOE.size() + master.meas->doubleBinarySOE.size());
+    }
+}
+
 TEST_CASE(SUITE("RepeatSendsDoNotLogOrChangeStatistics"))
 {
     MockLogHandler log;
