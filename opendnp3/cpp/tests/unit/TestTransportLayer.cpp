@@ -17,6 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "utils/AcceptanceObservation.h"
 #include "utils/ProtocolUtil.h"
 #include "utils/TransportTestObject.h"
 
@@ -395,31 +396,70 @@ TEST_CASE(SUITE("ContinuationFromDifferentPeerIsIgnored"))
     REQUIRE(test.upper.received.AsHex() == "11 33");
 }
 
-TEST_CASE(SUITE("FragmentDeadlineAtTMinusOneTAndTPlusOne"))
+TEST_CASE("AT-CFG-03-TIMEOUT", "[rtu-acceptance][transport-fragment]")
 {
-    const std::array<std::chrono::milliseconds, 3> elapsed = {
-        std::chrono::milliseconds(9), std::chrono::milliseconds(10), std::chrono::milliseconds(11)};
-
-    for (const auto duration : elapsed)
+    const std::array<unsigned, 4> elapsed = {{9, 10, 11, 10000}};
+    for (size_t i = 0; i < elapsed.size(); ++i)
     {
-        TransportTestObject test(true, DEFAULT_MAX_APDU_SIZE, TimeDuration::Milliseconds(10));
+        if (!acceptance::Selected(("V" + std::to_string(i + 1)).c_str())) continue;
+        const bool configured = i < 3;
+        const bool completes = !configured || elapsed[i] < 10;
+        const auto timeout = configured ? TimeDuration::Milliseconds(10) : TimeDuration::Max();
+        TransportTestObject test(true, DEFAULT_MAX_APDU_SIZE, timeout);
         test.link.SendUp("40 11");
-        REQUIRE(test.exe->advance_time(duration) == 0);
+        REQUIRE(test.exe->advance_time(std::chrono::milliseconds(elapsed[i])) == 0);
         REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 0);
         test.link.SendUp("81 22");
 
-        if (duration < std::chrono::milliseconds(10))
-        {
-            REQUIRE(test.upper.received.AsHex() == "11 22");
-            REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 0);
-        }
-        else
-        {
-            REQUIRE(test.upper.received.IsEmpty());
-            REQUIRE(test.transport.GetStatistics().rx.numTransportDiscard == 1);
-            REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 1);
-        }
+        const auto stats = test.transport.GetStatistics().rx;
+        REQUIRE(test.upper.received.AsHex() == (completes ? "11 22" : ""));
+        REQUIRE(stats.numTransportDiscard == (completes ? 0 : 1));
+        REQUIRE(stats.numTransportIgnore == (completes ? 0 : 1));
+        acceptance::Observe("completed_bytes", test.upper.received.Size());
+        acceptance::Observe("expired_fragments", stats.numTransportDiscard);
+        acceptance::Observe("ignored_segments", stats.numTransportIgnore);
+        test.upper.received.Clear();
+        test.link.SendUp("DF 33");
+        REQUIRE(test.upper.received.AsHex() == "33");
+        acceptance::Observe("recovered_bytes", test.upper.received.Size());
     }
+}
+
+TEST_CASE("AT-CFG-03-TPDU", "[rtu-acceptance][transport-fragment]")
+{
+    TransportTestObject test(true, DEFAULT_MAX_APDU_SIZE, TimeDuration::Milliseconds(10));
+    const Addresses owner(1, 2);
+    const Addresses foreign(3, 4);
+    test.link.SendUp("40 11", owner);
+    test.link.SendUp("81 FF", foreign);
+    test.link.SendUp("82 FF", owner);
+    REQUIRE(test.upper.received.IsEmpty());
+    test.link.SendUp("01 22", owner);
+    test.link.SendUp("01 FF", owner);
+    test.link.SendUp("82 33", owner);
+    REQUIRE(test.upper.received.AsHex() == "11 22 33");
+    acceptance::Observe("complete_bytes", test.upper.received.Size());
+    acceptance::Observe("invalid_segments", test.transport.GetStatistics().rx.numTransportIgnore);
+    REQUIRE(test.transport.GetStatistics().rx.numTransportIgnore == 3);
+
+    test.upper.received.Clear();
+    test.link.SendUp("40 AA", owner);
+    test.link.SendUp("45 BB", owner);
+    test.link.SendUp("86 CC", owner);
+    REQUIRE(test.upper.received.AsHex() == "BB CC");
+    test.upper.received.Clear();
+    test.link.SendUp("40 AA", owner);
+    REQUIRE(test.transport.OnLowerLayerDown());
+    REQUIRE(test.transport.OnLowerLayerUp());
+    test.link.SendUp("81 FF", owner);
+    REQUIRE(test.upper.received.IsEmpty());
+    test.link.SendUp("40 AA", owner);
+    test.exe->advance_time(std::chrono::milliseconds(10));
+    test.link.SendUp("81 FF", owner);
+    REQUIRE(test.upper.received.IsEmpty());
+    test.link.SendUp("C0 DD", owner);
+    REQUIRE(test.upper.received.AsHex() == "DD");
+    acceptance::Observe("recovered_bytes", test.upper.received.Size());
 }
 
 TEST_CASE(SUITE("IntermediateSegmentDoesNotExtendAbsoluteFragmentDeadline"))

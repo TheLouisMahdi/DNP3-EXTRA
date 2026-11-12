@@ -1,6 +1,14 @@
 {
   "schema_version": 1,
   "bindings": {
+    "AT-CFG-03-TPDU": {
+      "kind": "unit",
+      "vectors": ["V1"]
+    },
+    "AT-CFG-03-TIMEOUT": {
+      "kind": "unit",
+      "vectors": ["V1", "V2", "V3", "V4"]
+    },
     "AT-PROFILE-065-TCP": {
       "kind": "integration",
       "vectors": ["V1"]
@@ -2038,6 +2046,60 @@
     }
   },
   "fixtures": {
+    "AT-CFG-03-TPDU/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Transport reassembly owner, sequence and recovery",
+      "input_hex": "40 11",
+      "checks": [
+        ["complete_bytes", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["invalid_segments", "receiver", "STATE", "OUTSTATION", 3, 0, 65535],
+        ["recovered_bytes", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-TIMEOUT/V1": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Final segment at 9 ms",
+      "input_hex": "40 11",
+      "checks": [
+        ["completed_bytes", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["expired_fragments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["ignored_segments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["recovered_bytes", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-TIMEOUT/V2": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Final segment at 10 ms",
+      "input_hex": "40 11",
+      "checks": [
+        ["completed_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["expired_fragments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ignored_segments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["recovered_bytes", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-TIMEOUT/V3": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Final segment at 11 ms",
+      "input_hex": "40 11",
+      "checks": [
+        ["completed_bytes", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["expired_fragments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["ignored_segments", "receiver", "STATE", "OUTSTATION", 1, 0, 65535],
+        ["recovered_bytes", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
+    "AT-CFG-03-TIMEOUT/V4": {
+      "reference": "4.3; 8.2; 9.2; Device Profile form controls product sizes; Device Profile p2 / original 42",
+      "description": "Final segment at 10000 ms",
+      "input_hex": "40 11",
+      "checks": [
+        ["completed_bytes", "receiver", "STATE", "OUTSTATION", 2, 0, 65535],
+        ["expired_fragments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["ignored_segments", "receiver", "STATE", "OUTSTATION", 0, 0, 65535],
+        ["recovered_bytes", "receiver", "STATE", "OUTSTATION", 1, 0, 65535]
+      ]
+    },
     "AT-PROFILE-065-TCP/V1": {
       "reference": "4.4.2.1; 4.6; 11.6; Table 12-23; Annex A.47.1; 11.9.10 and Clause 7; Device Profile p12",
       "description": "Authenticated denial generates one event on its own TCP association",
