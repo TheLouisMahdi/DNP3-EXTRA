@@ -47,6 +47,9 @@ int main(int argc, char* argv[])
     // The master config object for a master. The default are
     // useable, but understanding the options are important.
     MasterStackConfig stackConfig;
+    // Legacy example: explicitly disable SA, never change the library's REQUIRED default.
+    stackConfig.master.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    std::cout << "EXAMPLE ONLY: SA DISABLED (Compatibility mode)" << std::endl;
 
     // you can override application layer settings for the master here
     // in this example, we've change the application layer timeout to 2 seconds

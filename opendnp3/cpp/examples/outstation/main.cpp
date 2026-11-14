@@ -26,7 +26,9 @@
 #include <opendnp3/outstation/SimpleCommandHandler.h>
 #include <opendnp3/outstation/UpdateBuilder.h>
 
+#include <cmath>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -39,7 +41,7 @@ DatabaseConfig ConfigureDatabase()
 
     config.analog_input[0].clazz = PointClass::Class2;
     config.analog_input[0].svariation = StaticAnalogVariation::Group30Var5;
-    config.analog_input[0].evariation = EventAnalogVariation::Group32Var7;
+    config.analog_input[0].evariation = EventAnalogVariation::Group32Var5;
             
     return config;
 }
@@ -85,6 +87,9 @@ int main(int argc, char* argv[])
     // The main object for a outstation. The defaults are useable,
     // but understanding the options are important.
     OutstationStackConfig config(ConfigureDatabase());
+    // Legacy example: explicitly disable SA, never change the library's REQUIRED default.
+    config.outstation.params.authentication.mode = AuthenticationConfig::Mode::COMPATIBILITY;
+    std::cout << "EXAMPLE ONLY: SA DISABLED (Compatibility mode)" << std::endl;
 
     // Specify the maximum size of the event buffers
     config.outstation.eventBufferConfig = EventBufferConfig::AllTypes(100);
@@ -117,10 +122,78 @@ int main(int argc, char* argv[])
     {
         std::cout << "Enter one or more measurement changes then press <enter>" << std::endl;
         std::cout << "c = counter, b = binary, d = doublebit, a = analog, o = octet string, 'quit' = exit" << std::endl;
-        std::cin >> input;
+        std::cout << "set <binary|double|analog|bos|aos> <index 0..9> <value> [force|suppress]" << std::endl;
+        if (!(std::cin >> input)) break;
 
         if (input == "quit")
             return 0; // DNP3Manager destructor cleanups up everything automatically
+        else if (input == "set")
+        {
+            std::string line, type, value, mode, extra;
+            std::getline(std::cin, line);
+            std::istringstream parameters(line);
+            unsigned index = 0;
+            if (!(parameters >> type >> index >> value) || index >= 10)
+            {
+                std::cout << "Invalid set syntax or index (allowed 0..9)" << std::endl;
+                continue;
+            }
+            if (parameters >> mode)
+            {
+                if ((mode != "force" && mode != "suppress") || (parameters >> extra))
+                {
+                    std::cout << "Expected optional force or suppress" << std::endl;
+                    continue;
+                }
+            }
+
+            const auto eventMode = mode == "force" ? EventMode::Force
+                                 : mode == "suppress" ? EventMode::Suppress : EventMode::Detect;
+            const auto flags = Flags(0x01); // ONLINE
+            const auto now = app->Now();
+            UpdateBuilder builder;
+            bool accepted = false;
+
+            if (type == "binary" || type == "bos")
+            {
+                if (value == "on" || value == "off")
+                {
+                    const bool state = value == "on";
+                    accepted = type == "binary"
+                        ? builder.Update(Binary(state, flags, now), static_cast<uint16_t>(index), eventMode)
+                        : builder.Update(BinaryOutputStatus(state, flags, now), static_cast<uint16_t>(index), eventMode);
+                }
+            }
+            else if (type == "double")
+            {
+                if (value == "off" || value == "on" || value == "intermediate" || value == "indeterminate")
+                {
+                    const auto state = value == "off" ? DoubleBit::DETERMINED_OFF
+                                     : value == "on" ? DoubleBit::DETERMINED_ON
+                                     : value == "intermediate" ? DoubleBit::INTERMEDIATE : DoubleBit::INDETERMINATE;
+                    accepted = builder.Update(DoubleBitBinary(state, flags, now), static_cast<uint16_t>(index), eventMode);
+                }
+            }
+            else if (type == "analog" || type == "aos")
+            {
+                std::istringstream number(value);
+                double reading = 0;
+                if ((number >> reading) && !(number >> extra) && std::isfinite(reading))
+                {
+                    accepted = type == "analog"
+                        ? builder.Update(Analog(reading, flags, now), static_cast<uint16_t>(index), eventMode)
+                        : builder.Update(AnalogOutputStatus(reading, flags, now), static_cast<uint16_t>(index), eventMode);
+                }
+            }
+
+            if (!accepted)
+            {
+                std::cout << "Unsupported type/value or update rejected" << std::endl;
+                continue;
+            }
+            outstation->Apply(builder.Build());
+            std::cout << "Update submitted: " << type << "[" << index << "]=" << value << std::endl;
+        }
         else
         {
             // update measurement values based on input string
