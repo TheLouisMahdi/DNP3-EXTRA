@@ -95,7 +95,7 @@ int main(int argc, char* argv[])
     auto channel = std::shared_ptr<IChannel>(nullptr);
     try
     {
-        channel = manager.AddTCPServer("server", logLevels, ServerAcceptMode::CloseExisting, IPEndpoint("0.0.0.0", port),
+        channel = manager.AddTCPServer("server", logLevels, ServerAcceptMode::CloseExisting, IPEndpoint("127.0.0.1", port),
                                        PrintingChannelListener::Create());
     }
     catch(const std::exception& e)
