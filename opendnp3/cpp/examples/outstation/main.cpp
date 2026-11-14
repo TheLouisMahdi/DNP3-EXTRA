@@ -61,6 +61,26 @@ void AddUpdates(UpdateBuilder& builder, State& state, const std::string& argumen
 
 int main(int argc, char* argv[])
 {
+    uint16_t port = 20000;
+    if (argc != 1)
+    {
+        if (argc != 3 || std::string(argv[1]) != "--port")
+        {
+            std::cerr << "Usage: " << argv[0] << " [--port 1..65535]" << std::endl;
+            return 2;
+        }
+
+        std::istringstream value(argv[2]);
+        unsigned selected = 0;
+        std::string extra;
+        if (!(value >> selected) || selected == 0 || selected > 65535 || (value >> extra))
+        {
+            std::cerr << "Invalid TCP port" << std::endl;
+            return 2;
+        }
+        port = static_cast<uint16_t>(selected);
+    }
+
 
     // Specify what log levels to use. NORMAL is warning and above
     // You can add all the comms logging by uncommenting below.
@@ -75,7 +95,7 @@ int main(int argc, char* argv[])
     auto channel = std::shared_ptr<IChannel>(nullptr);
     try
     {
-        channel = manager.AddTCPServer("server", logLevels, ServerAcceptMode::CloseExisting, IPEndpoint("0.0.0.0", 20000),
+        channel = manager.AddTCPServer("server", logLevels, ServerAcceptMode::CloseExisting, IPEndpoint("0.0.0.0", port),
                                        PrintingChannelListener::Create());
     }
     catch(const std::exception& e)

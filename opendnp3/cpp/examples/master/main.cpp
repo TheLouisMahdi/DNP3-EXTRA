@@ -26,13 +26,35 @@
 #include <opendnp3/master/PrintingCommandResultCallback.h>
 #include <opendnp3/master/PrintingSOEHandler.h>
 
+#include <iostream>
 #include <sstream>
+#include <string>
 
 using namespace std;
 using namespace opendnp3;
 
 int main(int argc, char* argv[])
 {
+    uint16_t port = 20000;
+    if (argc != 1)
+    {
+        if (argc != 3 || std::string(argv[1]) != "--port")
+        {
+            std::cerr << "Usage: " << argv[0] << " [--port 1..65535]" << std::endl;
+            return 2;
+        }
+
+        std::istringstream value(argv[2]);
+        unsigned selected = 0;
+        std::string extra;
+        if (!(value >> selected) || selected == 0 || selected > 65535 || (value >> extra))
+        {
+            std::cerr << "Invalid TCP port" << std::endl;
+            return 2;
+        }
+        port = static_cast<uint16_t>(selected);
+    }
+
     // Specify what log levels to use. NORMAL is warning and above
     // You can add all the comms logging by uncommenting below
     const auto logLevels = levels::NORMAL | levels::ALL_APP_COMMS;
@@ -41,7 +63,7 @@ int main(int argc, char* argv[])
     DNP3Manager manager(1, ConsoleLogger::Create());
 
     // Connect via a TCPClient socket to a outstation
-    auto channel = manager.AddTCPClient("tcpclient", logLevels, ChannelRetry::Default(), {IPEndpoint("127.0.0.1", 20000)},
+    auto channel = manager.AddTCPClient("tcpclient", logLevels, ChannelRetry::Default(), {IPEndpoint("127.0.0.1", port)},
                                         "0.0.0.0", PrintingChannelListener::Create());
 
     // The master config object for a master. The default are
