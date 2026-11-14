@@ -26,27 +26,10 @@
 #include <opendnp3/master/PrintingCommandResultCallback.h>
 #include <opendnp3/master/PrintingSOEHandler.h>
 
+#include <sstream>
+
 using namespace std;
 using namespace opendnp3;
-
-class TestSOEHandler : public ISOEHandler
-{
-    virtual void BeginFragment(const ResponseInfo& info){};
-    virtual void EndFragment(const ResponseInfo& info){};
-
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<Binary>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<DoubleBitBinary>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<Analog>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<Counter>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<FrozenCounter>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<BinaryOutputStatus>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<AnalogOutputStatus>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<OctetString>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<TimeAndInterval>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<BinaryCommandEvent>>& values) {};
-    virtual void Process(const HeaderInfo& info, const ICollection<Indexed<AnalogCommandEvent>>& values) {};    
-    virtual void Process(const HeaderInfo& info, const ICollection<DNPTime>& values) {};
-};
 
 int main(int argc, char* argv[])
 {
@@ -78,19 +61,18 @@ int main(int argc, char* argv[])
     // Create a new master on a previously declared port, with a
     // name, log level, command acceptor, and config info. This
     // returns a thread-safe interface used for sending commands.
+    auto soe_handler = PrintingSOEHandler::Create();
     auto master = channel->AddMaster("master",                           // id for logging
-                                     PrintingSOEHandler::Create(),       // callback for data processing
+                                     soe_handler,                       // callback for data processing
                                      DefaultMasterApplication::Create(), // master application instance
                                      stackConfig                         // stack configuration
     );
 
-    auto test_soe_handler = std::make_shared<TestSOEHandler>();
-
     // do an integrity poll (Class 3/2/1/0) once per minute
-    auto integrityScan = master->AddClassScan(ClassField::AllClasses(), TimeDuration::Minutes(1), test_soe_handler);
+    auto integrityScan = master->AddClassScan(ClassField::AllClasses(), TimeDuration::Minutes(1), soe_handler);
 
     // do a Class 1 exception poll every 5 seconds
-    auto exceptionScan = master->AddClassScan(ClassField(ClassField::CLASS_1), TimeDuration::Seconds(5), test_soe_handler);
+    auto exceptionScan = master->AddClassScan(ClassField(ClassField::CLASS_1), TimeDuration::Seconds(5), soe_handler);
 
     // Enable the master. This will start communications.
     master->Enable();
@@ -103,6 +85,7 @@ int main(int argc, char* argv[])
         std::cout << "Enter a command" << std::endl;
         std::cout << "x - exits program" << std::endl;
         std::cout << "a - performs an ad-hoc range scan" << std::endl;
+        std::cout << "s <group> <variation> <q> [start stop] - READ with Q06=6, Q00=0, Q01=1" << std::endl;
         std::cout << "i - integrity demand scan" << std::endl;
         std::cout << "e - exception demand scan" << std::endl;
         std::cout << "d - disable unsolicited" << std::endl;
@@ -112,12 +95,58 @@ int main(int argc, char* argv[])
         std::cout << "u - toggle master logging" << std::endl;
 
         char cmd;
-        std::cin >> cmd;
+        if (!(std::cin >> cmd)) break;
         switch (cmd)
         {
         case ('a'):
-            master->ScanRange(GroupVariationID(1, 2), 0, 3, test_soe_handler);
+            master->ScanRange(GroupVariationID(1, 2), 0, 3, soe_handler);
             break;
+        case ('s'):
+        {
+            std::string line, extra;
+            std::getline(std::cin, line);
+            std::istringstream input(line);
+            unsigned group = 0, variation = 0, qualifier = 0, start = 0, stop = 0;
+            if (!(input >> group >> variation >> qualifier) || group > 255 || variation > 255)
+            {
+                std::cout << "Invalid READ: group and variation must be 0..255" << std::endl;
+                break;
+            }
+
+            Header header;
+            if (qualifier == 6)
+            {
+                if (input >> extra)
+                {
+                    std::cout << "Q06 takes no range" << std::endl;
+                    break;
+                }
+                header = Header::AllObjects(static_cast<uint8_t>(group), static_cast<uint8_t>(variation));
+            }
+            else if (qualifier == 0 || qualifier == 1)
+            {
+                if (!(input >> start >> stop) || start > stop || stop > (qualifier == 0 ? 255u : 65535u)
+                    || (input >> extra))
+                {
+                    std::cout << "Invalid range for Q00/Q01" << std::endl;
+                    break;
+                }
+                header = qualifier == 0
+                    ? Header::Range8(static_cast<uint8_t>(group), static_cast<uint8_t>(variation),
+                                     static_cast<uint8_t>(start), static_cast<uint8_t>(stop))
+                    : Header::Range16(static_cast<uint8_t>(group), static_cast<uint8_t>(variation),
+                                      static_cast<uint16_t>(start), static_cast<uint16_t>(stop));
+            }
+            else
+            {
+                std::cout << "Supported READ qualifiers: 0, 1, 6" << std::endl;
+                break;
+            }
+
+            master->Scan({header}, soe_handler);
+            std::cout << "READ queued; inspect the asynchronous response and SOE values" << std::endl;
+            break;
+        }
         case ('d'):
             master->PerformFunction("disable unsol", FunctionCode::DISABLE_UNSOLICITED,
                                     {Header::AllObjects(60, 2), Header::AllObjects(60, 3), Header::AllObjects(60, 4)});
